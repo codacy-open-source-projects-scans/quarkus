@@ -113,7 +113,7 @@ quarkus.index-dependency.<name>.artifact-id=(this one is optional)
 quarkus.index-dependency.<name>.classifier=(this one is optional)
 ----
 
-TIP: If no `artifact-id` is specified then all dependencies with the specificed `group-id` are indexed.
+TIP: If no `artifact-id` is specified then all dependencies with the specified `group-id` are indexed.
 
 For example, the following entries ensure that the `org.acme:acme-api` dependency is indexed:
 
@@ -455,7 +455,7 @@ Unused interceptors and decorators are not associated with any bean.
 
 [TIP]
 ====
-When using the dev mode (running `./mvnw clean compile quarkus:dev`), you can see more information about which beans are being removed:
+When using the dev mode (running `./mvnw quarkus:dev`), you can see more information about which beans are being removed:
 
 1. In the console - just enable the DEBUG level in your `application.properties`, i.e. `quarkus.log.category."io.quarkus.arc.processor".level=DEBUG`
 2. In the relevant Dev UI page
