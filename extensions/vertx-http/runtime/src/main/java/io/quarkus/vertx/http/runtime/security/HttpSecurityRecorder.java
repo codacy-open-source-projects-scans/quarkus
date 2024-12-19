@@ -33,6 +33,7 @@ import io.quarkus.runtime.RuntimeValue;
 import io.quarkus.runtime.annotations.Recorder;
 import io.quarkus.runtime.configuration.ConfigurationException;
 import io.quarkus.security.AuthenticationCompletionException;
+import io.quarkus.security.AuthenticationException;
 import io.quarkus.security.AuthenticationFailedException;
 import io.quarkus.security.AuthenticationRedirectException;
 import io.quarkus.security.identity.SecurityIdentity;
@@ -171,6 +172,12 @@ public class HttpSecurityRecorder {
 
     public static abstract class DefaultAuthFailureHandler implements BiConsumer<RoutingContext, Throwable> {
 
+        /**
+         * A {@link RoutingContext#get(String)} key added for exceptions raised during authentication that are not
+         * the {@link io.quarkus.security.AuthenticationException}.
+         */
+        private static final String OTHER_AUTHENTICATION_FAILURE = "io.quarkus.vertx.http.runtime.security.other-auth-failure";
+
         protected DefaultAuthFailureHandler() {
         }
 
@@ -181,8 +188,7 @@ public class HttpSecurityRecorder {
             }
             throwable = extractRootCause(throwable);
             //auth failed
-            if (throwable instanceof AuthenticationFailedException) {
-                AuthenticationFailedException authenticationFailedException = (AuthenticationFailedException) throwable;
+            if (throwable instanceof AuthenticationFailedException authenticationFailedException) {
                 getAuthenticator(event).sendChallenge(event).subscribe().with(new Consumer<Boolean>() {
                     @Override
                     public void accept(Boolean aBoolean) {
@@ -200,14 +206,14 @@ public class HttpSecurityRecorder {
                 log.debug("Authentication has failed, returning HTTP status 401");
                 event.response().setStatusCode(401);
                 proceed(throwable);
-            } else if (throwable instanceof AuthenticationRedirectException) {
-                AuthenticationRedirectException redirectEx = (AuthenticationRedirectException) throwable;
+            } else if (throwable instanceof AuthenticationRedirectException redirectEx) {
                 event.response().setStatusCode(redirectEx.getCode());
                 event.response().headers().set(HttpHeaders.LOCATION, redirectEx.getRedirectUri());
                 event.response().headers().set(HttpHeaders.CACHE_CONTROL, "no-store");
                 event.response().headers().set("Pragma", "no-cache");
                 proceed(throwable);
             } else {
+                event.put(OTHER_AUTHENTICATION_FAILURE, Boolean.TRUE);
                 event.fail(throwable);
             }
         }
@@ -228,6 +234,20 @@ public class HttpSecurityRecorder {
                 }
             }
             return throwable;
+        }
+
+        public static void markIfOtherAuthenticationFailure(RoutingContext event, Throwable throwable) {
+            if (!(throwable instanceof AuthenticationException)) {
+                event.put(OTHER_AUTHENTICATION_FAILURE, Boolean.TRUE);
+            }
+        }
+
+        public static void removeMarkAsOtherAuthenticationFailure(RoutingContext event) {
+            event.remove(OTHER_AUTHENTICATION_FAILURE);
+        }
+
+        public static boolean isOtherAuthenticationFailure(RoutingContext event) {
+            return Boolean.TRUE.equals(event.get(OTHER_AUTHENTICATION_FAILURE));
         }
     }
 

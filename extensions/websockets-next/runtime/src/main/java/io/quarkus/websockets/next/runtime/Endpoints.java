@@ -4,21 +4,21 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.function.Consumer;
 
-import jakarta.enterprise.context.SessionScoped;
-
 import org.jboss.logging.Logger;
 
 import io.netty.handler.codec.http.websocketx.WebSocketCloseStatus;
 import io.quarkus.arc.ArcContainer;
 import io.quarkus.arc.InjectableContext;
+import io.quarkus.arc.ManagedContext;
 import io.quarkus.runtime.LaunchMode;
 import io.quarkus.security.AuthenticationFailedException;
 import io.quarkus.security.ForbiddenException;
 import io.quarkus.security.UnauthorizedException;
 import io.quarkus.websockets.next.CloseReason;
-import io.quarkus.websockets.next.UnhandledFailureStrategy;
 import io.quarkus.websockets.next.WebSocketException;
-import io.quarkus.websockets.next.runtime.WebSocketSessionContext.SessionContextState;
+import io.quarkus.websockets.next.runtime.config.UnhandledFailureStrategy;
+import io.quarkus.websockets.next.runtime.telemetry.ErrorInterceptor;
+import io.quarkus.websockets.next.runtime.telemetry.TelemetrySupport;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.operators.multi.processors.BroadcastProcessor;
 import io.vertx.core.Context;
@@ -34,21 +34,25 @@ class Endpoints {
     static void initialize(Vertx vertx, ArcContainer container, Codecs codecs, WebSocketConnectionBase connection,
             WebSocketBase ws, String generatedEndpointClass, Optional<Duration> autoPingInterval,
             SecuritySupport securitySupport, UnhandledFailureStrategy unhandledFailureStrategy, TrafficLogger trafficLogger,
-            Runnable onClose, boolean activateRequestContext) {
+            Runnable onClose, boolean activateRequestContext, boolean activateSessionContext,
+            TelemetrySupport telemetrySupport) {
 
         Context context = vertx.getOrCreateContext();
 
         // Initialize and capture the session context state that will be activated
         // during message processing
-        WebSocketSessionContext sessionContext = sessionContext(container);
-        SessionContextState sessionContextState = sessionContext.initializeContextState();
+        ManagedContext sessionContext = null;
+        InjectableContext.ContextState sessionContextState = null;
+        if (activateSessionContext) {
+            sessionContext = container.sessionContext();
+            sessionContextState = sessionContext.initializeState();
+        }
         ContextSupport contextSupport = new ContextSupport(connection, sessionContextState,
-                sessionContext(container),
-                activateRequestContext ? container.requestContext() : null);
+                sessionContext, activateRequestContext ? container.requestContext() : null);
 
         // Create an endpoint that delegates callbacks to the endpoint bean
         WebSocketEndpoint endpoint = createEndpoint(generatedEndpointClass, context, connection, codecs, contextSupport,
-                securitySupport);
+                securitySupport, telemetrySupport);
 
         // A broadcast processor is only needed if Multi is consumed by the callback
         BroadcastProcessor<Object> textBroadcastProcessor = endpoint.consumedTextMultiType() != null
@@ -374,7 +378,8 @@ class Endpoints {
     }
 
     private static WebSocketEndpoint createEndpoint(String endpointClassName, Context context,
-            WebSocketConnectionBase connection, Codecs codecs, ContextSupport contextSupport, SecuritySupport securitySupport) {
+            WebSocketConnectionBase connection, Codecs codecs, ContextSupport contextSupport, SecuritySupport securitySupport,
+            TelemetrySupport telemetrySupport) {
         try {
             ClassLoader cl = Thread.currentThread().getContextClassLoader();
             if (cl == null) {
@@ -383,22 +388,20 @@ class Endpoints {
             @SuppressWarnings("unchecked")
             Class<? extends WebSocketEndpoint> endpointClazz = (Class<? extends WebSocketEndpoint>) cl
                     .loadClass(endpointClassName);
+
+            ErrorInterceptor errorInterceptor = telemetrySupport == null ? null : telemetrySupport.getErrorInterceptor();
             WebSocketEndpoint endpoint = (WebSocketEndpoint) endpointClazz
                     .getDeclaredConstructor(WebSocketConnectionBase.class, Codecs.class, ContextSupport.class,
-                            SecuritySupport.class)
-                    .newInstance(connection, codecs, contextSupport, securitySupport);
+                            SecuritySupport.class, ErrorInterceptor.class)
+                    .newInstance(connection, codecs, contextSupport, securitySupport, errorInterceptor);
+            if (telemetrySupport != null) {
+                return telemetrySupport.decorate(endpoint, connection);
+            }
+
             return endpoint;
         } catch (Exception e) {
             throw new WebSocketException("Unable to create endpoint instance: " + endpointClassName, e);
         }
     }
 
-    private static WebSocketSessionContext sessionContext(ArcContainer container) {
-        for (InjectableContext injectableContext : container.getContexts(SessionScoped.class)) {
-            if (WebSocketSessionContext.class.equals(injectableContext.getClass())) {
-                return (WebSocketSessionContext) injectableContext;
-            }
-        }
-        throw new WebSocketException("CDI session context not registered");
-    }
 }

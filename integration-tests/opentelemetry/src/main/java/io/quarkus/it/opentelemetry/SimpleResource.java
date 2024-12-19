@@ -150,4 +150,12 @@ public class SimpleResource {
         LOG.error("Oh no {}", exception.getMessage(), exception);
         return "Oh no! An exception";
     }
+
+    @GET
+    @Path("/suppress-app-uri")
+    public TraceData suppressAppUri() {
+        TraceData traceData = new TraceData();
+        traceData.message = "Suppress me!";
+        return traceData;
+    }
 }

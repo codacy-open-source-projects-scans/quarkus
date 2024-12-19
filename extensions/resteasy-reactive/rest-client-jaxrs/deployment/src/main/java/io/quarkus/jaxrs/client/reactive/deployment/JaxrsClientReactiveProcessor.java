@@ -50,6 +50,7 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import jakarta.ws.rs.ProcessingException;
 import jakarta.ws.rs.RuntimeType;
@@ -89,6 +90,7 @@ import org.jboss.resteasy.reactive.client.impl.AsyncInvokerImpl;
 import org.jboss.resteasy.reactive.client.impl.ClientBuilderImpl;
 import org.jboss.resteasy.reactive.client.impl.ClientImpl;
 import org.jboss.resteasy.reactive.client.impl.MultiInvoker;
+import org.jboss.resteasy.reactive.client.impl.RestClientClosingTask;
 import org.jboss.resteasy.reactive.client.impl.SseEventSourceBuilderImpl;
 import org.jboss.resteasy.reactive.client.impl.StorkClientRequestFilter;
 import org.jboss.resteasy.reactive.client.impl.UniInvoker;
@@ -176,6 +178,7 @@ import io.quarkus.resteasy.reactive.common.deployment.QuarkusResteasyReactiveDot
 import io.quarkus.resteasy.reactive.common.deployment.ResourceScanningResultBuildItem;
 import io.quarkus.resteasy.reactive.common.deployment.SerializersUtil;
 import io.quarkus.resteasy.reactive.common.runtime.ResteasyReactiveConfig;
+import io.quarkus.resteasy.reactive.spi.EndpointValidationPredicatesBuildItem;
 import io.quarkus.resteasy.reactive.spi.MessageBodyReaderBuildItem;
 import io.quarkus.resteasy.reactive.spi.MessageBodyReaderOverrideBuildItem;
 import io.quarkus.resteasy.reactive.spi.MessageBodyWriterBuildItem;
@@ -287,7 +290,10 @@ public class JaxrsClientReactiveProcessor {
             List<RestClientDefaultProducesBuildItem> defaultConsumes,
             List<RestClientDefaultConsumesBuildItem> defaultProduces,
             List<RestClientDisableSmartDefaultProduces> disableSmartDefaultProduces,
-            List<ParameterContainersBuildItem> parameterContainersBuildItems) {
+            List<RestClientDisableRemovalTrailingSlashBuildItem> disableRemovalTrailingSlashProduces,
+            List<ParameterContainersBuildItem> parameterContainersBuildItems,
+            List<EndpointValidationPredicatesBuildItem> validationPredicatesBuildItems) {
+
         String defaultConsumesType = defaultMediaType(defaultConsumes, MediaType.APPLICATION_OCTET_STREAM);
         String defaultProducesType = defaultMediaType(defaultProduces, MediaType.TEXT_PLAIN);
 
@@ -340,6 +346,8 @@ public class JaxrsClientReactiveProcessor {
                         return anns.containsKey(NOT_BODY) || anns.containsKey(URL);
                     }
                 })
+                .setValidateEndpoint(validationPredicatesBuildItems.stream().map(item -> item.getPredicate())
+                        .collect(Collectors.toUnmodifiableList()))
                 .setResourceMethodCallback(new Consumer<>() {
                     @Override
                     public void accept(EndpointIndexer.ResourceMethodCallbackEntry entry) {
@@ -402,8 +410,9 @@ public class JaxrsClientReactiveProcessor {
             ClassInfo clazz = index.getClassByName(i.getKey());
             //these interfaces can also be clients
             //so we generate client proxies for them
-            MaybeRestClientInterface maybeClientProxy = clientEndpointIndexer.createClientProxy(clazz,
-                    i.getValue());
+            String path = sanitizePath(i.getValue(),
+                    isRemovalTrailingSlashEnabled(i.getKey(), disableRemovalTrailingSlashProduces));
+            MaybeRestClientInterface maybeClientProxy = clientEndpointIndexer.createClientProxy(clazz, path);
             if (maybeClientProxy.exists()) {
                 RestClientInterface clientProxy = maybeClientProxy.getRestClientInterface();
                 try {
@@ -951,8 +960,7 @@ public class JaxrsClientReactiveProcessor {
                                     classContext.constructor.getThis(),
                                     baseTarget));
                     if (observabilityIntegrationNeeded) {
-                        String templatePath = MULTIPLE_SLASH_PATTERN.matcher(restClientInterface.getPath() + method.getPath())
-                                .replaceAll("/");
+                        String templatePath = templatePath(restClientInterface, method);
                         classContext.constructor.invokeVirtualMethod(
                                 MethodDescriptor.ofMethod(WebTargetImpl.class, "setPreClientSendHandler", void.class,
                                         ClientRestHandler.class),
@@ -1008,11 +1016,25 @@ public class JaxrsClientReactiveProcessor {
                                     + jandexMethod.name());
                         }
 
-                        ResultHandle newInputTarget = methodParamNotNull.invokeVirtualMethod(
-                                MethodDescriptor.ofMethod(WebTargetImpl.class, "withNewUri", WebTargetImpl.class,
-                                        java.net.URI.class),
-                                methodParamNotNull.readInstanceField(inputTargetField, methodParamNotNull.getThis()),
-                                newUri);
+                        ResultHandle newInputTarget;
+                        if (observabilityIntegrationNeeded) {
+                            // we need to apply the ClientObservabilityHandler to the inputTarget field without altering it
+                            newInputTarget = methodParamNotNull.invokeVirtualMethod(
+                                    MethodDescriptor.ofMethod(WebTargetImpl.class, "withNewUri", WebTargetImpl.class,
+                                            java.net.URI.class, ClientRestHandler.class),
+                                    methodParamNotNull.readInstanceField(inputTargetField, methodParamNotNull.getThis()),
+                                    newUri,
+                                    methodParamNotNull.newInstance(
+                                            MethodDescriptor.ofConstructor(ClientObservabilityHandler.class, String.class),
+                                            methodParamNotNull.load(templatePath(restClientInterface, method))));
+                        } else {
+                            // just read the inputTarget field and call withNewUri on it
+                            newInputTarget = methodParamNotNull.invokeVirtualMethod(
+                                    MethodDescriptor.ofMethod(WebTargetImpl.class, "withNewUri", WebTargetImpl.class,
+                                            java.net.URI.class),
+                                    methodParamNotNull.readInstanceField(inputTargetField, methodParamNotNull.getThis()),
+                                    newUri);
+                        }
                         ResultHandle newBaseTarget = methodParamNotNull.invokeVirtualMethod(
                                 baseTargetProducer.getMethodDescriptor(),
                                 methodParamNotNull.getThis(), newInputTarget);
@@ -1214,6 +1236,15 @@ public class JaxrsClientReactiveProcessor {
                     .getMethodCreator(MethodDescriptor.ofMethod(Closeable.class, "close", void.class));
             ResultHandle webTarget = closeCreator.readInstanceField(baseTargetField, closeCreator.getThis());
             ResultHandle webTargetImpl = closeCreator.checkCast(webTarget, WebTargetImpl.class);
+            ResultHandle restApiClass = closeCreator.loadClassFromTCCL(restClientInterface.getClassName());
+            ResultHandle context = closeCreator.newInstance(
+                    MethodDescriptor.ofConstructor(RestClientClosingTask.Context.class, Class.class, WebTargetImpl.class),
+                    restApiClass,
+                    webTargetImpl);
+            closeCreator.invokeStaticInterfaceMethod(
+                    MethodDescriptor.ofMethod(RestClientClosingTask.class, "invokeAll", void.class,
+                            RestClientClosingTask.Context.class),
+                    context);
             ResultHandle restClient = closeCreator.invokeVirtualMethod(
                     MethodDescriptor.ofMethod(WebTargetImpl.class, "getRestClient", ClientImpl.class), webTargetImpl);
             closeCreator.invokeVirtualMethod(MethodDescriptor.ofMethod(ClientImpl.class, "close", void.class), restClient);
@@ -1232,6 +1263,11 @@ public class JaxrsClientReactiveProcessor {
 
         return recorderContext.newInstance(creatorName);
 
+    }
+
+    private String templatePath(RestClientInterface restClientInterface, ResourceMethod method) {
+        return MULTIPLE_SLASH_PATTERN.matcher(restClientInterface.getPath() + method.getPath())
+                .replaceAll("/");
     }
 
     /**
@@ -3064,6 +3100,30 @@ public class JaxrsClientReactiveProcessor {
                         MethodDescriptor.ofMethod(Invocation.Builder.class, "cookie", Invocation.Builder.class, String.class,
                                 String.class),
                         invocationBuilder, notNullValue.load(paramName), cookieParamHandle));
+    }
+
+    private String sanitizePath(String path, boolean removesTrailingSlash) {
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
+
+        // For the client side, by default, we're only removing the trailing slash for the
+        // `@Path` annotations at class level which is configurable.
+        if (removesTrailingSlash && path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        return path;
+    }
+
+    private boolean isRemovalTrailingSlashEnabled(DotName restClientName,
+            List<RestClientDisableRemovalTrailingSlashBuildItem> buildItems) {
+        for (RestClientDisableRemovalTrailingSlashBuildItem buildItem : buildItems) {
+            if (buildItem.getClients().contains(restClientName)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private enum ReturnCategory {

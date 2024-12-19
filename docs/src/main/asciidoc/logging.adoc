@@ -115,8 +115,25 @@ The fully qualified name of the class that calls the `Log` methods is used as a 
 In this example, the logger name would be `com.example.MyService`.
 <3> Finally, all calls to `Log` methods are rewritten to regular JBoss Logging calls on the logger field during the application build.
 
-WARNING: Only use the `Log` API in application classes, not in external dependencies.
-`Log` method calls that are not processed by Quarkus at build time will throw an exception.
+[[log-api-extension-warning]]
+[WARNING]
+====
+Use the `Log` API only in application classes, not in external dependencies.
+`Log` method calls not processed by Quarkus at build time will result in an exception.
+
+.Using `io.quarkus.logging.Log` in extensions:
+
+While the `Log` API simplifies logging in application classes, it is not recommended for use in extension modules or external dependencies.
+
+The following considerations apply:
+
+* `io.quarkus.logging.Log` depends on Quarkus bytecode transformations that occur at build time.
+
+* In extension modules, `Log` works only if the module includes a Jandex index.
+However, this behavior is unsupported and can lead to unreliable logging.
++
+For extension development, use `org.jboss.logging.Logger.getLogger(String)` instead of `io.quarkus.logging.Log`.
+====
 
 
 [[injection-of-a-configured-logger]]
@@ -509,6 +526,24 @@ quarkus.log.category."com.example".use-parent-handlers=false
 ----
 
 For details about its configuration, see the xref:#quarkus-core_section_quarkus-log-syslog[Syslog logging configuration] reference.
+
+
+=== Socket log handler
+
+This handler will send the logs to a socket.
+It is disabled by default, so you must first enable it.
+When enabled, it sends all log events to a socket, for instance to a Logstash server.
+
+This will typically be used in conjunction with the `quarkus-logging-json` extension so send logs in ECS format to an Elasticsearch instance.
+An example configuration can be found in the xref:centralized-log-management.adoc[Centralized log management] guide.
+
+* A global configuration example:
++
+[source, properties]
+----
+quarkus.log.socket.enable=true
+quarkus.log.socket.endpoint=localhost:4560
+----
 
 
 == Add a logging filter to your log handler

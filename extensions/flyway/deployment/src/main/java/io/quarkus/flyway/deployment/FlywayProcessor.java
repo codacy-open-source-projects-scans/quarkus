@@ -61,7 +61,6 @@ import io.quarkus.deployment.builditem.ServiceStartBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveHierarchyBuildItem;
-import io.quarkus.deployment.logging.LoggingSetupBuildItem;
 import io.quarkus.deployment.recording.RecorderContext;
 import io.quarkus.flyway.FlywayDataSource;
 import io.quarkus.flyway.runtime.FlywayBuildTimeConfig;
@@ -184,7 +183,6 @@ class FlywayProcessor {
 
     @BuildStep
     @Produce(SyntheticBeansRuntimeInitBuildItem.class)
-    @Consume(LoggingSetupBuildItem.class)
     @Record(ExecutionTime.RUNTIME_INIT)
     void createBeans(FlywayRecorder recorder,
             List<JdbcDataSourceBuildItem> jdbcDataSourceBuildItems,
@@ -298,8 +296,8 @@ class FlywayProcessor {
     public InitTaskBuildItem configureInitTask(ApplicationInfoBuildItem app) {
         return InitTaskBuildItem.create()
                 .withName(app.getName() + "-flyway-init")
-                .withTaskEnvVars(Map.of("QUARKUS_INIT_AND_EXIT", "true", "QUARKUS_FLYWAY_ENABLED", "true"))
-                .withAppEnvVars(Map.of("QUARKUS_FLYWAY_ENABLED", "false"))
+                .withTaskEnvVars(Map.of("QUARKUS_INIT_AND_EXIT", "true", "QUARKUS_FLYWAY_ACTIVE", "true"))
+                .withAppEnvVars(Map.of("QUARKUS_FLYWAY_ACTIVE", "false"))
                 .withSharedEnvironment(true)
                 .withSharedFilesystem(true);
     }

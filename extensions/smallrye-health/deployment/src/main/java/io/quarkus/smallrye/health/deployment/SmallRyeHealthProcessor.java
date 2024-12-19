@@ -360,7 +360,7 @@ class SmallRyeHealthProcessor {
     @BuildStep
     void shutdownHealthCheck(ShutdownBuildTimeConfig buildTimeConfig,
             BuildProducer<AdditionalBeanBuildItem> additionalBeanProducer) {
-        if (buildTimeConfig.delayEnabled) {
+        if (buildTimeConfig.delayEnabled()) {
             additionalBeanProducer.produce(AdditionalBeanBuildItem.builder()
                     .addBeanClass(ShutdownReadinessCheck.class)
                     .setUnremovable()
@@ -391,7 +391,7 @@ class SmallRyeHealthProcessor {
             }
 
             String healthPath = nonApplicationRootPathBuildItem.resolveManagementPath(healthConfig.rootPath,
-                    managementInterfaceBuildTimeConfig, launchModeBuildItem);
+                    managementInterfaceBuildTimeConfig, launchModeBuildItem, false);
 
             webJarBuildProducer.produce(
                     WebJarBuildItem.builder().artifactKey(HEALTH_UI_WEBJAR_ARTIFACT_KEY) //

@@ -121,7 +121,7 @@ We have 2 options:
 
 * Take a look at: xref:observability-devservices-lgtm.adoc[Getting Started with Grafana-OTel-LGTM].
 
-This features a Quarkus Dev service including a Grafana for visualizing data, Loki to store logs, Tempo to store traces and Prometheus to store metrics. Also provides and OTel collector to receive the data.
+This features a Quarkus Dev service including a Grafana for visualizing data, Loki to store logs, Tempo to store traces and Prometheus to store metrics. Also provides an OTel collector to receive the data.
 
 === Jaeger to see traces option
 
@@ -148,7 +148,7 @@ services:
       - "16686:16686" # Jaeger UI
       - "14268:14268" # Receive legacy OpenTracing traces, optional
       - "4317:4317"   # OTLP gRPC receiver
-      - "4318:4318"   # OTLP HTTP receiver, not yet used by Quarkus, optional
+      - "4318:4318"   # OTLP HTTP receiver
       - "14250:14250" # Receive from external otel-collector, optional
     environment:
       - COLLECTOR_OTLP_ENABLED=true
@@ -573,6 +573,7 @@ See the main xref:opentelemetry.adoc#exporters[OpenTelemetry Guide exporters] se
 ** Kafka
 ** Pulsar
 * https://quarkus.io/guides/vertx[`quarkus-vertx`] (http requests)
+* xref:websockets-next-reference.adoc[`websockets-next`]
 
 
 === Disable parts of the automatic tracing
@@ -588,6 +589,30 @@ quarkus.otel.instrument.resteasy-client=false
 quarkus.otel.instrument.rest=false
 quarkus.otel.instrument.resteasy=false
 ----
+
+[[disabling-traces-for-app-endpoints]]
+=== Disabling Specific Traces for Application Endpoints
+
+You can use the `quarkus.otel.traces.suppress-application-uris` property to exclude specific endpoints from being traced.
+
+==== Example Configuration
+
+[source,properties]
+----
+# application.properties
+quarkus.otel.traces.suppress-application-uris=trace,ping,people*
+----
+
+This configuration will:
+
+- Disable tracing for the `/trace` URI.
+- Disable tracing for the `/ping` URI.
+- Disable tracing for the `/people` URI and all subpaths, such as `/people/1` and `/people/1/cars`.
+
+[NOTE]
+====
+If you are using `quarkus.http.root-path`, ensure you include the root path in the configuration.
+====
 
 [[configuration-reference]]
 == OpenTelemetry Configuration Reference

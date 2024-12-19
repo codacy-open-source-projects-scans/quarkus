@@ -21,7 +21,7 @@ import io.quarkus.websockets.next.BasicWebSocketConnector;
 import io.quarkus.websockets.next.CloseReason;
 import io.quarkus.websockets.next.WebSocketClientConnection;
 import io.quarkus.websockets.next.WebSocketClientException;
-import io.quarkus.websockets.next.WebSocketsClientRuntimeConfig;
+import io.quarkus.websockets.next.runtime.config.WebSocketsClientRuntimeConfig;
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
@@ -176,7 +176,7 @@ public class BasicWebSocketConnectorImpl extends WebSocketConnectorBase<BasicWeb
                     codecs,
                     pathParams,
                     serverEndpointUri,
-                    headers, trafficLogger);
+                    headers, trafficLogger, null);
             if (trafficLogger != null) {
                 trafficLogger.connectionOpened(connection);
             }
@@ -239,7 +239,11 @@ public class BasicWebSocketConnectorImpl extends WebSocketConnectorBase<BasicWeb
                         trafficLogger.connectionClosed(connection);
                     }
                     if (closeHandler != null) {
-                        doExecute(connection, new CloseReason(ws.closeStatusCode(), ws.closeReason()), closeHandler);
+                        CloseReason reason = CloseReason.INTERNAL_SERVER_ERROR;
+                        if (ws.closeStatusCode() != null) {
+                            reason = new CloseReason(ws.closeStatusCode(), ws.closeReason());
+                        }
+                        doExecute(connection, reason, closeHandler);
                     }
                     connectionManager.remove(BasicWebSocketConnectorImpl.class.getName(), connection);
                     client.get().close();

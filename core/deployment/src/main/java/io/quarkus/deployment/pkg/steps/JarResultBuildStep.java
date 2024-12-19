@@ -75,12 +75,10 @@ import io.quarkus.deployment.pkg.builditem.ArtifactResultBuildItem;
 import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
 import io.quarkus.deployment.pkg.builditem.CurateOutcomeBuildItem;
 import io.quarkus.deployment.pkg.builditem.JarBuildItem;
-import io.quarkus.deployment.pkg.builditem.LegacyJarRequiredBuildItem;
 import io.quarkus.deployment.pkg.builditem.NativeImageSourceJarBuildItem;
 import io.quarkus.deployment.pkg.builditem.OutputTargetBuildItem;
 import io.quarkus.deployment.pkg.builditem.UberJarIgnoredResourceBuildItem;
 import io.quarkus.deployment.pkg.builditem.UberJarMergedResourceBuildItem;
-import io.quarkus.deployment.pkg.builditem.UberJarRequiredBuildItem;
 import io.quarkus.deployment.util.FileUtil;
 import io.quarkus.fs.util.ZipUtils;
 import io.quarkus.maven.dependency.ArtifactKey;
@@ -197,10 +195,8 @@ public class JarResultBuildStep {
             ClassLoadingConfig classLoadingConfig,
             List<GeneratedClassBuildItem> generatedClasses,
             List<GeneratedResourceBuildItem> generatedResources,
-            List<UberJarRequiredBuildItem> uberJarRequired,
             List<UberJarMergedResourceBuildItem> uberJarMergedResourceBuildItems,
             List<UberJarIgnoredResourceBuildItem> uberJarIgnoredResourceBuildItems,
-            List<LegacyJarRequiredBuildItem> legacyJarRequired,
             QuarkusBuildCloseablesBuildItem closeablesBuildItem,
             List<AdditionalApplicationArchiveBuildItem> additionalApplicationArchiveBuildItems,
             MainClassBuildItem mainClassBuildItem, Optional<AppCDSRequestedBuildItem> appCDS) throws Exception {
@@ -209,27 +205,21 @@ public class JarResultBuildStep {
             handleAppCDSSupportFileGeneration(transformedClasses, generatedClasses, appCDS.get());
         }
 
-        if (!uberJarRequired.isEmpty() && !legacyJarRequired.isEmpty()) {
-            throw new RuntimeException(
-                    "Extensions with conflicting package types. One extension requires uber-jar another requires legacy format");
-        }
-
-        if (legacyJarRequired.isEmpty() && (!uberJarRequired.isEmpty()
-                || packageConfig.jar().type() == UBER_JAR)) {
-            return buildUberJar(curateOutcomeBuildItem, outputTargetBuildItem, transformedClasses, applicationArchivesBuildItem,
-                    packageConfig, applicationInfo, generatedClasses, generatedResources, uberJarMergedResourceBuildItems,
-                    uberJarIgnoredResourceBuildItems, mainClassBuildItem, classLoadingConfig);
-        } else if (!legacyJarRequired.isEmpty() || packageConfig.jar().type() == LEGACY_JAR) {
-            return buildLegacyThinJar(curateOutcomeBuildItem, outputTargetBuildItem, transformedClasses,
+        return switch (packageConfig.jar().type()) {
+            case UBER_JAR ->
+                buildUberJar(curateOutcomeBuildItem, outputTargetBuildItem, transformedClasses, applicationArchivesBuildItem,
+                        packageConfig, applicationInfo, generatedClasses, generatedResources, uberJarMergedResourceBuildItems,
+                        uberJarIgnoredResourceBuildItems, mainClassBuildItem, classLoadingConfig);
+            case LEGACY_JAR -> buildLegacyThinJar(curateOutcomeBuildItem, outputTargetBuildItem, transformedClasses,
                     applicationArchivesBuildItem,
                     packageConfig, applicationInfo, generatedClasses, generatedResources, mainClassBuildItem,
                     classLoadingConfig);
-        } else {
-            return buildThinJar(curateOutcomeBuildItem, outputTargetBuildItem, transformedClasses, applicationArchivesBuildItem,
-                    packageConfig, classLoadingConfig, applicationInfo, generatedClasses,
-                    generatedResources,
-                    additionalApplicationArchiveBuildItems, mainClassBuildItem);
-        }
+            case FAST_JAR, MUTABLE_JAR ->
+                buildThinJar(curateOutcomeBuildItem, outputTargetBuildItem, transformedClasses, applicationArchivesBuildItem,
+                        packageConfig, classLoadingConfig, applicationInfo, generatedClasses,
+                        generatedResources,
+                        additionalApplicationArchiveBuildItems, mainClassBuildItem);
+        };
     }
 
     // the idea here is to just dump the class names of the generated and transformed classes into a file
@@ -329,13 +319,14 @@ public class JarResultBuildStep {
                     .build();
         }
         final ApplicationManifestConfig manifestConfig = ApplicationManifestConfig.builder()
-                .setApplicationModel(curateOutcomeBuildItem.getApplicationModel())
                 .setMainComponent(ApplicationComponent.builder()
                         .setPath(runnerJar)
                         .setResolvedDependency(appArtifact)
                         .build())
                 .setRunnerPath(runnerJar)
+                .addComponents(curateOutcomeBuildItem.getApplicationModel().getDependencies())
                 .build();
+
         return new JarBuildItem(runnerJar, originalJar, null, UBER_JAR,
                 suffixToClassifier(packageConfig.computedRunnerSuffix()), manifestConfig);
     }
@@ -706,6 +697,9 @@ public class JarResultBuildStep {
         fastJarJarsBuilder.setRunner(runnerJar);
 
         if (!rebuild) {
+            manifestConfig.addComponent(ApplicationComponent.builder()
+                    .setResolvedDependency(applicationArchivesBuildItem.getRootArchive().getResolvedDependency())
+                    .setPath(runnerJar));
             Predicate<String> ignoredEntriesPredicate = getThinJarIgnoredEntriesPredicate(packageConfig);
             try (FileSystem runnerZipFs = createNewZip(runnerJar, packageConfig)) {
                 copyFiles(applicationArchivesBuildItem.getRootArchive(), runnerZipFs, null, ignoredEntriesPredicate);
@@ -776,7 +770,9 @@ public class JarResultBuildStep {
 
         runnerJar.toFile().setReadable(true, false);
         Path initJar = buildDir.resolve(QUARKUS_RUN_JAR);
-        manifestConfig.setMainComponent(ApplicationComponent.builder().setPath(initJar))
+        manifestConfig.setMainComponent(ApplicationComponent.builder()
+                .setPath(initJar)
+                .setDependencies(List.of(curateOutcomeBuildItem.getApplicationModel().getAppArtifact())))
                 .setRunnerPath(initJar);
         boolean mutableJar = packageConfig.jar().type() == MUTABLE_JAR;
         if (mutableJar) {

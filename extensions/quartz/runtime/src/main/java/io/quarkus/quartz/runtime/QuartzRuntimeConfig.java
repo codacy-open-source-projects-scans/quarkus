@@ -42,8 +42,11 @@ public class QuartzRuntimeConfig {
     public int batchTriggerAcquisitionMaxCount;
     /**
      * The size of scheduler thread pool. This will initialize the number of worker threads in the pool.
+     * <p>
+     * It's important to bear in mind that Quartz threads are not used to execute scheduled methods, instead the regular Quarkus
+     * thread pool is used by default. See also {@code quarkus.quartz.run-blocking-scheduled-method-on-quartz-thread}.
      */
-    @ConfigItem(defaultValue = "25")
+    @ConfigItem(defaultValue = "10")
     public int threadCount;
 
     /**
@@ -101,6 +104,25 @@ public class QuartzRuntimeConfig {
     @ConfigDocMapKey("identity")
     @ConfigItem(name = "misfire-policy")
     public Map<String, QuartzMisfirePolicyConfig> misfirePolicyPerJobs;
+
+    /**
+     * Properties that should be passed on directly to Quartz.
+     * Use the full configuration property key here,
+     * for instance {@code `quarkus.quartz.unsupported-properties."org.quartz.scheduler.jmx.export" = true`)}.
+     *
+     * <p>
+     * Properties set here are completely unsupported:
+     * as Quarkus doesn't generally know about these properties and their purpose,
+     * there is absolutely no guarantee that they will work correctly,
+     * and even if they do, that may change when upgrading to a newer version of Quarkus
+     * (even just a micro/patch version).
+     * <p>
+     * Consider using a supported configuration property before falling back to unsupported ones.
+     * If none exists, make sure to file a feature request so that a supported configuration property can be added to Quarkus,
+     * and more importantly so that the configuration property is tested regularly.
+     */
+    @ConfigDocMapKey("full-property-key")
+    public Map<String, String> unsupportedProperties;
 
     /**
      * When set to {@code true}, blocking scheduled methods are invoked on a thread managed by Quartz instead of a

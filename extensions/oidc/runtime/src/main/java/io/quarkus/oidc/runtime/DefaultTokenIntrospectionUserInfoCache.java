@@ -33,8 +33,8 @@ public class DefaultTokenIntrospectionUserInfoCache implements TokenIntrospectio
     final MemoryCache<CacheEntry> cache;
 
     public DefaultTokenIntrospectionUserInfoCache(OidcConfig oidcConfig, Vertx vertx) {
-        cache = new MemoryCache<CacheEntry>(vertx, oidcConfig.tokenCache.cleanUpTimerInterval,
-                oidcConfig.tokenCache.timeToLive, oidcConfig.tokenCache.maxSize);
+        cache = new MemoryCache<CacheEntry>(vertx, oidcConfig.tokenCache().cleanUpTimerInterval(),
+                oidcConfig.tokenCache().timeToLive(), oidcConfig.tokenCache().maxSize());
     }
 
     @Override
@@ -67,7 +67,7 @@ public class DefaultTokenIntrospectionUserInfoCache implements TokenIntrospectio
     }
 
     private static boolean isTokenExpired(Long exp, OidcTenantConfig oidcConfig) {
-        final long lifespanGrace = oidcConfig != null ? oidcConfig.token.lifespanGrace.orElse(0) : 0;
+        final long lifespanGrace = oidcConfig != null ? oidcConfig.token().lifespanGrace().orElse(0) : 0;
         return exp != null
                 && System.currentTimeMillis() / 1000 > (exp + lifespanGrace);
     }

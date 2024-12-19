@@ -234,6 +234,7 @@
                 <module>vertx</module>
                 <module>vertx-kotlin</module>
                 <module>websockets</module>
+                <module>websockets-next</module>
                 <module>spring-di</module>
                 <module>spring-web</module>
                 <module>spring-data-jpa</module>
@@ -266,6 +267,7 @@
                 <module>oidc-tenancy</module>
                 <module>oidc-wiremock</module>
                 <module>oidc-wiremock-logout</module>
+                <module>oidc-wiremock-providers</module>
                 <module>keycloak-authorization</module>
                 <module>rest-csrf</module>
                 <module>reactive-db2-client</module>
@@ -302,7 +304,7 @@
                 <module>maven</module>
                 <module>scala</module>
                 <module>kotlin</module>
-                <module>kotlin-serialization</module>
+                <module>kotlin-maven-invoker</module>
                 <module>mongodb-panache</module>
                 <module>mongodb-panache-kotlin</module>
                 <module>mongodb-rest-data-panache</module>
@@ -360,6 +362,7 @@
                 <module>opentelemetry-quickstart</module>
                 <module>opentelemetry-spi</module>
                 <module>opentelemetry-jdbc-instrumentation</module>
+                <module>opentelemetry-minimal</module>
                 <module>opentelemetry-mongodb-client-instrumentation</module>
                 <module>opentelemetry-quartz</module>
                 <module>opentelemetry-scheduler</module>

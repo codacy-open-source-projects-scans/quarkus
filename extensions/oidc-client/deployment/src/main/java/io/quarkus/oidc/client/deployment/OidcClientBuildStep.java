@@ -25,8 +25,6 @@ import io.quarkus.arc.deployment.SyntheticBeansRuntimeInitBuildItem;
 import io.quarkus.arc.processor.DotNames;
 import io.quarkus.deployment.ApplicationArchive;
 import io.quarkus.deployment.Feature;
-import io.quarkus.deployment.IsDevelopment;
-import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
@@ -36,12 +34,8 @@ import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.ApplicationArchivesBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.ExtensionSslNativeSupportBuildItem;
+import io.quarkus.deployment.builditem.RunTimeConfigBuilderBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.RuntimeInitializedClassBuildItem;
-import io.quarkus.deployment.dev.devservices.GlobalDevServicesConfig;
-import io.quarkus.devservices.keycloak.KeycloakDevServicesConfigBuildItem;
-import io.quarkus.devservices.keycloak.KeycloakDevServicesRequiredBuildItem;
-import io.quarkus.devui.spi.page.CardPageBuildItem;
-import io.quarkus.devui.spi.page.Page;
 import io.quarkus.gizmo.ClassCreator;
 import io.quarkus.gizmo.ClassOutput;
 import io.quarkus.gizmo.MethodCreator;
@@ -53,6 +47,7 @@ import io.quarkus.oidc.client.OidcClients;
 import io.quarkus.oidc.client.Tokens;
 import io.quarkus.oidc.client.runtime.AbstractTokensProducer;
 import io.quarkus.oidc.client.runtime.OidcClientBuildTimeConfig;
+import io.quarkus.oidc.client.runtime.OidcClientDefaultIdConfigBuilder;
 import io.quarkus.oidc.client.runtime.OidcClientRecorder;
 import io.quarkus.oidc.client.runtime.OidcClientsConfig;
 import io.quarkus.oidc.client.runtime.TokenProviderProducer;
@@ -191,25 +186,9 @@ public class OidcClientBuildStep {
         return index.getIndex().getAnnotations(ACCESS_TOKEN).stream().map(ItemBuilder::new).map(ItemBuilder::build).toList();
     }
 
-    @BuildStep(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
-    KeycloakDevServicesRequiredBuildItem requireKeycloakDevService() {
-        // this needs to be done as the shared Keycloak Dev Service doesn't know if the OIDC Client is enabled
-        return KeycloakDevServicesRequiredBuildItem.requireDevServiceForOidcClient();
-    }
-
-    @BuildStep(onlyIf = IsDevelopment.class)
-    void produceDevUiCardWithKeycloakUrl(Optional<KeycloakDevServicesConfigBuildItem> configProps,
-            BuildProducer<CardPageBuildItem> cardPageProducer) {
-        final String keycloakAdminUrl = configProps.map(item -> item.getConfig().get("keycloak.url")).orElse(null);
-        if (keycloakAdminUrl != null) {
-            // Add Admin page
-            final CardPageBuildItem cardPage = new CardPageBuildItem();
-            cardPage.addPage(Page.externalPageBuilder("Keycloak Admin")
-                    .icon("font-awesome-solid:key")
-                    .doNotEmbed(true)
-                    .url(keycloakAdminUrl));
-            cardPageProducer.produce(cardPage);
-        }
+    @BuildStep
+    RunTimeConfigBuilderBuildItem useOidcClientDefaultIdConfigBuilder() {
+        return new RunTimeConfigBuilderBuildItem(OidcClientDefaultIdConfigBuilder.class);
     }
 
     /**
@@ -270,7 +249,7 @@ public class OidcClientBuildStep {
         OidcClientBuildTimeConfig config;
 
         public boolean getAsBoolean() {
-            return config.enabled;
+            return config.enabled();
         }
     }
 }

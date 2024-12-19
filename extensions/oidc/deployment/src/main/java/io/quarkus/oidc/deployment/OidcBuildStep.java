@@ -46,7 +46,6 @@ import io.quarkus.arc.processor.QualifierRegistrar;
 import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.Capability;
 import io.quarkus.deployment.Feature;
-import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
@@ -55,11 +54,10 @@ import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.ExtensionSslNativeSupportBuildItem;
+import io.quarkus.deployment.builditem.RunTimeConfigBuilderBuildItem;
 import io.quarkus.deployment.builditem.RunTimeConfigurationDefaultBuildItem;
 import io.quarkus.deployment.builditem.SystemPropertyBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
-import io.quarkus.deployment.dev.devservices.GlobalDevServicesConfig;
-import io.quarkus.devservices.keycloak.KeycloakDevServicesRequiredBuildItem;
 import io.quarkus.oidc.AuthorizationCodeFlow;
 import io.quarkus.oidc.BearerTokenAuthentication;
 import io.quarkus.oidc.IdToken;
@@ -81,6 +79,7 @@ import io.quarkus.oidc.runtime.OidcIdentityProvider;
 import io.quarkus.oidc.runtime.OidcJsonWebTokenProducer;
 import io.quarkus.oidc.runtime.OidcRecorder;
 import io.quarkus.oidc.runtime.OidcSessionImpl;
+import io.quarkus.oidc.runtime.OidcTenantDefaultIdConfigBuilder;
 import io.quarkus.oidc.runtime.OidcTokenCredentialProducer;
 import io.quarkus.oidc.runtime.OidcUtils;
 import io.quarkus.oidc.runtime.TenantConfigBean;
@@ -233,28 +232,12 @@ public class OidcBuildStep {
 
             @Override
             public void transform(TransformationContext ctx) {
-                if (ctx.getTarget().kind() == METHOD) {
+                var tenantAnnotation = Annotations.find(ctx.getAllTargetAnnotations(), TENANT_NAME);
+                if (tenantAnnotation != null && tenantAnnotation.value() != null) {
                     ctx
-                            .getAllAnnotations()
-                            .stream()
-                            .filter(a -> TENANT_NAME.equals(a.name()))
-                            .forEach(a -> {
-                                var annotationValue = new AnnotationValue[] {
-                                        AnnotationValue.createStringValue("value", a.value().asString()) };
-                                ctx
-                                        .transform()
-                                        .add(AnnotationInstance.create(NAMED, a.target(), annotationValue))
-                                        .done();
-                            });
-                } else {
-                    // field
-                    var tenantAnnotation = Annotations.find(ctx.getAllAnnotations(), TENANT_NAME);
-                    if (tenantAnnotation != null && tenantAnnotation.value() != null) {
-                        ctx
-                                .transform()
-                                .add(NAMED, AnnotationValue.createStringValue("value", tenantAnnotation.value().asString()))
-                                .done();
-                    }
+                            .transform()
+                            .add(NAMED, AnnotationValue.createStringValue("value", tenantAnnotation.value().asString()))
+                            .done();
                 }
             }
         });
@@ -398,10 +381,9 @@ public class OidcBuildStep {
                 new HttpAuthMechanismAnnotationBuildItem(DotName.createSimple(BearerTokenAuthentication.class), BEARER_SCHEME));
     }
 
-    @BuildStep(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
-    KeycloakDevServicesRequiredBuildItem requireKeycloakDevService() {
-        // this needs to be done as the shared Keycloak Dev Service doesn't know if the OIDC is enabled
-        return KeycloakDevServicesRequiredBuildItem.requireDevServiceForOidc();
+    @BuildStep
+    RunTimeConfigBuilderBuildItem useOidcTenantDefaultIdConfigBuilder() {
+        return new RunTimeConfigBuilderBuildItem(OidcTenantDefaultIdConfigBuilder.class);
     }
 
     private static boolean isInjected(BeanRegistrationPhaseBuildItem beanRegistrationPhaseBuildItem, DotName requiredType,
@@ -427,7 +409,7 @@ public class OidcBuildStep {
         OidcBuildTimeConfig config;
 
         public boolean getAsBoolean() {
-            return config.enabled;
+            return config.enabled();
         }
     }
 
@@ -435,7 +417,7 @@ public class OidcBuildStep {
         OidcBuildTimeConfig config;
 
         public boolean getAsBoolean() {
-            return config.enabled && config.defaultTokenCacheEnabled;
+            return config.enabled() && config.defaultTokenCacheEnabled();
         }
     }
 }

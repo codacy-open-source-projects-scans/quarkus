@@ -48,8 +48,9 @@ public class DefaultPolicyEnforcerResolver implements PolicyEnforcerResolver {
             this.tlsSupport = OidcTlsSupport.empty();
         }
 
-        var defaultTenantTlsSupport = tlsSupport.forConfig(oidcConfig.defaultTenant.tls);
-        this.defaultPolicyEnforcer = createPolicyEnforcer(oidcConfig.defaultTenant, config.defaultTenant(),
+        var defaultTenantConfig = OidcConfig.getDefaultTenant(oidcConfig);
+        var defaultTenantTlsSupport = tlsSupport.forConfig(defaultTenantConfig.tls());
+        this.defaultPolicyEnforcer = createPolicyEnforcer(defaultTenantConfig, config.defaultTenant(),
                 defaultTenantTlsSupport);
         this.namedPolicyEnforcers = createNamedPolicyEnforcers(oidcConfig, config, tlsSupport);
         if (configResolver.isResolvable()) {
@@ -67,13 +68,13 @@ public class DefaultPolicyEnforcerResolver implements PolicyEnforcerResolver {
             return Uni.createFrom().item(defaultPolicyEnforcer);
         }
         if (dynamicConfigResolver == null) {
-            return Uni.createFrom().item(getStaticPolicyEnforcer(tenantConfig.tenantId.get()));
+            return Uni.createFrom().item(getStaticPolicyEnforcer(tenantConfig.tenantId().get()));
         } else {
             return getDynamicPolicyEnforcer(routingContext, tenantConfig)
                     .onItem().ifNull().continueWith(new Supplier<PolicyEnforcer>() {
                         @Override
                         public PolicyEnforcer get() {
-                            return getStaticPolicyEnforcer(tenantConfig.tenantId.get());
+                            return getStaticPolicyEnforcer(tenantConfig.tenantId().get());
                         }
                     });
         }
@@ -99,7 +100,7 @@ public class DefaultPolicyEnforcerResolver implements PolicyEnforcerResolver {
                 .onItem().ifNotNull().transform(new Function<KeycloakPolicyEnforcerTenantConfig, PolicyEnforcer>() {
                     @Override
                     public PolicyEnforcer apply(KeycloakPolicyEnforcerTenantConfig tenant) {
-                        return createPolicyEnforcer(config, tenant, tlsSupport.forConfig(config.tls));
+                        return createPolicyEnforcer(config, tenant, tlsSupport.forConfig(config.tls()));
                     }
                 });
     }
@@ -112,9 +113,9 @@ public class DefaultPolicyEnforcerResolver implements PolicyEnforcerResolver {
 
         Map<String, PolicyEnforcer> policyEnforcerTenants = new HashMap<>();
         for (Map.Entry<String, KeycloakPolicyEnforcerTenantConfig> tenant : config.namedTenants().entrySet()) {
-            OidcTenantConfig oidcTenantConfig = getOidcTenantConfig(oidcConfig, tenant.getKey());
+            var oidcTenantConfig = getOidcTenantConfig(oidcConfig, tenant.getKey());
             policyEnforcerTenants.put(tenant.getKey(),
-                    createPolicyEnforcer(oidcTenantConfig, tenant.getValue(), tlsSupport.forConfig(oidcTenantConfig.tls)));
+                    createPolicyEnforcer(oidcTenantConfig, tenant.getValue(), tlsSupport.forConfig(oidcTenantConfig.tls())));
         }
         return Map.copyOf(policyEnforcerTenants);
     }
