@@ -21,6 +21,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
+import io.quarkus.qute.Expression.Part;
 import io.quarkus.qute.TemplateException.Builder;
 import io.quarkus.qute.TemplateLocator.TemplateLocation;
 import io.quarkus.qute.TemplateNode.Origin;
@@ -200,7 +201,7 @@ public class ParserTest {
         assertThatExceptionOfType(TemplateException.class)
                 .isThrownBy(() -> engine.getTemplate("foo.html"))
                 .withMessage(
-                        "Parser error in template [foo.html] line 1: mandatory section parameters not declared for {#if}: [condition]")
+                        "Parser error in template [foo.html:1]: mandatory section parameters not declared for {#if}: [condition]")
                 .hasFieldOrProperty("origin");
     }
 
@@ -448,9 +449,9 @@ public class ParserTest {
     }
 
     @Test
-    public void testMandatorySectionParas() {
-        assertParserError("{#include /}", ParserError.MANDATORY_SECTION_PARAMS_MISSING,
-                "Parser error: mandatory section parameters not declared for {#include /}: [template]", 1);
+    public void testMandatorySectionParams() {
+        assertParserError("{#eval /}", ParserError.MANDATORY_SECTION_PARAMS_MISSING,
+                "Parser error: mandatory section parameters not declared for {#eval /}: [template]", 1);
     }
 
     @Test
@@ -460,13 +461,38 @@ public class ParserTest {
         assertSectionParams(engine, "{#let id=\"'Foo \"}", Map.of("id", "\"'Foo \""));
         assertSectionParams(engine, "{#let id=\"'Foo ' \"}", Map.of("id", "\"'Foo ' \""));
         assertSectionParams(engine, "{#let id=\"'Foo ' \" bar='baz'}", Map.of("id", "\"'Foo ' \"", "bar", "'baz'"));
-        assertSectionParams(engine, "{#let my=bad id=(\"'Foo ' \" + 1) bar='baz'}",
-                Map.of("my", "bad", "id", "(\"'Foo ' \" + 1)", "bar", "'baz'"));
+        assertSectionParams(engine, "{#let my=bad id=(foo + 1) bar='baz'}",
+                Map.of("my", "bad", "id", "(foo + 1)", "bar", "'baz'"));
         assertSectionParams(engine, "{#let id = 'Foo'}", Map.of("id", "'Foo'"));
         assertSectionParams(engine, "{#let id= 'Foo'}", Map.of("id", "'Foo'"));
         assertSectionParams(engine, "{#let my = (bad or not) id=1}", Map.of("my", "(bad or not)", "id", "1"));
         assertSectionParams(engine, "{#let my= (bad or not) id=1}", Map.of("my", "(bad or not)", "id", "1"));
+    }
 
+    @Test
+    public void testVirtualMethodWithNestedLiteralSeparator() {
+        Engine engine = Engine.builder().addDefaults().build();
+        List<Part> parts = engine.parse("{foo('Bar \"!')}").findExpression(e -> true).getParts();
+        assertVirtualMethodParam(parts.get(0), "foo", "Bar \"!");
+
+        parts = engine.parse("{foo(\"Bar '!\")}").findExpression(e -> true).getParts();
+        assertVirtualMethodParam(parts.get(0), "foo", "Bar '!");
+
+        parts = engine.parse("{foo(\"Bar '!\").baz(1)}").findExpression(e -> true).getParts();
+        assertVirtualMethodParam(parts.get(0), "foo", "Bar '!");
+        assertVirtualMethodParam(parts.get(1), "baz", "1");
+
+        parts = engine.parse("{str:builder('Qute').append(\"is '\").append(\"cool!\")}").findExpression(e -> true).getParts();
+        assertVirtualMethodParam(parts.get(0), "builder", "Qute");
+        assertVirtualMethodParam(parts.get(1), "append", "is '");
+        assertVirtualMethodParam(parts.get(2), "append", "cool!");
+    }
+
+    private void assertVirtualMethodParam(Part part, String name, String literal) {
+        assertTrue(part.isVirtualMethod());
+        assertEquals(name, part.getName());
+        assertTrue(part.asVirtualMethod().getParameters().get(0).isLiteral());
+        assertEquals(literal, part.asVirtualMethod().getParameters().get(0).getLiteral().toString());
     }
 
     @Test
@@ -474,7 +500,7 @@ public class ParserTest {
         TemplateException e = assertThrows(TemplateException.class,
                 () -> Engine.builder().addDefaults().build().parse("{foo[bar]}", null, "baz"));
         assertNotNull(e.getOrigin());
-        assertEquals("Non-literal value [bar] used in bracket notation in expression {foo[bar]} in template [baz] line 1",
+        assertEquals("Non-literal value [bar] used in bracket notation in expression {foo[bar]} in template [baz:1]",
                 e.getMessage());
     }
 

@@ -11,6 +11,7 @@ import java.util.function.Supplier;
 
 import org.jboss.logging.Logger;
 
+import io.quarkus.qute.ResolutionContextImpl.ChildResolutionContext;
 import io.quarkus.qute.SectionHelper.SectionResolutionContext;
 
 /**
@@ -30,13 +31,15 @@ public class SectionNode implements TemplateNode {
     final SectionHelper helper;
     private final Origin origin;
     private final boolean traceLevel;
+    private final EngineImpl engine;
 
-    SectionNode(String name, List<SectionBlock> blocks, SectionHelper helper, Origin origin) {
+    SectionNode(String name, List<SectionBlock> blocks, SectionHelper helper, Origin origin, EngineImpl engine) {
         this.name = name;
         this.blocks = blocks;
         this.helper = helper;
         this.origin = origin;
         this.traceLevel = LOG.isTraceEnabled();
+        this.engine = engine;
     }
 
     public CompletionStage<ResultNode> resolve(ResolutionContext context, Map<String, Object> params) {
@@ -45,12 +48,19 @@ public class SectionNode implements TemplateNode {
         }
         if (traceLevel && !Parser.ROOT_HELPER_NAME.equals(name)) {
             LOG.tracef("Resolve {#%s} started:%s", name, origin);
-            return helper.resolve(new SectionResolutionContextImpl(context, params)).thenApply(r -> {
+            return helper.resolve(new SectionResolutionContextImpl(context, params, engine)).thenApply(r -> {
                 LOG.tracef("Resolve {#%s} completed:%s", name, origin);
                 return r;
             });
         }
-        return helper.resolve(new SectionResolutionContextImpl(context, params));
+        try {
+            return helper.resolve(new SectionResolutionContextImpl(context, params, engine));
+        } catch (Throwable t) {
+            if (t instanceof TemplateException te) {
+                return CompletedStage.failure(te);
+            }
+            return CompletedStage.failure(new TemplateException(t));
+        }
     }
 
     @Override
@@ -58,6 +68,7 @@ public class SectionNode implements TemplateNode {
         return resolve(context, null);
     }
 
+    @Override
     public Origin getOrigin() {
         return origin;
     }
@@ -209,7 +220,9 @@ public class SectionNode implements TemplateNode {
             }
             List<SectionBlock> blocks = builder.build();
             return new SectionNode(helperName, blocks,
-                    factory.initialize(new SectionInitContextImpl(engine, blocks, errorInitializer, currentTemlate)), origin);
+                    factory.initialize(
+                            new SectionInitContextImpl(engine, blocks, errorInitializer, currentTemlate, helperName)),
+                    origin, engine);
         }
 
     }
@@ -218,10 +231,13 @@ public class SectionNode implements TemplateNode {
 
         private final Map<String, Object> params;
         private final ResolutionContext resolutionContext;
+        private final EngineImpl engine;
 
-        public SectionResolutionContextImpl(ResolutionContext resolutionContext, Map<String, Object> params) {
+        public SectionResolutionContextImpl(ResolutionContext resolutionContext, Map<String, Object> params,
+                EngineImpl engine) {
             this.resolutionContext = resolutionContext;
             this.params = params;
+            this.engine = engine;
         }
 
         @Override
@@ -235,7 +251,7 @@ public class SectionNode implements TemplateNode {
                 // Use the main block
                 block = blocks.get(0);
             }
-            return Results.resolveAndProcess(block.nodes, context);
+            return Results.resolveAndProcess(block.nodes, context, engine);
         }
 
         @Override
@@ -245,8 +261,14 @@ public class SectionNode implements TemplateNode {
 
         @Override
         public ResolutionContext newResolutionContext(Object data, Map<String, SectionBlock> extendingBlocks) {
-            return new ResolutionContextImpl(data, resolutionContext.getEvaluator(), extendingBlocks,
-                    resolutionContext::getAttribute);
+            if (resolutionContext instanceof ResolutionContextImpl rc) {
+                return new ResolutionContextImpl(data, resolutionContext.getEvaluator(), extendingBlocks,
+                        rc.getTemplateInstance());
+            } else if (resolutionContext instanceof ChildResolutionContext child) {
+                return new ResolutionContextImpl(data, resolutionContext.getEvaluator(), extendingBlocks,
+                        child.getTemplateInstance());
+            }
+            throw new IllegalStateException();
         }
 
         @Override

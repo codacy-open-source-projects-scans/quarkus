@@ -2,7 +2,7 @@ package io.quarkus.resteasy.reactive.server.runtime;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.function.Supplier;
 
 import org.jboss.resteasy.reactive.server.core.Deployment;
@@ -12,33 +12,38 @@ import org.jboss.resteasy.reactive.server.spi.RuntimeConfiguration;
 
 import io.quarkus.runtime.RuntimeValue;
 import io.quarkus.runtime.annotations.Recorder;
-import io.quarkus.vertx.http.runtime.HttpConfiguration;
+import io.quarkus.vertx.http.runtime.VertxHttpConfig;
 
 @Recorder
 public class ResteasyReactiveRuntimeRecorder {
 
-    final HttpConfiguration httpConf;
+    private final RuntimeValue<ResteasyReactiveServerRuntimeConfig> runtimeConfig;
+    private final RuntimeValue<VertxHttpConfig> httpRuntimeConfig;
 
-    public ResteasyReactiveRuntimeRecorder(HttpConfiguration httpConf) {
-        this.httpConf = httpConf;
+    public ResteasyReactiveRuntimeRecorder(
+            final RuntimeValue<ResteasyReactiveServerRuntimeConfig> runtimeConfig,
+            final RuntimeValue<VertxHttpConfig> httpRuntimeConfig) {
+        this.runtimeConfig = runtimeConfig;
+        this.httpRuntimeConfig = httpRuntimeConfig;
     }
 
-    public Supplier<RuntimeConfiguration> runtimeConfiguration(RuntimeValue<Deployment> deployment,
-            ResteasyReactiveServerRuntimeConfig runtimeConf) {
-        Optional<Long> maxBodySize;
+    public Supplier<RuntimeConfiguration> runtimeConfiguration(RuntimeValue<Deployment> deployment) {
+        ResteasyReactiveServerRuntimeConfig runtimeConfig = this.runtimeConfig.getValue();
+        VertxHttpConfig httpRuntimeConfig = this.httpRuntimeConfig.getValue();
 
-        if (httpConf.limits.maxBodySize.isPresent()) {
-            maxBodySize = Optional.of(httpConf.limits.maxBodySize.get().asLongValue());
+        OptionalLong maxBodySize;
+        if (httpRuntimeConfig.limits().maxBodySize().isPresent()) {
+            maxBodySize = OptionalLong.of(httpRuntimeConfig.limits().maxBodySize().get().asLongValue());
         } else {
-            maxBodySize = Optional.empty();
+            maxBodySize = OptionalLong.empty();
         }
 
-        RuntimeConfiguration runtimeConfiguration = new DefaultRuntimeConfiguration(httpConf.readTimeout,
-                httpConf.body.deleteUploadedFilesOnEnd, httpConf.body.uploadsDirectory,
-                httpConf.body.multipart.fileContentTypes.orElse(null),
-                runtimeConf.multipart().inputPart().defaultCharset(), maxBodySize,
-                httpConf.limits.maxFormAttributeSize.asLongValue(),
-                httpConf.limits.maxParameters);
+        RuntimeConfiguration runtimeConfiguration = new DefaultRuntimeConfiguration(httpRuntimeConfig.readTimeout(),
+                httpRuntimeConfig.body().deleteUploadedFilesOnEnd(), httpRuntimeConfig.body().uploadsDirectory(),
+                httpRuntimeConfig.body().multipart().fileContentTypes().orElse(null),
+                runtimeConfig.multipart().inputPart().defaultCharset(), maxBodySize,
+                httpRuntimeConfig.limits().maxFormAttributeSize().asLongValue(),
+                httpRuntimeConfig.limits().maxParameters());
 
         deployment.getValue().setRuntimeConfiguration(runtimeConfiguration);
 

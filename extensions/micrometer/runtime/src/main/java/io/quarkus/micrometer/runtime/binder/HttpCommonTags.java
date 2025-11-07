@@ -59,7 +59,7 @@ public class HttpCommonTags {
      * @param code status code of the response
      * @return the uri tag derived from the request
      */
-    public static Tag uri(String pathInfo, String initialPath, int code) {
+    public static Tag uri(String pathInfo, String initialPath, int code, boolean suppress4xxErrors) {
         if (pathInfo == null) {
             return URI_UNKNOWN;
         }
@@ -80,6 +80,17 @@ public class HttpCommonTags {
                 } else {
                     return URI_NOT_FOUND;
                 }
+            } else if (code >= 400) {
+                if (!suppress4xxErrors) {
+                    // legacy behaviour
+                    return Tag.of("uri", pathInfo);
+                } else if (isTemplatedPath(pathInfo, initialPath)) {
+                    return Tag.of("uri", pathInfo);
+                } else {
+                    // Do not return the path info as it can lead to a metrics explosion
+                    // for 4xx and 5xx responses
+                    return URI_UNKNOWN;
+                }
             }
         }
 
@@ -89,6 +100,8 @@ public class HttpCommonTags {
 
     private static boolean isTemplatedPath(String pathInfo, String initialPath) {
         // only include the path info if it has been matched to a template (initialPath != pathInfo) to avoid a metrics explosion with lots of entries
-        return initialPath != null && !Objects.equals(initialPath, pathInfo);
+        // /not-there/ must have the same behaviour as /not-there
+        return initialPath != null && !(Objects.equals(initialPath, pathInfo) ||
+                Objects.equals(initialPath, pathInfo + "/"));
     }
 }

@@ -1,6 +1,5 @@
 package io.quarkus.smallrye.faulttolerance.deployment;
 
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -26,6 +25,7 @@ import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.AnnotationsTransformerBuildItem;
 import io.quarkus.arc.deployment.BeanArchiveIndexBuildItem;
 import io.quarkus.arc.deployment.BeanDefiningAnnotationBuildItem;
+import io.quarkus.arc.deployment.OpenTelemetrySdkBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem;
 import io.quarkus.arc.processor.AnnotationStore;
 import io.quarkus.arc.processor.AnnotationsTransformer;
@@ -33,16 +33,16 @@ import io.quarkus.arc.processor.BeanInfo;
 import io.quarkus.arc.processor.BuildExtension;
 import io.quarkus.arc.processor.BuiltinScope;
 import io.quarkus.deployment.Feature;
-import io.quarkus.deployment.GeneratedClassGizmoAdaptor;
+import io.quarkus.deployment.GeneratedClassGizmo2Adaptor;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.AnnotationProxyBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
-import io.quarkus.deployment.builditem.ConfigurationTypeBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
+import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
 import io.quarkus.deployment.builditem.RunTimeConfigurationDefaultBuildItem;
 import io.quarkus.deployment.builditem.SystemPropertyBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
@@ -51,7 +51,7 @@ import io.quarkus.deployment.builditem.nativeimage.RuntimeInitializedClassBuildI
 import io.quarkus.deployment.builditem.nativeimage.ServiceProviderBuildItem;
 import io.quarkus.deployment.metrics.MetricsCapabilityBuildItem;
 import io.quarkus.deployment.recording.RecorderContext;
-import io.quarkus.gizmo.ClassOutput;
+import io.quarkus.gizmo2.ClassOutput;
 import io.quarkus.runtime.metrics.MetricsFactory;
 import io.quarkus.smallrye.faulttolerance.deployment.devui.FaultToleranceInfoBuildItem;
 import io.quarkus.smallrye.faulttolerance.runtime.QuarkusAsyncExecutorProvider;
@@ -85,6 +85,7 @@ public class SmallRyeFaultToleranceProcessor {
             BuildProducer<ServiceProviderBuildItem> serviceProvider,
             BuildProducer<BeanDefiningAnnotationBuildItem> additionalBda,
             Optional<MetricsCapabilityBuildItem> metricsCapability,
+            Optional<OpenTelemetrySdkBuildItem> openTelemetrySdk,
             BuildProducer<SystemPropertyBuildItem> systemProperty,
             CombinedIndexBuildItem combinedIndexBuildItem,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
@@ -177,14 +178,24 @@ public class SmallRyeFaultToleranceProcessor {
                         SpecCompatibility.class,
                         Enablement.class);
 
-        if (metricsCapability.isEmpty()) {
-            builder.addBeanClass("io.smallrye.faulttolerance.metrics.NoopProvider");
-        } else if (metricsCapability.get().metricsSupported(MetricsFactory.MP_METRICS)) {
+        int metricsProviders = 0;
+        if (metricsCapability.isPresent() && metricsCapability.get().metricsSupported(MetricsFactory.MP_METRICS)) {
             builder.addBeanClass("io.smallrye.faulttolerance.metrics.MicroProfileMetricsProvider");
-        } else if (metricsCapability.get().metricsSupported(MetricsFactory.MICROMETER)) {
+            metricsProviders++;
+        } else if (metricsCapability.isPresent() && metricsCapability.get().metricsSupported(MetricsFactory.MICROMETER)) {
             builder.addBeanClass("io.smallrye.faulttolerance.metrics.MicrometerProvider");
+            metricsProviders++;
         }
-        // TODO support for OpenTelemetry Metrics -- not present in Quarkus yet
+        if (openTelemetrySdk.map(OpenTelemetrySdkBuildItem::isMetricsBuildTimeEnabled).orElse(false)) {
+            builder.addBeanClass("io.smallrye.faulttolerance.metrics.OpenTelemetryProvider");
+            metricsProviders++;
+        }
+
+        if (metricsProviders == 0) {
+            builder.addBeanClass("io.smallrye.faulttolerance.metrics.NoopProvider");
+        } else if (metricsProviders > 1) {
+            builder.addBeanClass("io.smallrye.faulttolerance.metrics.CompoundMetricsProvider");
+        }
 
         beans.produce(builder.build());
 
@@ -237,6 +248,7 @@ public class SmallRyeFaultToleranceProcessor {
             BeanArchiveIndexBuildItem beanArchiveIndexBuildItem,
             AnnotationProxyBuildItem annotationProxy,
             BuildProducer<GeneratedClassBuildItem> generatedClasses,
+            BuildProducer<GeneratedResourceBuildItem> generatedResources,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
             BuildProducer<ReflectiveMethodBuildItem> reflectiveMethod,
             BuildProducer<ValidationPhaseBuildItem.ValidationErrorBuildItem> errors,
@@ -259,7 +271,7 @@ public class SmallRyeFaultToleranceProcessor {
         IndexView index = beanArchiveIndexBuildItem.getIndex();
         // only generating annotation literal classes for MicroProfile/SmallRye Fault Tolerance annotations,
         // none of them are application classes
-        ClassOutput classOutput = new GeneratedClassGizmoAdaptor(generatedClasses, false);
+        ClassOutput classOutput = new GeneratedClassGizmo2Adaptor(generatedClasses, generatedResources, false);
 
         FaultToleranceScanner scanner = new FaultToleranceScanner(index, annotationStore, annotationProxy, classOutput,
                 recorderContext, reflectiveMethod);
@@ -302,6 +314,8 @@ public class SmallRyeFaultToleranceProcessor {
                     FaultToleranceMethod ftMethod = scanner.createFaultToleranceMethod(beanClass, method);
                     if (ftMethod.isLegitimate()) {
                         ftMethods.add(ftMethod);
+
+                        reflectiveMethod.produce(new ReflectiveMethodBuildItem("fault tolerance method", method));
 
                         if (annotationStore.hasAnnotation(method, DotNames.ASYNCHRONOUS)
                                 && annotationStore.hasAnnotation(method, DotNames.ASYNCHRONOUS_NON_BLOCKING)) {
@@ -402,10 +416,5 @@ public class SmallRyeFaultToleranceProcessor {
 
         // dev UI
         faultToleranceInfo.produce(new FaultToleranceInfoBuildItem(ftMethods.size()));
-    }
-
-    @BuildStep
-    public ConfigurationTypeBuildItem registerTypes() {
-        return new ConfigurationTypeBuildItem(ChronoUnit.class);
     }
 }

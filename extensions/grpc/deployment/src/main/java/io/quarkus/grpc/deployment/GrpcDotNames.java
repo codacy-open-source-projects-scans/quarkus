@@ -12,7 +12,7 @@ import io.grpc.ClientInterceptor;
 import io.grpc.ServerInterceptor;
 import io.grpc.stub.AbstractBlockingStub;
 import io.grpc.stub.AbstractStub;
-import io.quarkus.gizmo.MethodDescriptor;
+import io.quarkus.gizmo2.desc.MethodDesc;
 import io.quarkus.grpc.GlobalInterceptor;
 import io.quarkus.grpc.GrpcClient;
 import io.quarkus.grpc.GrpcService;
@@ -24,6 +24,8 @@ import io.quarkus.grpc.MutinyStub;
 import io.quarkus.grpc.RegisterClientInterceptor;
 import io.quarkus.grpc.RegisterInterceptor;
 import io.quarkus.grpc.RegisterInterceptors;
+import io.quarkus.grpc.api.ChannelBuilderCustomizer;
+import io.quarkus.grpc.api.ServerBuilderCustomizer;
 import io.quarkus.grpc.runtime.supports.Channels;
 import io.quarkus.grpc.runtime.supports.GrpcClientConfigProvider;
 import io.smallrye.common.annotation.Blocking;
@@ -58,17 +60,20 @@ public class GrpcDotNames {
             .createSimple(RegisterClientInterceptor.List.class.getName());
     public static final DotName CLIENT_INTERCEPTOR = DotName.createSimple(ClientInterceptor.class.getName());
 
-    static final MethodDescriptor CREATE_CHANNEL_METHOD = MethodDescriptor.ofMethod(Channels.class, "createChannel",
+    public static final DotName CHANNEL_BUILDER_CUSTOMIZER = DotName.createSimple(ChannelBuilderCustomizer.class.getName());
+    public static final DotName SERVER_BUILDER_CUSTOMIZER = DotName.createSimple(ServerBuilderCustomizer.class.getName());
+
+    static final MethodDesc CREATE_CHANNEL_METHOD = MethodDesc.of(Channels.class, "createChannel",
             Channel.class, String.class, Set.class);
-    static final MethodDescriptor RETRIEVE_CHANNEL_METHOD = MethodDescriptor.ofMethod(Channels.class, "retrieveChannel",
+    static final MethodDesc RETRIEVE_CHANNEL_METHOD = MethodDesc.of(Channels.class, "retrieveChannel",
             Channel.class, String.class, Set.class);
 
-    static final MethodDescriptor CONFIGURE_STUB = MethodDescriptor.ofMethod(GrpcClientConfigProvider.class,
-            "configureStub", AbstractStub.class, String.class, AbstractStub.class);
-    static final MethodDescriptor ADD_BLOCKING_CLIENT_INTERCEPTOR = MethodDescriptor.ofMethod(GrpcClientConfigProvider.class,
+    static final MethodDesc CONFIGURE_STUB = MethodDesc.of(GrpcClientConfigProvider.class, "configureStub",
+            AbstractStub.class, String.class, AbstractStub.class);
+    static final MethodDesc ADD_BLOCKING_CLIENT_INTERCEPTOR = MethodDesc.of(GrpcClientConfigProvider.class,
             "addBlockingClientInterceptor", AbstractStub.class, AbstractStub.class);
-    static final MethodDescriptor GET_STUB_CONFIGURATOR = MethodDescriptor.ofMethod(GrpcClientConfigProvider.class,
-            "getStubConfigurator", BiFunction.class);
+    static final MethodDesc GET_STUB_CONFIGURATOR = MethodDesc.of(GrpcClientConfigProvider.class, "getStubConfigurator",
+            BiFunction.class);
 
     static boolean isGrpcClient(AnnotationInstance instance) {
         return instance.name().equals(GRPC_CLIENT);

@@ -5,11 +5,13 @@ import java.util.List;
 import org.jboss.jandex.DotName;
 
 import io.quarkus.websockets.next.CloseReason;
+import io.quarkus.websockets.next.Connection;
 import io.quarkus.websockets.next.HandshakeRequest;
 import io.quarkus.websockets.next.OnBinaryMessage;
 import io.quarkus.websockets.next.OnClose;
 import io.quarkus.websockets.next.OnError;
 import io.quarkus.websockets.next.OnOpen;
+import io.quarkus.websockets.next.OnPingMessage;
 import io.quarkus.websockets.next.OnPongMessage;
 import io.quarkus.websockets.next.OnTextMessage;
 import io.quarkus.websockets.next.PathParam;
@@ -31,12 +33,14 @@ final class WebSocketDotNames {
 
     static final DotName WEB_SOCKET = DotName.createSimple(WebSocket.class);
     static final DotName WEB_SOCKET_CLIENT = DotName.createSimple(WebSocketClient.class);
+    static final DotName CONNECTION = DotName.createSimple(Connection.class);
     static final DotName WEB_SOCKET_CONNECTION = DotName.createSimple(WebSocketConnection.class);
     static final DotName WEB_SOCKET_CLIENT_CONNECTION = DotName.createSimple(WebSocketClientConnection.class);
     static final DotName WEB_SOCKET_CONNECTOR = DotName.createSimple(WebSocketConnector.class);
     static final DotName ON_OPEN = DotName.createSimple(OnOpen.class);
     static final DotName ON_TEXT_MESSAGE = DotName.createSimple(OnTextMessage.class);
     static final DotName ON_BINARY_MESSAGE = DotName.createSimple(OnBinaryMessage.class);
+    static final DotName ON_PING_MESSAGE = DotName.createSimple(OnPingMessage.class);
     static final DotName ON_PONG_MESSAGE = DotName.createSimple(OnPongMessage.class);
     static final DotName ON_CLOSE = DotName.createSimple(OnClose.class);
     static final DotName ON_ERROR = DotName.createSimple(OnError.class);
@@ -57,5 +61,5 @@ final class WebSocketDotNames {
     static final DotName TRANSACTIONAL = DotName.createSimple("jakarta.transaction.Transactional");
 
     static final List<DotName> CALLBACK_ANNOTATIONS = List.of(ON_OPEN, ON_CLOSE, ON_BINARY_MESSAGE, ON_TEXT_MESSAGE,
-            ON_PONG_MESSAGE, ON_ERROR);
+            ON_PING_MESSAGE, ON_PONG_MESSAGE, ON_ERROR);
 }

@@ -15,12 +15,7 @@ import io.smallrye.config.WithDefault;
 import io.smallrye.config.WithParentName;
 
 /**
- * Testing
- * <p>
- * This is used currently only to suppress warnings about unknown properties
- * when the user supplies something like: -Dquarkus.test.profile=someProfile or -Dquarkus.test.native-image-profile=someProfile
- * <p>
- * TODO refactor code to actually use these values
+ * Testing configuration.
  */
 @ConfigMapping(prefix = "quarkus.test")
 @ConfigRoot(phase = ConfigPhase.BUILD_TIME)
@@ -106,45 +101,6 @@ public interface TestConfig {
     Optional<List<String>> excludeEngines();
 
     /**
-     * Disable the testing status/prompt message at the bottom of the console
-     * and log these messages to STDOUT instead.
-     * <p>
-     * Use this option if your terminal does not support ANSI escape sequences.
-     * <p>
-     * This is deprecated, {@literal quarkus.console.basic} should be used instead.
-     */
-    @Deprecated
-    Optional<Boolean> basicConsole();
-
-    /**
-     * Disable color in the testing status and prompt messages.
-     * <p>
-     * Use this option if your terminal does not support color.
-     * <p>
-     * This is deprecated, {@literal quarkus.console.disable-color} should be used instead.
-     */
-    @Deprecated
-    Optional<Boolean> disableColor();
-
-    /**
-     * If test results and status should be displayed in the console.
-     * <p>
-     * If this is false results can still be viewed in the dev console.
-     * <p>
-     * This is deprecated, {@literal quarkus.console.enabled} should be used instead.
-     */
-    @Deprecated
-    Optional<Boolean> console();
-
-    /**
-     * Disables the ability to enter input on the console.
-     * <p>
-     * This is deprecated, {@literal quarkus.console.disable-input} should be used instead.
-     */
-    @Deprecated
-    Optional<Boolean> disableConsoleInput();
-
-    /**
      * Changes tests to use the 'flat' ClassPath used in Quarkus 1.x versions.
      * <p>
      * This means all Quarkus and test classes are loaded in the same ClassLoader,
@@ -156,12 +112,6 @@ public interface TestConfig {
      */
     @WithDefault("false")
     boolean flatClassPath();
-
-    /**
-     * The profile to use when testing the native image
-     */
-    @WithDefault("prod")
-    String nativeImageProfile();
 
     /**
      * The profile to use when testing using {@code @QuarkusIntegrationTest}
@@ -180,12 +130,17 @@ public interface TestConfig {
     Container container();
 
     /**
+     * RestAssured related test settings
+     */
+    RestAssured restAssured();
+
+    /**
      * Additional launch parameters to be used when Quarkus launches the produced artifact for {@code @QuarkusIntegrationTest}
      * When the artifact is a {@code jar}, this string is passed right after the {@code java} command.
      * When the artifact is a {@code container}, this string is passed right after the {@code docker run} command.
      * When the artifact is a {@code native binary}, this string is passed right after the native binary name.
      */
-    Optional<@WithConverter(TrimmedStringConverter.class) List<String>> argLine();
+    Optional<@WithConverter(TrimmedStringConverter.class) String> argLine();
 
     /**
      * Additional environment variables to be set in the process that {@code @QuarkusIntegrationTest} launches.
@@ -222,17 +177,6 @@ public interface TestConfig {
     TestType type();
 
     /**
-     * If a class matches this pattern then it will be cloned into the Quarkus ClassLoader even if it
-     * is in a parent first artifact.
-     * <p>
-     * This is important for collections which can contain objects from the Quarkus ClassLoader, but for
-     * most parent first classes it will just cause problems.
-     */
-    @WithDefault("java\\..*")
-    @Deprecated(forRemoval = true)
-    String classClonePattern();
-
-    /**
      * If this is true then only the tests from the main application module will be run (i.e. the module that is currently
      * running mvn quarkus:dev).
      * <p>
@@ -260,6 +204,16 @@ public interface TestConfig {
      */
     @WithDefault("false")
     boolean enableCallbacksForIntegrationTests();
+
+    /**
+     * Used to override the artifact type against which a {@code @QuarkusIntegrationTest} or {@code @QuarkusMainIntegrationTest}
+     * run.
+     * For example, if the application's artifact is a container build from a jar, this property could be used to test the jar
+     * instead of the container.
+     * <p>
+     * Allowed values are: jar, native
+     */
+    Optional<String> integrationTestArtifactType();
 
     interface Profile {
         /**
@@ -303,6 +257,14 @@ public interface TestConfig {
          */
         @ConfigDocMapKey("host-path")
         Map<String, String> volumeMounts();
+    }
+
+    interface RestAssured {
+        /**
+         * Enable logging of both the request and the response if REST Assureds test validation fails
+         */
+        @WithDefault("true")
+        boolean enableLoggingOnFailure();
     }
 
     enum Mode {

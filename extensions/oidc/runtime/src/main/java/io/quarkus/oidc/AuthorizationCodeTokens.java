@@ -9,6 +9,7 @@ public class AuthorizationCodeTokens {
     private String accessToken;
     private String refreshToken;
     private Long accessTokenExpiresIn;
+    private String accessTokenScope;
 
     public AuthorizationCodeTokens() {
     }
@@ -18,10 +19,16 @@ public class AuthorizationCodeTokens {
     }
 
     public AuthorizationCodeTokens(String idToken, String accessToken, String refreshToken, Long accessTokenExpiresIn) {
+        this(idToken, accessToken, refreshToken, accessTokenExpiresIn, null);
+    }
+
+    public AuthorizationCodeTokens(String idToken, String accessToken, String refreshToken, Long accessTokenExpiresIn,
+            String accessTokenScope) {
         this.idToken = idToken;
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
         this.accessTokenExpiresIn = accessTokenExpiresIn;
+        this.accessTokenScope = accessTokenScope;
     }
 
     /**
@@ -91,11 +98,28 @@ public class AuthorizationCodeTokens {
     /**
      * Set the access token expires_in value in seconds.
      * It is relative to the time the access token is issued at.
-     * This property is only checked when an authorization code flow grant completes and does not have to be persisted..
      *
      * @param accessTokenExpiresIn access token expires_in value in seconds.
      */
     public void setAccessTokenExpiresIn(Long accessTokenExpiresIn) {
         this.accessTokenExpiresIn = accessTokenExpiresIn;
+    }
+
+    /**
+     * Get the access token scope.
+     *
+     * @return access token scope.
+     */
+    public String getAccessTokenScope() {
+        return accessTokenScope;
+    }
+
+    /**
+     * Set the access token scope.
+     *
+     * @param accessTokenScope access token scope.
+     */
+    public void setAccessTokenScope(String accessTokenScope) {
+        this.accessTokenScope = accessTokenScope;
     }
 }

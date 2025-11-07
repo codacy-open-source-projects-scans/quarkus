@@ -25,7 +25,7 @@ The configuration of such providers can become complex, very technical and diffi
 
 `quarkus.oidc.provider` configuration property has been introduced to refer to well-known OpenID Connect and OAuth2 providers. This property can be used to refer to a provider such as `github` with only a minimum number of customizations required, typically, an account specific `client id`, `client secret` and some properties have to be set to complete the configuration.
 
-This property can be used in `application.properties`, in xref:security-openid-connect-multitenancy.adoc[multi-tenant] set-ups if more than one provider has to be configured (for example, see https://docs.quarkiverse.io/quarkus-renarde/dev/security.html#_using_oidc_for_login[Quarkus Renarde security documentation]), in custom xref:security-openid-connect-multitenancy.adoc#tenant-config-resolver[TenantConfigResolvers] if the tenant configurations are created dynamically.
+This property can be used in `application.properties` and in custom xref:security-openid-connect-multitenancy.adoc#tenant-config-resolver[TenantConfigResolvers] if the tenant configurations are created dynamically.
 
 == Well Known Providers
 
@@ -161,7 +161,7 @@ quarkus.oidc.credentials.client-secret=<Client Secret>
 [[facebook]]
 === Facebook
 
-Facebook you will not be let you test your application on `localhost` like most other OIDC providers:
+Facebook will not let you test your application on `localhost` like most other OIDC providers:
 you will need to run it over HTTPS and make it publicly accessible, so for development purposes
 you may want to use a service such as https://ngrok.com.
 
@@ -229,6 +229,21 @@ quarkus.oidc.provider=github
 quarkus.oidc.client-id=<Client ID>
 quarkus.oidc.credentials.secret=<Secret>
 ----
+
+[NOTE]
+====
+By default, Quarkus GitHub provider submits the client id and secret in the HTTP Authorization header.
+However, GitHub may require that both client id and secret are submitted as form parameters instead.
+When you get HTTP 401 error after logging in to GitHub and being redirected back to Quarkus MCP server,
+replace the `quarkus.oidc.credentials.secret=<Secret>` property
+with the following two properties instead:
+
+[source,properties]
+----
+quarkus.oidc.credentials.client-secret.method=post
+quarkus.oidc.credentials.client-secret.value=<Secret>
+----
+====
 
 `quarkus.oidc.provider=github` will request GitHub to add a `user:email` scope to issued access tokens. For information about overriding this scope or requesting more scopes, see the  <<provider-scope>> section.
 
@@ -631,7 +646,7 @@ package org.acme.calendar;
 
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 
-import io.quarkus.oidc.token.propagation.AccessToken;
+import io.quarkus.oidc.token.propagation.common.AccessToken;
 import io.smallrye.mutiny.Uni;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
@@ -771,7 +786,7 @@ It may not be a problem when Quarkus fetches public verification keys from OIDC-
 
 Therefore, UserInfo is embedded in an internally generated ID token and is encrypted in the session cookie. You can disable it with `quarkus.oidc.cache-user-info-in-idtoken=false`.
 
-Alternatively, use a default or custom UserInfo cache provider, please see the xref:security-oidc-bearer-token-authentication#bearer-token-token-introspection-userinfo-cache[Token Introspection and UserInfo cache] section of the "OpenID Connect (OIDC) Bearer token authentication" guide.
+Alternatively, use a default or custom UserInfo cache provider, please see the xref:security-oidc-bearer-token-authentication.adoc#bearer-token-token-introspection-userinfo-cache[Token Introspection and UserInfo cache] section of the "OpenID Connect (OIDC) Bearer token authentication" guide.
 
 == References
 

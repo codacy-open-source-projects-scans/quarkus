@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 
 import io.quarkus.oidc.JavaScriptRequestChecker;
 import io.quarkus.oidc.TenantConfigResolver;
@@ -139,6 +140,41 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
      */
     @ConfigDocSection
     Roles roles();
+
+    /**
+     * Configuration to provide protected resource metadata.
+     */
+    @ConfigDocSection
+    ResourceMetadata resourceMetadata();
+
+    /**
+     * Protected resource metadata.
+     */
+    interface ResourceMetadata {
+        /**
+         * If the resource metadata can be provided.
+         */
+        @WithDefault("false")
+        boolean enabled();
+
+        /**
+         * Protected resource identifier.
+         */
+        Optional<String> resource();
+
+        /**
+         * Authorization server URL.
+         * 'quarkus.oidc.auth-server-url' property value is reported by default.
+         */
+        Optional<String> authorizationServer();
+
+        /**
+         * Force a protected resource identifier HTTPS scheme.
+         * This property is ignored if {@link #resource() is an absolute URL}
+         */
+        @WithDefault("true")
+        boolean forceHttpsScheme();
+    }
 
     /**
      * Configuration to customize validation of token claims.
@@ -291,6 +327,72 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
          * Front-Channel Logout configuration
          */
         Frontchannel frontchannel();
+
+        enum ClearSiteData {
+            /**
+             * Clear cache
+             */
+            CACHE("cache"),
+
+            /**
+             * Clear client hints.
+             */
+            CLIENT_HINTS("clientHints"),
+
+            /**
+             * Clear cookies.
+             */
+            COOKIES("cookies"),
+
+            /**
+             * Clear execution contexts
+             */
+            EXECUTION_CONTEXTS("executionContexts"),
+
+            /**
+             * Clear storage
+             */
+            STORAGE("storage"),
+
+            /**
+             * Clear all types of data
+             */
+            WILDCARD("*");
+
+            private String directive;
+
+            private ClearSiteData(String directive) {
+                this.directive = directive;
+            }
+
+            public String directive() {
+                return "\"" + directive + "\"";
+            }
+        }
+
+        /**
+         * Clear-Site-Data header directives
+         */
+        Optional<Set<ClearSiteData>> clearSiteData();
+
+        enum LogoutMode {
+            /**
+             * Logout parameters are encoded in the query string
+             */
+            QUERY,
+
+            /**
+             * Logout parameters are encoded as HTML form values that are auto-submitted in the browser
+             * and transmitted by the HTTP POST method using the application/x-www-form-urlencoded content type
+             */
+            FORM_POST
+        }
+
+        /**
+         * Logout mode
+         */
+        @WithDefault("query")
+        LogoutMode logoutMode();
     }
 
     interface Backchannel {
@@ -555,6 +657,32 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
         Optional<ResponseMode> responseMode();
 
         /**
+         * Supported cache control directives
+         */
+        enum CacheControl {
+            NO_STORE("no-store");
+
+            private String dir;
+
+            CacheControl(String dir) {
+                this.dir = dir;
+            }
+
+            String directive() {
+                return dir;
+            }
+        }
+
+        /**
+         * Set of cache-control directives that must be set when a new session cookie is created,
+         * either after a successful authorization code completion or token refresh.
+         * <p>
+         * Currently, only a `no-store` directive that prohibits caching the session cookie anywhere in the client request chain
+         * can be configured.
+         */
+        Optional<Set<CacheControl>> cacheControl();
+
+        /**
          * The relative path for calculating a `redirect_uri` query parameter.
          * It has to start from a forward slash and is appended to the request URI's host and port.
          * For example, if the current request URI is `https://localhost:8080/service`, a `redirect_uri` parameter
@@ -676,7 +804,7 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
         /**
          * Request URL query parameters which, if present, are added to the authentication redirect URI.
          */
-        Optional<@WithConverter(TrimmedStringConverter.class) List<String>> forwardParams();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> forwardParams();
 
         /**
          * If enabled the state, session, and post logout cookies have their `secure` parameter set to `true`
@@ -757,6 +885,19 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
         boolean failOnMissingStateParam();
 
         /**
+         * Fail with the HTTP 401 error if the ID token signature can not be verified during the re-authentication only due to
+         * an unresolved token key identifier (`kid`).
+         * <p>
+         * This property might need to be disabled when multiple tab authentications are allowed, with one of the tabs keeping
+         * an expired ID token with its `kid`
+         * unresolved due to the verification key set refreshed due to another tab initiating an authorization code flow. In
+         * such cases, instead of failing with the HTTP 401 error,
+         * redirecting the user to re-authenticate with the HTTP 302 status may provide better user experience.
+         */
+        @WithDefault("true")
+        boolean failOnUnresolvedKid();
+
+        /**
          * If this property is set to `true`, an OIDC UserInfo endpoint is called.
          * <p>
          * This property is enabled automatically if `quarkus.oidc.roles.source` is set to `userinfo`
@@ -819,9 +960,10 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
 
         /**
          * Internal ID token lifespan.
-         * This property is only checked when an internal IdToken is generated when Oauth2 providers do not return IdToken.
+         * This property is only checked when an internal IdToken is generated when OAuth2 providers do not return IdToken.
+         * If this property is not configured then an access token `expires_in` property
+         * in the OAuth2 authorization code flow response is used to set an internal IdToken lifespan.
          */
-        @ConfigDocDefault("5M")
         Optional<Duration> internalIdTokenLifespan();
 
         /**
@@ -940,13 +1082,14 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
 
         /**
          * A map of required claims and their expected values.
-         * For example, `quarkus.oidc.token.required-claims.org_id = org_xyz` would require tokens to have the `org_id` claim to
-         * be present and set to `org_xyz`.
-         * Strings are the only supported types. Use {@linkplain SecurityIdentityAugmentor} to verify claims of other types or
-         * complex claims.
+         * For example, `quarkus.oidc.token.required-claims.org_id = org_xyz` would require tokens to have the `org_id`
+         * claim to be present and set to `org_xyz`. On the other hand, if it was set to `org_xyz,org_abc`,
+         * the `org_id` claim would need to have both `org_xyz` and `org_abc` values.
+         * Strings and arrays of strings are currently the only supported types.
+         * Use {@linkplain SecurityIdentityAugmentor} to verify claims of other types or complex claims.
          */
         @ConfigDocMapKey("claim-name")
-        Map<String, String> requiredClaims();
+        Map<String, Set<@WithConverter(TrimmedStringConverter.class) String>> requiredClaims();
 
         /**
          * Expected token type
@@ -1006,7 +1149,7 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
          * For this option be effective the `authentication.session-age-extension` property should also be set to a nonzero
          * value since the refresh token is currently kept in the user session.
          *
-         * This option is valid only when the application is of type {@link ApplicationType#WEB_APP}}.
+         * This option is valid only when the application is of type {@link ApplicationType#WEB_APP}.
          *
          * This property is enabled if `quarkus.oidc.token.refresh-token-time-skew` is configured,
          * you do not need to enable this property manually in this case.
@@ -1031,7 +1174,7 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
 
         /**
          * Custom HTTP header that contains a bearer token.
-         * This option is valid only when the application is of type {@link ApplicationType#SERVICE}}.
+         * This option is valid only when the application is of type {@link ApplicationType#SERVICE}.
          */
         Optional<String> header();
 
@@ -1049,16 +1192,30 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
         Optional<SignatureAlgorithm> signatureAlgorithm();
 
         /**
-         * Decryption key location.
-         * JWT tokens can be inner-signed and encrypted by OpenId Connect providers.
-         * However, it is not always possible to remotely introspect such tokens because
-         * the providers might not control the private decryption keys.
-         * In such cases set this property to point to the file containing the decryption private key in
-         * PEM or JSON Web Key (JWK) format.
-         * If this property is not set and the `private_key_jwt` client authentication method is used, the private key
-         * used to sign the client authentication JWT tokens are also used to decrypt the encrypted ID tokens.
+         * Decryption key location for encrypted ID and access tokens.
          */
         Optional<String> decryptionKeyLocation();
+
+        /**
+         * Decrypt ID token.
+         *
+         * If the {@link Token#decryptionKeyLocation()} property is configured then the decryption key will be loaded from this
+         * location.
+         * Otherwise, if the JWT authentication token key is available, then it will be used to decrypt the token.
+         * Finally, if a client secret is configured, it will be used as a secret key to decrypt the token.
+         */
+        Optional<Boolean> decryptIdToken();
+
+        /**
+         * Decrypt access token.
+         *
+         * If the {@link Token#decryptionKeyLocation()} property is configured then the decryption key will be loaded from this
+         * location.
+         * Otherwise, if the JWT authentication token key is available, then it will be used to decrypt the token.
+         * Finally, if a client secret is configured, it will be used as a secret key to decrypt the token.
+         */
+        @WithDefault("false")
+        boolean decryptAccessToken();
 
         /**
          * Allow the remote introspection of JWT tokens when no matching JWK key is available.
@@ -1106,6 +1263,24 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
         @ConfigDocDefault("false")
         Optional<Boolean> verifyAccessTokenWithUserInfo();
 
+        /**
+         * Token certificate binding options.
+         */
+        Binding binding();
+
+    }
+
+    interface Binding {
+
+        /**
+         * If a bearer access token must be bound to the client mTLS certificate.
+         * It requires that JWT tokens must contain a confirmation `cnf` claim with a SHA256 certificate thumbprint
+         * matching the client mTLS certificate's SHA256 certificate thumbprint.
+         * <p>
+         * For opaque tokens, SHA256 certificate thumbprint must be returned in their introspection response.
+         */
+        @WithDefault("false")
+        boolean certificate();
     }
 
     enum ApplicationType {

@@ -17,8 +17,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import io.quarkus.cli.CliDriver;
-import io.quarkus.cli.build.ExecuteUtil;
-import io.quarkus.cli.build.GradleRunner;
+import io.quarkus.cli.common.build.ExecuteUtil;
+import io.quarkus.cli.common.build.GradleRunner;
 import io.quarkus.devtools.testing.RegistryClientTestHelper;
 import picocli.CommandLine;
 
@@ -28,7 +28,7 @@ import picocli.CommandLine;
 public class CliImageGradleTest {
 
     static final Path testProjectRoot = Paths.get(System.getProperty("user.dir")).toAbsolutePath()
-            .resolve("target/test-project/");
+            .resolve("target/test-classes/test-project/");
     static final Path workspaceRoot = testProjectRoot.resolve("CliImageGradleTest");
     static final Path wrapperRoot = testProjectRoot.resolve("gradle-wrapper");
 

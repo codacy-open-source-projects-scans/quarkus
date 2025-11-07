@@ -27,6 +27,9 @@ import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.process.JavaForkOptions;
 
+import io.quarkus.bootstrap.model.ApplicationModel;
+import io.quarkus.deployment.pkg.NativeConfig;
+import io.quarkus.deployment.pkg.PackageConfig;
 import io.quarkus.gradle.dsl.Manifest;
 import io.quarkus.maven.dependency.ResolvedDependency;
 import io.smallrye.common.expression.Expression;
@@ -80,7 +83,7 @@ public abstract class AbstractQuarkusExtension {
 
         // Used to handle the (deprecated) buildNative and testNative tasks.
         project.getExtensions().getExtraProperties().getProperties().forEach((k, v) -> {
-            if (k.startsWith("quarkus.")) {
+            if (k.startsWith("quarkus.") || k.startsWith("platform.quarkus.")) {
                 forcedPropertiesProperty.put(k, v.toString());
             }
         });
@@ -96,7 +99,7 @@ public abstract class AbstractQuarkusExtension {
         return new BaseConfig(effectiveConfig);
     }
 
-    protected BaseConfig baseConfig() {
+    public BaseConfig baseConfig() {
         this.baseConfig.finalizeValue();
         return this.baseConfig.get();
     }
@@ -113,11 +116,29 @@ public abstract class AbstractQuarkusExtension {
         return classpath;
     }
 
-    protected Manifest manifest() {
+    public Manifest manifest() {
         return baseConfig().manifest();
     }
 
-    protected EffectiveConfig buildEffectiveConfiguration(ResolvedDependency appArtifact) {
+    public Map<String, Attributes> getAttributes() {
+        return manifest().getSections();
+    }
+
+    public PackageConfig packageConfig() {
+        return baseConfig().packageConfig();
+    }
+
+    public Map<String, String> cachingRelevantProperties(List<String> propertyPatterns) {
+        return baseConfig().cachingRelevantProperties(propertyPatterns);
+    }
+
+    public NativeConfig nativeConfig() {
+        return baseConfig().nativeConfig();
+    }
+
+    protected EffectiveConfig buildEffectiveConfiguration(ApplicationModel appModel) {
+        ResolvedDependency appArtifact = appModel.getAppArtifact();
+
         Map<String, Object> properties = new HashMap<>();
         exportCustomManifestProperties(properties);
 
@@ -126,7 +147,7 @@ public abstract class AbstractQuarkusExtension {
 
         // Used to handle the (deprecated) buildNative and testNative tasks.
         project.getExtensions().getExtraProperties().getProperties().forEach((k, v) -> {
-            if (k.startsWith("quarkus.")) {
+            if (k.startsWith("quarkus.") || k.startsWith("platform.quarkus.")) {
                 forcedPropertiesProperty.put(k, v.toString());
             }
         });
@@ -140,6 +161,7 @@ public abstract class AbstractQuarkusExtension {
         defaultProperties.putIfAbsent("quarkus.application.version", appArtifact.getVersion());
 
         return EffectiveConfig.builder()
+                .withPlatformProperties(appModel.getPlatformProperties())
                 .withForcedProperties(forcedPropertiesProperty.get())
                 .withTaskProperties(properties)
                 .withBuildProperties(quarkusBuildProperties.get())

@@ -1,5 +1,6 @@
 package io.quarkus.qute;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.CharBuffer;
@@ -32,6 +33,7 @@ import io.quarkus.qute.SectionHelperFactory.BlockInfo;
 import io.quarkus.qute.SectionHelperFactory.MissingEndTagStrategy;
 import io.quarkus.qute.SectionHelperFactory.ParametersInfo;
 import io.quarkus.qute.SectionHelperFactory.ParserDelegate;
+import io.quarkus.qute.TemplateLocator.TemplateLocation;
 import io.quarkus.qute.TemplateNode.Origin;
 
 /**
@@ -64,7 +66,7 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
 
     private final EngineImpl engine;
     private final Reader reader;
-    private final Optional<Variant> variant;
+    private final TemplateLocation location;
     private final String templateId;
     private final String generatedId;
 
@@ -83,12 +85,12 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
 
     private TemplateImpl template;
 
-    public Parser(EngineImpl engine, Reader reader, String templateId, String generatedId, Optional<Variant> variant) {
+    public Parser(EngineImpl engine, String templateId, String generatedId, Reader reader, TemplateLocation location) {
         this.engine = engine;
         this.templateId = templateId;
         this.generatedId = generatedId;
-        this.variant = variant;
-        this.reader = reader;
+        this.location = location;
+        this.reader = ensureBufferedReader(reader);
 
         this.state = State.TEXT;
         this.buffer = new StringBuilder();
@@ -209,7 +211,7 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
                         .build();
             }
             template = new TemplateImpl(engine, root.build(this::currentTemplate), templateId, generatedId,
-                    variant);
+                    location.getVariant(), location.getSource());
 
             Set<TemplateNode> nodesToRemove = Collections.emptySet();
             if (hasLineSeparator && engine.removeStandaloneLines) {
@@ -821,14 +823,14 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
         boolean stringLiteralDouble = false;
         short composite = 0;
         byte brackets = 0;
-        boolean space = false;
+        boolean whitespace = false;
         List<String> parts = new ArrayList<>();
         StringBuilder buffer = new StringBuilder();
 
         for (int i = 0; i < content.length(); i++) {
             char c = content.charAt(i);
-            if (c == ' ') {
-                if (!space) {
+            if (Character.isWhitespace(c)) {
+                if (!whitespace) {
                     if (!stringLiteralSingle
                             && !stringLiteralDouble
                             && composite == 0
@@ -837,7 +839,7 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
                             parts.add(buffer.toString());
                             buffer = new StringBuilder();
                         }
-                        space = true;
+                        whitespace = true;
                     } else {
                         buffer.append(c);
                     }
@@ -854,7 +856,7 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
                 } else if (!stringLiteralSingle
                         && !stringLiteralDouble
                         && isCompositeStart(c)
-                        && (i == 0 || space || composite > 0
+                        && (i == 0 || whitespace || composite > 0
                                 || (buffer.length() > 0 && buffer.charAt(buffer.length() - 1) == '!'))) {
                     composite++;
                 } else if (!stringLiteralSingle
@@ -871,7 +873,7 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
                         && Parser.isRightBracket(c) && brackets > 0) {
                     brackets--;
                 }
-                space = false;
+                whitespace = false;
                 buffer.append(c);
             }
         }
@@ -1116,11 +1118,12 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
     }
 
     Origin origin(int lineCharacterOffset) {
-        return new OriginImpl(line, lineCharacter - lineCharacterOffset, lineCharacter, templateId, generatedId, variant);
+        return new OriginImpl(line, lineCharacter - lineCharacterOffset, lineCharacter, templateId, generatedId,
+                location.getVariant());
     }
 
     Origin syntheticOrigin() {
-        return new OriginImpl(-1, -1, -1, templateId, generatedId, variant);
+        return new OriginImpl(-1, -1, -1, templateId, generatedId, location.getVariant());
     }
 
     private List<List<TemplateNode>> readLines(SectionNode rootNode) {
@@ -1200,6 +1203,12 @@ class Parser implements ParserHelper, ParserDelegate, WithOrigin, ErrorInitializ
             }
         }
         return true;
+    }
+
+    private Reader ensureBufferedReader(Reader reader) {
+        return reader instanceof BufferedReader ? reader
+                : new BufferedReader(
+                        reader);
     }
 
     private static String toString(Reader in)

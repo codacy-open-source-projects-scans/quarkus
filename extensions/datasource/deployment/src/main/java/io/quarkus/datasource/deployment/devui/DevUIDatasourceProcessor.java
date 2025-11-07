@@ -5,8 +5,8 @@ import java.util.Collections;
 import java.util.List;
 
 import io.quarkus.datasource.runtime.DataSourcesBuildTimeConfig;
-import io.quarkus.datasource.runtime.devui.DatasourceJsonRpcService;
-import io.quarkus.deployment.IsDevelopment;
+import io.quarkus.datasource.runtime.dev.ui.DatasourceJsonRpcService;
+import io.quarkus.deployment.IsLocalDevelopment;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.devui.spi.JsonRPCProvidersBuildItem;
 import io.quarkus.devui.spi.page.CardPageBuildItem;
@@ -14,12 +14,11 @@ import io.quarkus.devui.spi.page.Page;
 
 public class DevUIDatasourceProcessor {
 
-    @BuildStep(onlyIf = IsDevelopment.class)
+    @BuildStep(onlyIf = IsLocalDevelopment.class)
     CardPageBuildItem create(DataSourcesBuildTimeConfig dataSourceBuildTimeConfig) {
         CardPageBuildItem card = new CardPageBuildItem();
 
         List<String> names = new ArrayList<>();
-        names.add("<default>");
         names.addAll(dataSourceBuildTimeConfig.dataSources().keySet());
         Collections.sort(names);
         card.addBuildTimeData("datasources", names);
@@ -30,7 +29,7 @@ public class DevUIDatasourceProcessor {
         return card;
     }
 
-    @BuildStep(onlyIf = IsDevelopment.class)
+    @BuildStep(onlyIf = IsLocalDevelopment.class)
     JsonRPCProvidersBuildItem registerJsonRpcBackend() {
         return new JsonRPCProvidersBuildItem(DatasourceJsonRpcService.class);
     }

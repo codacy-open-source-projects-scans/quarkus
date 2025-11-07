@@ -5,12 +5,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import io.quarkus.oidc.client.OidcClient;
 import io.quarkus.oidc.client.OidcClientConfigBuilder;
 import io.quarkus.oidc.common.runtime.OidcConstants;
 import io.quarkus.oidc.common.runtime.config.OidcClientCommonConfig;
 import io.quarkus.oidc.common.runtime.config.OidcCommonConfig;
 import io.quarkus.runtime.annotations.ConfigDocMapKey;
-import io.smallrye.config.SmallRyeConfigBuilder;
 import io.smallrye.config.WithDefault;
 
 public interface OidcClientConfig extends OidcClientCommonConfig {
@@ -33,6 +33,11 @@ public interface OidcClientConfig extends OidcClientCommonConfig {
     Optional<List<String>> scopes();
 
     /**
+     * List of access token audiences
+     */
+    Optional<List<String>> audience();
+
+    /**
      * Refresh token time skew.
      * If this property is enabled then the configured duration is converted to seconds and is added to the current time
      * when checking whether the access token should be refreshed. If the sum is greater than this access token's
@@ -46,6 +51,11 @@ public interface OidcClientConfig extends OidcClientCommonConfig {
      * does not include an access token expiration property.
      */
     Optional<Duration> accessTokenExpiresIn();
+
+    /**
+     * Access token expiry time skew that can be added to the calculated token expiry time.
+     */
+    Optional<Duration> accessTokenExpirySkew();
 
     /**
      * If the access token 'expires_in' property should be checked as an absolute time value
@@ -169,17 +179,22 @@ public interface OidcClientConfig extends OidcClientCommonConfig {
     Map<String, String> headers();
 
     /**
+     * Token refresh interval.
+     * By default, OIDC client refreshes the token during the current request, when it detects that it has expired,
+     * or nearly expired if the {@link #refreshTokenTimeSkew()} is configured.
+     * But, when this property is configured, OIDC client can refresh the token asynchronously in the configured interval.
+     * This property is only effective with OIDC client filters and other {@link AbstractTokensProducer} extensions,
+     * but not when you use the {@link OidcClient#getTokens()} API directly.
+     */
+    Optional<Duration> refreshInterval();
+
+    /**
      * Creates {@link OidcClientConfigBuilder} builder populated with documented default values.
      *
      * @return OidcClientConfigBuilder builder
      */
     static OidcClientConfigBuilder builder() {
-        var clientsConfig = new SmallRyeConfigBuilder()
-                .addDiscoveredConverters()
-                .withMapping(OidcClientsConfig.class)
-                .build()
-                .getConfigMapping(OidcClientsConfig.class);
-        return builder(OidcClientsConfig.getDefaultClient(clientsConfig));
+        return new OidcClientConfigBuilder();
     }
 
     /**

@@ -141,7 +141,7 @@ public class DataSources {
     }
 
     @SuppressWarnings("resource")
-    public AgroalDataSource createDataSource(String dataSourceName) {
+    public AgroalDataSource createDataSource(String dataSourceName, boolean otelEnabled) {
         if (!agroalDataSourceSupport.entries.containsKey(dataSourceName)) {
             throw new IllegalArgumentException("No datasource named '" + dataSourceName + "' exists");
         }
@@ -227,7 +227,9 @@ public class DataSources {
             dataSource.setPoolInterceptors(interceptorList);
         }
 
-        if (dataSourceJdbcBuildTimeConfig.telemetry() && dataSourceJdbcRuntimeConfig.telemetry().orElse(true)) {
+        if (dataSourceJdbcBuildTimeConfig.telemetry() &&
+                dataSourceJdbcRuntimeConfig.telemetry().orElse(true) &&
+                otelEnabled) {
             // activate OpenTelemetry JDBC instrumentation by wrapping AgroalDatasource
             // use an optional CDI bean as we can't reference optional OpenTelemetry classes here
             dataSource = agroalOpenTelemetryWrapper.get().apply(dataSource);
@@ -256,11 +258,11 @@ public class DataSources {
             TransactionIntegration txIntegration = new NarayanaTransactionIntegration(transactionManager,
                     transactionSynchronizationRegistry, null, false,
                     dataSourceJdbcBuildTimeConfig.transactions() == io.quarkus.agroal.runtime.TransactionIntegration.XA
-                            && transactionRuntimeConfig.enableRecovery
+                            && transactionRuntimeConfig.enableRecovery()
                                     ? xaResourceRecoveryRegistry
                                     : null);
             if (dataSourceJdbcBuildTimeConfig.transactions() == io.quarkus.agroal.runtime.TransactionIntegration.XA
-                    && !transactionRuntimeConfig.enableRecovery) {
+                    && !transactionRuntimeConfig.enableRecovery()) {
                 log.warnv(
                         "Datasource {0} enables XA but transaction recovery is not enabled. Please enable transaction recovery by setting quarkus.transaction-manager.enable-recovery=true, otherwise data may be lost if the application is terminated abruptly",
                         dataSourceName);
@@ -274,8 +276,8 @@ public class DataSources {
         }
 
         // metrics
-        if (dataSourceJdbcBuildTimeConfig.enableMetrics().isPresent()) {
-            dataSourceConfiguration.metricsEnabled(dataSourceJdbcBuildTimeConfig.enableMetrics().get());
+        if (dataSourceJdbcBuildTimeConfig.metrics().enabled().isPresent()) {
+            dataSourceConfiguration.metricsEnabled(dataSourceJdbcBuildTimeConfig.metrics().enabled().get());
         } else {
             // if the enable-metrics property is unspecified, treat it as true if MP Metrics are being exposed
             dataSourceConfiguration.metricsEnabled(dataSourcesBuildTimeConfig.metricsEnabled() && mpMetricsPresent);
@@ -315,7 +317,12 @@ public class DataSources {
         }
 
         // Connection management
-        poolConfiguration.connectionValidator(ConnectionValidator.defaultValidator());
+        if (dataSourceJdbcRuntimeConfig.validationQueryTimeout().isPresent()) {
+            poolConfiguration.connectionValidator(ConnectionValidator
+                    .defaultValidatorWithTimeout((int) dataSourceJdbcRuntimeConfig.validationQueryTimeout().get().toSeconds()));
+        } else {
+            poolConfiguration.connectionValidator(ConnectionValidator.defaultValidator());
+        }
         if (dataSourceJdbcRuntimeConfig.acquisitionTimeout().isPresent()) {
             poolConfiguration.acquisitionTimeout(dataSourceJdbcRuntimeConfig.acquisitionTimeout().get());
         }
@@ -330,6 +337,9 @@ public class DataSources {
                 @Override
                 public boolean isValid(Connection connection) {
                     try (Statement stmt = connection.createStatement()) {
+                        if (dataSourceJdbcRuntimeConfig.validationQueryTimeout().isPresent()) {
+                            stmt.setQueryTimeout((int) dataSourceJdbcRuntimeConfig.validationQueryTimeout().get().toSeconds());
+                        }
                         stmt.execute(validationQuery);
                         return true;
                     } catch (Exception e) {
@@ -352,11 +362,18 @@ public class DataSources {
         }
         poolConfiguration.enhancedLeakReport(dataSourceJdbcRuntimeConfig.extendedLeakReport());
         poolConfiguration.flushOnClose(dataSourceJdbcRuntimeConfig.flushOnClose());
+        poolConfiguration.recoveryEnable(dataSourceJdbcRuntimeConfig.enableRecovery());
     }
 
     /**
      * Uses the {@link ServiceLoader#load(Class) ServiceLoader to load the JDBC drivers} in context
-     * of the current {@link Thread#getContextClassLoader() TCCL}
+     * of the current {@link Thread#getContextClassLoader() TCCL}.
+     * <p>
+     * This is necessary to have JDBC URLs work properly, in particular when using custom drivers,
+     * and in particular when the app gets "restarted" in a single system (?) classloader,
+     * because DriverManager's list of available drivers would get cleared on shutdown.
+     * <p>
+     * See also https://github.com/quarkusio/quarkus/issues/46324#issuecomment-2687615191
      */
     private static void loadDriversInTCCL() {
         // load JDBC drivers in the current TCCL

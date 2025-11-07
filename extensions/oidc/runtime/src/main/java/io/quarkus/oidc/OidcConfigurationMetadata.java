@@ -15,8 +15,13 @@ public class OidcConfigurationMetadata {
     public static final String JWKS_ENDPOINT = "jwks_uri";
     public static final String USERINFO_ENDPOINT = "userinfo_endpoint";
     public static final String END_SESSION_ENDPOINT = "end_session_endpoint";
-    private static final String REGISTRATION_ENDPOINT = "registration_endpoint";
+    public static final String REGISTRATION_ENDPOINT = "registration_endpoint";
+    public static final String REVOCATION_ENDPOINT = "revocation_endpoint";
     public static final String SCOPES_SUPPORTED = "scopes_supported";
+    public static final String RESPONSE_TYPES_SUPPORTED = "response_types_supported";
+    public static final String SUBJECT_TYPES_SUPPORTED = "subject_types_supported";
+    public static final String ID_TOKEN_SIGNING_ALGORITHMS_SUPPORTED = "id_token_signing_alg_values_supported";
+    public static final String CODE_CHALLENGE_METHODS_SUPPORTED = "code_challenge_methods_supported";
 
     private final String discoveryUri;
     private final String tokenUri;
@@ -26,6 +31,7 @@ public class OidcConfigurationMetadata {
     private final String userInfoUri;
     private final String endSessionUri;
     private final String registrationUri;
+    private final String revocationUri;
     private final String issuer;
     private final JsonObject json;
 
@@ -36,6 +42,7 @@ public class OidcConfigurationMetadata {
             String userInfoUri,
             String endSessionUri,
             String registrationUri,
+            String revocationUri,
             String issuer) {
         this.discoveryUri = null;
         this.tokenUri = tokenUri;
@@ -45,6 +52,7 @@ public class OidcConfigurationMetadata {
         this.userInfoUri = userInfoUri;
         this.endSessionUri = endSessionUri;
         this.registrationUri = registrationUri;
+        this.revocationUri = revocationUri;
         this.issuer = issuer;
         this.json = null;
     }
@@ -70,6 +78,8 @@ public class OidcConfigurationMetadata {
                 localMetadataConfig == null ? null : localMetadataConfig.endSessionUri);
         this.registrationUri = getMetadataValue(wellKnownConfig, REGISTRATION_ENDPOINT,
                 localMetadataConfig == null ? null : localMetadataConfig.registrationUri);
+        this.revocationUri = getMetadataValue(wellKnownConfig, REVOCATION_ENDPOINT,
+                localMetadataConfig == null ? null : localMetadataConfig.revocationUri);
         this.issuer = getMetadataValue(wellKnownConfig, ISSUER,
                 localMetadataConfig == null ? null : localMetadataConfig.issuer);
         this.json = wellKnownConfig;
@@ -85,6 +95,10 @@ public class OidcConfigurationMetadata {
 
     public String getTokenUri() {
         return tokenUri;
+    }
+
+    public String getRevocationUri() {
+        return revocationUri;
     }
 
     public String getIntrospectionUri() {
@@ -113,6 +127,22 @@ public class OidcConfigurationMetadata {
 
     public List<String> getSupportedScopes() {
         return getStringList(SCOPES_SUPPORTED);
+    }
+
+    public List<String> getSupportedResponseTypes() {
+        return getStringList(RESPONSE_TYPES_SUPPORTED);
+    }
+
+    public List<String> getSupportedSubjectTypes() {
+        return getStringList(SUBJECT_TYPES_SUPPORTED);
+    }
+
+    public List<String> getSupportedIdTokenSigningAlgorithms() {
+        return getStringList(ID_TOKEN_SIGNING_ALGORITHMS_SUPPORTED);
+    }
+
+    public List<String> getSupportedCodeChallengeMethods() {
+        return getStringList(CODE_CHALLENGE_METHODS_SUPPORTED);
     }
 
     public String getIssuer() {

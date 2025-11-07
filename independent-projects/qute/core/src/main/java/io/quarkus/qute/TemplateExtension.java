@@ -40,8 +40,7 @@ import java.lang.annotation.Target;
  * <h2>Matching by name</h2>
  *
  * By default, the method name is used to match the expression property/method name. However, it is possible to specify the
- * matching name with
- * {@link #matchName()}.
+ * matching name with {@link #matchName()}.
  *
  * <pre>
  * {@literal @}TemplateExtension(matchName = "discounted")
@@ -107,18 +106,21 @@ public @interface TemplateExtension {
     int DEFAULT_PRIORITY = 5;
 
     /**
+     * If {@link #ANY} is used then an additional string method parameter must be used to pass the actual property name.
      *
      * @return the name is used to match the property name
      */
     String matchName() default METHOD_NAME;
 
     /**
+     * Note that an additional string method parameter must be used to pass the actual property name.
      *
      * @return the list of names used to match the property name
      */
     String[] matchNames() default {};
 
     /**
+     * Note that an additional string method parameter must be used to pass the actual property name.
      *
      * @return the regex is used to match the property name
      */
@@ -136,11 +138,13 @@ public @interface TemplateExtension {
     int priority() default DEFAULT_PRIORITY;
 
     /**
-     * If not empty a namespace resolver is generated instead.
+     * If not empty then a namespace resolver is generated.
      * <p>
-     * Template extension methods that share the same namespace and are declared on the same class are grouped in one resolver
-     * and ordered by {@link #priority()}. The first matching extension method is used to resolve an expression. Template
-     * extension methods declared on different classes cannot share the same namespace.
+     * Multiple extension methods declared on the same class can share the same namespace. However, extension methods declared
+     * on different classes cannot share the same namespace.
+     * <p>
+     * It's recommended to specify the {@link #priority()} if multiple extension methods that share the same namespace also
+     * match the same property/method name and parameters.
      *
      * @return the namespace
      * @see NamespaceResolver#getNamespace()

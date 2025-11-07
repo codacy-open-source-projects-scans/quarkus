@@ -1,12 +1,14 @@
 package io.quarkus.opentelemetry.runtime;
 
+import static io.opentelemetry.sdk.internal.ScopeConfiguratorBuilder.nameEquals;
 import static java.lang.Boolean.TRUE;
 import static java.util.Collections.emptyList;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -24,6 +26,8 @@ import io.opentelemetry.sdk.logs.export.BatchLogRecordProcessor;
 import io.opentelemetry.sdk.logs.export.LogRecordExporter;
 import io.opentelemetry.sdk.logs.export.SimpleLogRecordProcessor;
 import io.opentelemetry.sdk.metrics.SdkMeterProviderBuilder;
+import io.opentelemetry.sdk.metrics.internal.MeterConfig;
+import io.opentelemetry.sdk.metrics.internal.SdkMeterProviderUtil;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
@@ -34,7 +38,6 @@ import io.quarkus.opentelemetry.runtime.config.build.OTelBuildConfig;
 import io.quarkus.opentelemetry.runtime.config.runtime.OTelRuntimeConfig;
 import io.quarkus.opentelemetry.runtime.exporter.otlp.tracing.RemoveableLateBoundSpanProcessor;
 import io.quarkus.opentelemetry.runtime.propagation.TextMapPropagatorCustomizer;
-import io.quarkus.opentelemetry.runtime.tracing.DelayedAttributes;
 import io.quarkus.opentelemetry.runtime.tracing.DropTargetsSampler;
 import io.quarkus.opentelemetry.runtime.tracing.TracerRecorder;
 import io.quarkus.opentelemetry.runtime.tracing.TracerUtil;
@@ -86,7 +89,7 @@ public interface AutoConfiguredOpenTelemetrySdkBuilderCustomizer {
     }
 
     @Singleton
-    final class TracingResourceCustomizer implements AutoConfiguredOpenTelemetrySdkBuilderCustomizer {
+    final class ResourceCustomizer implements AutoConfiguredOpenTelemetrySdkBuilderCustomizer {
 
         private final ApplicationConfig appConfig;
         private final OTelBuildConfig oTelBuildConfig;
@@ -94,7 +97,7 @@ public interface AutoConfiguredOpenTelemetrySdkBuilderCustomizer {
         private final Instance<DelayedAttributes> delayedAttributes;
         private final List<Resource> resources;
 
-        public TracingResourceCustomizer(ApplicationConfig appConfig,
+        public ResourceCustomizer(ApplicationConfig appConfig,
                 OTelBuildConfig oTelBuildConfig,
                 OTelRuntimeConfig oTelRuntimeConfig,
                 @Any Instance<DelayedAttributes> delayedAttributes,
@@ -111,36 +114,31 @@ public interface AutoConfiguredOpenTelemetrySdkBuilderCustomizer {
             builder.addResourceCustomizer(new BiFunction<>() {
                 @Override
                 public Resource apply(Resource existingResource, ConfigProperties configProperties) {
-                    if (oTelBuildConfig.traces().enabled().orElse(TRUE) ||
-                            oTelBuildConfig.metrics().enabled().orElse(TRUE)) {
-                        Resource consolidatedResource = existingResource.merge(
-                                Resource.create(delayedAttributes.get()));
+                    Resource consolidatedResource = existingResource.merge(
+                            Resource.create(delayedAttributes.get()));
 
-                        // if user explicitly set 'otel.service.name', make sure we don't override it with defaults
-                        // inside resource customizer
-                        String serviceName = oTelRuntimeConfig
-                                .serviceName()
-                                .filter(new Predicate<String>() {
-                                    @Override
-                                    public boolean test(String sn) {
-                                        return !sn.equals(appConfig.name().orElse("unset"));
-                                    }
-                                })
-                                .orElse(null);
+                    // if user explicitly set 'otel.service.name', make sure we don't override it with defaults
+                    // inside resource customizer
+                    String serviceName = oTelRuntimeConfig
+                            .serviceName()
+                            .filter(new Predicate<String>() {
+                                @Override
+                                public boolean test(String sn) {
+                                    return !sn.equals(appConfig.name().orElse("unset"));
+                                }
+                            })
+                            .orElse(null);
 
-                        String hostname = getHostname();
+                    String hostname = getHostname();
 
-                        // Merge resource instances with env attributes
-                        Resource resource = resources.stream()
-                                .reduce(Resource.empty(), Resource::merge)
-                                .merge(TracerUtil.mapResourceAttributes(
-                                        oTelRuntimeConfig.resourceAttributes().orElse(emptyList()),
-                                        serviceName, // from properties
-                                        hostname));
-                        return consolidatedResource.merge(resource);
-                    } else {
-                        return Resource.builder().build();
-                    }
+                    // Merge resource instances with env attributes
+                    Resource resource = resources.stream()
+                            .reduce(Resource.empty(), Resource::merge)
+                            .merge(TracerUtil.mapResourceAttributes(
+                                    oTelRuntimeConfig.resourceAttributes().orElse(emptyList()),
+                                    serviceName, // from properties
+                                    hostname));
+                    return consolidatedResource.merge(resource);
                 }
             });
         }
@@ -171,7 +169,7 @@ public interface AutoConfiguredOpenTelemetrySdkBuilderCustomizer {
                                 .orElse(existingSampler);
 
                         //collect default filtering targets (Needed for all samplers)
-                        List<String> dropTargets = new ArrayList<>();
+                        Set<String> dropTargets = new HashSet<>();
                         if (oTelRuntimeConfig.traces().suppressNonApplicationUris()) {//default is true
                             dropTargets.addAll(TracerRecorder.dropNonApplicationUriTargets);
                         }
@@ -263,20 +261,34 @@ public interface AutoConfiguredOpenTelemetrySdkBuilderCustomizer {
 
         @Override
         public void customize(AutoConfiguredOpenTelemetrySdkBuilder builder) {
-            if (oTelBuildConfig.metrics().enabled().orElse(TRUE)) {
-                builder.addMeterProviderCustomizer(
-                        new BiFunction<SdkMeterProviderBuilder, ConfigProperties, SdkMeterProviderBuilder>() {
-                            @Override
-                            public SdkMeterProviderBuilder apply(SdkMeterProviderBuilder metricProvider,
-                                    ConfigProperties configProperties) {
+            builder.addMeterProviderCustomizer(
+                    new BiFunction<SdkMeterProviderBuilder, ConfigProperties, SdkMeterProviderBuilder>() {
+                        @Override
+                        public SdkMeterProviderBuilder apply(SdkMeterProviderBuilder meterProviderBuilder,
+                                ConfigProperties configProperties) {
+
+                            if (oTelBuildConfig.metrics().enabled().orElse(TRUE)) {
+
                                 if (clock.isUnsatisfied()) {
                                     throw new IllegalStateException("No Clock bean found");
                                 }
-                                metricProvider.setClock(clock.get());
-                                return metricProvider;
+                                meterProviderBuilder.setClock(clock.get());
+                            } else {
+                                // disable batch exporter metrics if metrics disabled
+                                // In the future we can inject scopes here.
+                                Set<String> dropInstrumentationScopes = Set.of(
+                                        "io.opentelemetry.sdk.trace",
+                                        "io.opentelemetry.sdk.logs");
+                                for (String target : dropInstrumentationScopes) {
+                                    SdkMeterProviderUtil.addMeterConfiguratorCondition(
+                                            meterProviderBuilder,
+                                            nameEquals(target),
+                                            MeterConfig.disabled());
+                                }
                             }
-                        });
-            }
+                            return meterProviderBuilder;
+                        }
+                    });
         }
     }
 

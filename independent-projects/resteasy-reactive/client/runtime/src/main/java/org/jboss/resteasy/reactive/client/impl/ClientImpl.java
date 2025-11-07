@@ -89,7 +89,7 @@ public class ClientImpl implements Client {
     private static final Logger log = Logger.getLogger(ClientImpl.class);
 
     private static final int DEFAULT_CONNECT_TIMEOUT = 15000;
-    private static final int DEFAULT_CONNECTION_POOL_SIZE = 20;
+    private static final int DEFAULT_CONNECTION_POOL_SIZE = 50;
 
     final ClientContext clientContext;
     final boolean closeVertx;
@@ -102,14 +102,17 @@ public class ClientImpl implements Client {
     final Vertx vertx;
     private final MultiQueryParamMode multiQueryParamMode;
     private final String userAgent;
+    private final String tlsConfigName;
 
     public ClientImpl(HttpClientOptions options, ConfigurationImpl configuration, ClientContext clientContext,
             HostnameVerifier hostnameVerifier,
             SSLContext sslContext, boolean followRedirects,
             MultiQueryParamMode multiQueryParamMode,
             LoggingScope loggingScope,
-            ClientLogger clientLogger, String userAgent) {
+            ClientLogger clientLogger, String userAgent,
+            String tlsConfigName) {
         this.userAgent = userAgent;
+        this.tlsConfigName = tlsConfigName;
         configuration = configuration != null ? configuration : new ConfigurationImpl(RuntimeType.CLIENT);
         this.configuration = configuration;
         this.clientContext = clientContext;
@@ -213,9 +216,15 @@ public class ClientImpl implements Client {
             });
         }
 
-        handlerChain = new HandlerChain(isCaptureStacktrace(configuration), options.getMaxChunkSize(), followRedirects,
+        handlerChain = new HandlerChain(isCaptureStacktrace(configuration), options.getMaxChunkSize(),
+                options.getMaxChunkSize(),
+                followRedirects,
                 loggingScope,
                 clientContext.getMultipartResponsesData(), clientLogger);
+    }
+
+    public HttpClient getVertxHttpClient() {
+        return httpClient;
     }
 
     private boolean isCaptureStacktrace(ConfigurationImpl configuration) {
@@ -249,6 +258,10 @@ public class ClientImpl implements Client {
 
     public String getUserAgent() {
         return userAgent;
+    }
+
+    public String getTlsConfigName() {
+        return tlsConfigName;
     }
 
     @Override

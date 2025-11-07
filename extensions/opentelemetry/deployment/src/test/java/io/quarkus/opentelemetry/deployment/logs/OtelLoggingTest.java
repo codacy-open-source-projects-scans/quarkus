@@ -5,9 +5,8 @@ import static io.opentelemetry.sdk.testing.assertj.OpenTelemetryAssertions.asser
 import static io.opentelemetry.semconv.ExceptionAttributes.EXCEPTION_MESSAGE;
 import static io.opentelemetry.semconv.ExceptionAttributes.EXCEPTION_STACKTRACE;
 import static io.opentelemetry.semconv.ExceptionAttributes.EXCEPTION_TYPE;
-import static io.opentelemetry.semconv.incubating.CodeIncubatingAttributes.CODE_FUNCTION;
-import static io.opentelemetry.semconv.incubating.CodeIncubatingAttributes.CODE_LINENO;
-import static io.opentelemetry.semconv.incubating.CodeIncubatingAttributes.CODE_NAMESPACE;
+import static io.opentelemetry.semconv.incubating.CodeIncubatingAttributes.CODE_FUNCTION_NAME;
+import static io.opentelemetry.semconv.incubating.CodeIncubatingAttributes.CODE_LINE_NUMBER;
 import static io.opentelemetry.semconv.incubating.LogIncubatingAttributes.LOG_FILE_PATH;
 import static io.opentelemetry.semconv.incubating.ThreadIncubatingAttributes.THREAD_ID;
 import static io.opentelemetry.semconv.incubating.ThreadIncubatingAttributes.THREAD_NAME;
@@ -92,13 +91,14 @@ public class OtelLoggingTest {
                 .hasBody(message)
                 .hasAttributesSatisfying(
                         attributes -> assertThat(attributes)
-                                .containsEntry(CODE_NAMESPACE.getKey(),
-                                        "io.quarkus.opentelemetry.deployment.logs.OtelLoggingTest$JBossLoggingBean")
-                                .containsEntry(CODE_FUNCTION.getKey(), "hello")
+                                .containsEntry(CODE_FUNCTION_NAME.getKey(),
+                                        "io.quarkus.opentelemetry.deployment.logs.OtelLoggingTest$JBossLoggingBean.hello")
                                 .containsEntry(THREAD_NAME.getKey(), Thread.currentThread().getName())
                                 .containsEntry(THREAD_ID.getKey(), Thread.currentThread().getId())
                                 .containsEntry("log.logger.namespace", "org.jboss.logging.Logger")
-                                .containsKey(CODE_LINENO.getKey())
+                                .containsKey(CODE_LINE_NUMBER.getKey())
+                                .containsEntry("bridge.name",
+                                        "io.quarkus.opentelemetry.deployment.logs.OtelLoggingTest$JBossLoggingBean")
                                 .doesNotContainKey(EXCEPTION_TYPE)
                                 .doesNotContainKey(EXCEPTION_MESSAGE)
                                 .doesNotContainKey(EXCEPTION_STACKTRACE)
@@ -131,18 +131,17 @@ public class OtelLoggingTest {
                 .hasBody(message)
                 .hasAttributesSatisfying(
                         attributes -> assertThat(attributes)
-                                .containsEntry(CODE_NAMESPACE.getKey(),
-                                        "io.quarkus.opentelemetry.deployment.logs.OtelLoggingTest$JBossLoggingBean")
-                                .containsEntry(CODE_FUNCTION.getKey(), "helloTraced")
+                                .containsEntry(CODE_FUNCTION_NAME.getKey(),
+                                        "io.quarkus.opentelemetry.deployment.logs.OtelLoggingTest$JBossLoggingBean.helloTraced")
                                 .containsEntry(THREAD_NAME.getKey(), Thread.currentThread().getName())
                                 .containsEntry(THREAD_ID.getKey(), Thread.currentThread().getId())
                                 .containsEntry("log.logger.namespace", "org.jboss.logging.Logger")
-                                .containsKey(CODE_LINENO.getKey())
+                                .containsKey(CODE_LINE_NUMBER.getKey())
                                 .doesNotContainKey(EXCEPTION_TYPE)
                                 .doesNotContainKey(EXCEPTION_MESSAGE)
                                 .doesNotContainKey(EXCEPTION_STACKTRACE)
                                 .doesNotContainKey(LOG_FILE_PATH)
-                                // attributed do not duplicate tracing data
+                                // attributes do not duplicate tracing data
                                 .doesNotContainKey("spanId")
                                 .doesNotContainKey("traceId")
                                 .doesNotContainKey("sampled"));
@@ -166,7 +165,79 @@ public class OtelLoggingTest {
                                 .containsEntry(EXCEPTION_MESSAGE, "Crafted exception")
                                 .containsEntry(EXCEPTION_STACKTRACE, extractStackTrace(craftedException))
                                 .doesNotContainKey(LOG_FILE_PATH)
-                                // attributed do not duplicate tracing data
+                                // attributes do not duplicate tracing data
+                                .doesNotContainKey("spanId")
+                                .doesNotContainKey("traceId")
+                                .doesNotContainKey("sampled"));
+    }
+
+    @Test
+    public void testLogFormatingData() {
+        final String message = "Replacement string";
+        final String expected = "infof " + message;
+        assertEquals("hello " + message, jBossLoggingBean.helloLogFormating(message));
+
+        List<LogRecordData> finishedLogRecordItems = logRecordExporter.getFinishedLogRecordItemsAtLeast(1);
+        LogRecordData last = finishedLogRecordItems.get(finishedLogRecordItems.size() - 1);
+
+        assertThat(last.getSpanContext().getSpanId()).isEqualTo("0000000000000000");
+        assertThat(last.getSpanContext().getTraceId()).isEqualTo("00000000000000000000000000000000");
+        assertThat(last.getSpanContext().getTraceFlags().asHex()).isEqualTo("00");
+        assertThat(last.getTimestampEpochNanos()).isNotNull().isLessThan(System.currentTimeMillis() * 1_000_000);
+
+        assertThat(last)
+                .hasSeverity(Severity.INFO)
+                .hasSeverityText("INFO")
+                .hasBody(expected)
+                .hasAttributesSatisfying(
+                        attributes -> assertThat(attributes)
+                                .containsEntry(CODE_FUNCTION_NAME.getKey(),
+                                        "io.quarkus.opentelemetry.deployment.logs.OtelLoggingTest$JBossLoggingBean.helloLogFormating")
+                                .containsEntry(THREAD_NAME.getKey(), Thread.currentThread().getName())
+                                .containsEntry(THREAD_ID.getKey(), Thread.currentThread().getId())
+                                .containsEntry("log.logger.namespace", "org.jboss.logging.Logger")
+                                .containsKey(CODE_LINE_NUMBER.getKey())
+                                .doesNotContainKey(EXCEPTION_TYPE)
+                                .doesNotContainKey(EXCEPTION_MESSAGE)
+                                .doesNotContainKey(EXCEPTION_STACKTRACE)
+                                .doesNotContainKey(LOG_FILE_PATH)
+                                // attributes do not duplicate tracing data
+                                .doesNotContainKey("spanId")
+                                .doesNotContainKey("traceId")
+                                .doesNotContainKey("sampled"));
+    }
+
+    @Test
+    public void testLogParameterValue() {
+        final String message = "Replacement parameter value";
+        final String expected = "infov " + message;
+        assertEquals("hello " + message, jBossLoggingBean.helloLogParameterValue(message));
+
+        List<LogRecordData> finishedLogRecordItems = logRecordExporter.getFinishedLogRecordItemsAtLeast(1);
+        LogRecordData last = finishedLogRecordItems.get(finishedLogRecordItems.size() - 1);
+
+        assertThat(last.getSpanContext().getSpanId()).isEqualTo("0000000000000000");
+        assertThat(last.getSpanContext().getTraceId()).isEqualTo("00000000000000000000000000000000");
+        assertThat(last.getSpanContext().getTraceFlags().asHex()).isEqualTo("00");
+        assertThat(last.getTimestampEpochNanos()).isNotNull().isLessThan(System.currentTimeMillis() * 1_000_000);
+
+        assertThat(last)
+                .hasSeverity(Severity.INFO)
+                .hasSeverityText("INFO")
+                .hasBody(expected)
+                .hasAttributesSatisfying(
+                        attributes -> assertThat(attributes)
+                                .containsEntry(CODE_FUNCTION_NAME.getKey(),
+                                        "io.quarkus.opentelemetry.deployment.logs.OtelLoggingTest$JBossLoggingBean.helloLogParameterValue")
+                                .containsEntry(THREAD_NAME.getKey(), Thread.currentThread().getName())
+                                .containsEntry(THREAD_ID.getKey(), Thread.currentThread().getId())
+                                .containsEntry("log.logger.namespace", "org.jboss.logging.Logger")
+                                .containsKey(CODE_LINE_NUMBER.getKey())
+                                .doesNotContainKey(EXCEPTION_TYPE)
+                                .doesNotContainKey(EXCEPTION_MESSAGE)
+                                .doesNotContainKey(EXCEPTION_STACKTRACE)
+                                .doesNotContainKey(LOG_FILE_PATH)
+                                // attributes do not duplicate tracing data
                                 .doesNotContainKey("spanId")
                                 .doesNotContainKey("traceId")
                                 .doesNotContainKey("sampled"));
@@ -200,6 +271,16 @@ public class OtelLoggingTest {
         public boolean logException(final Throwable throwable) {
             LOG.error("logging an exception", throwable);
             return true;
+        }
+
+        public String helloLogFormating(final String replacement) {
+            LOG.infof("infof %s", replacement);
+            return "hello " + replacement;
+        }
+
+        public String helloLogParameterValue(final String replacement) {
+            LOG.infov("infov {0}", replacement);
+            return "hello " + replacement;
         }
     }
 }

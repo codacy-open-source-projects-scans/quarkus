@@ -1,11 +1,16 @@
 package io.quarkus.bootstrap.runner;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLStreamHandler;
 import java.nio.file.Path;
 import java.security.CodeSource;
 import java.security.ProtectionDomain;
@@ -44,7 +49,7 @@ public class JarResource implements ClassLoadingResource {
                 path = '/' + path;
             }
             URI uri = new URI("file", null, path, null);
-            url = uri.toURL();
+            url = new URL((URL) null, uri.toString(), new JarUrlStreamHandler(uri));
         } catch (URISyntaxException | MalformedURLException e) {
             throw new RuntimeException("Unable to create protection domain for " + jarPath, e);
         }
@@ -93,18 +98,13 @@ public class JarResource implements ClassLoadingResource {
         private static final JarResourceURLProvider INSTANCE = new JarResourceURLProvider();
 
         @Override
-        public URL apply(JarFile jarFile, Path path, String res) {
-            JarEntry entry = jarFile.getJarEntry(res);
+        public URL apply(JarFile jarFile, Path path, String resource) {
+            JarEntry entry = jarFile.getJarEntry(resource);
             if (entry == null) {
                 return null;
             }
             try {
-                String realName = JarEntries.getRealName(entry);
-                // Avoid ending the URL with / to avoid breaking compatibility
-                if (realName.endsWith("/")) {
-                    realName = realName.substring(0, realName.length() - 1);
-                }
-                final URL resUrl = getUrl(path, realName);
+                final URL resUrl = getUrl(path, getRealName(entry, resource));
                 // wrap it up into a "jar" protocol URL
                 //horrible hack to deal with '?' characters in the URL
                 //seems to be the only way, the URI constructor just does not let you handle them in a sane way
@@ -122,6 +122,25 @@ public class JarResource implements ClassLoadingResource {
             } catch (MalformedURLException | URISyntaxException e) {
                 throw new RuntimeException(e);
             }
+        }
+
+        private static String getRealName(JarEntry entry, String resource) {
+            String realName = JarEntries.getRealName(entry);
+            // Make sure directories are returned with a / when the resource was requested with a /
+            if (resource.endsWith("/") && entry.isDirectory()) {
+                if (realName.endsWith("/")) {
+                    return realName;
+                } else {
+                    return realName + "/";
+                }
+            }
+
+            // this shouldn't be necessary but the previous implementation was doing it forcibly so keeping it for safety
+            if (realName.endsWith("/")) {
+                return realName.substring(0, realName.length() - 1);
+            }
+
+            return realName;
         }
 
         private static URL getUrl(Path jarPath, String realName) throws MalformedURLException, URISyntaxException {
@@ -186,5 +205,74 @@ public class JarResource implements ClassLoadingResource {
     @Override
     public int hashCode() {
         return Objects.hashCode(jarPath);
+    }
+
+    /**
+     * This URLStreamHandler is designed to handle only one jar, which is the one passed in the constructor.
+     * The goal here is to cache the external form of the URL.
+     * <p>
+     * Do not use this class outside of this extremely specific purpose.
+     */
+    private static class JarUrlStreamHandler extends URLStreamHandler {
+
+        private final String externalForm;
+
+        private JarUrlStreamHandler(URI uri) {
+            this.externalForm = "file:".concat(uri.getRawPath());
+            // while it would be more optimized to store the URI here for when we open connections
+            // opening a connection for ProtectionDomains is actually extremely rare
+            // and never done in production at runtime so we favored reducing memory allocations for the common case
+        }
+
+        @Override
+        protected URLConnection openConnection(URL u) throws IOException {
+            return new JarURLConnection(u);
+        }
+
+        @Override
+        protected String toExternalForm(URL u) {
+            return externalForm;
+        }
+    }
+
+    private static class JarURLConnection extends URLConnection {
+
+        private final File file;
+
+        private JarURLConnection(URL url) throws IOException {
+            super(url);
+            try {
+                this.file = new File(url.toURI());
+            } catch (URISyntaxException e) {
+                throw new IOException(e);
+            }
+        }
+
+        @Override
+        public void connect() throws IOException {
+            if (!file.exists()) {
+                throw new FileNotFoundException(file.getAbsolutePath());
+            }
+        }
+
+        @Override
+        public InputStream getInputStream() throws IOException {
+            return new FileInputStream(file);
+        }
+
+        @Override
+        public int getContentLength() {
+            return (int) file.length();
+        }
+
+        @Override
+        public long getContentLengthLong() {
+            return file.length();
+        }
+
+        @Override
+        public String getContentType() {
+            return "application/java-archive";
+        }
     }
 }

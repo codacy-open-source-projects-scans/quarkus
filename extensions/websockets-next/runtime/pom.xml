@@ -38,6 +38,10 @@
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-websockets-next-kotlin</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-websockets-next-spi</artifactId>
+        </dependency>
         <!-- Quarkus Security API -->
         <dependency>
             <groupId>io.quarkus.security</groupId>
@@ -74,9 +78,12 @@
                 <groupId>io.quarkus</groupId>
                 <artifactId>quarkus-extension-maven-plugin</artifactId>
                 <configuration>
-                    <!--capabilities>
-                        <provides>io.quarkus.vertx.websockets</provides>
-                    </capabilities-->
+                    <capabilities>
+                        <provides>io.quarkus.websockets.next</provides>
+                    </capabilities>
+                    <conditionalDevDependencies>
+                        <artifact>${project.groupId}:${project.artifactId}-dev:${project.version}</artifact>
+                    </conditionalDevDependencies>
                 </configuration>
             </plugin>
             <plugin>

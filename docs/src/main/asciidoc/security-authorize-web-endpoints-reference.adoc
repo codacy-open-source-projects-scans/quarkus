@@ -13,9 +13,6 @@ include::_attributes.adoc[]
 Quarkus incorporates a pluggable web security layer.
 When security is active, the system performs a permission check on all HTTP requests to determine if they should proceed.
 
-Using `@PermitAll` will not open a path if the path is restricted by the `quarkus.http.auth.` configuration.
-To ensure specific paths are accessible, appropriate configurations must be made within the Quarkus security settings.
-
 [NOTE]
 ====
 If you use Jakarta RESTful Web Services, consider using `quarkus.security.jaxrs.deny-unannotated-endpoints` or `quarkus.security.jaxrs.default-roles-allowed` to set default security requirements instead of HTTP path-level matching because annotations can override these properties on an individual endpoint.
@@ -29,6 +26,11 @@ xref:security-customization.adoc#security-identity-customization[Security Identi
 == Authorization using configuration
 
 Permissions are defined in the Quarkus configuration by permission sets, each specifying a policy for access control.
+
+[NOTE]
+====
+When a security policy's `paths` property contains the most specific path that matches the current request path, it takes precedence over other security policies with matching paths and is said to win.
+====
 
 .{project-name} policies summary
 [options="header"]
@@ -123,9 +125,9 @@ public class CustomNamedHttpSecPolicy implements HttpSecurityPolicy {
     public Uni<CheckResult> checkPermission(RoutingContext event, Uni<SecurityIdentity> identity,
             AuthorizationRequestContext requestContext) {
         if (customRequestAuthorization(event)) {
-            return Uni.createFrom().item(CheckResult.PERMIT);
+            return CheckResult.permit();
         }
-        return Uni.createFrom().item(CheckResult.DENY);
+        return CheckResult.deny();
     }
 
     @Override
@@ -181,6 +183,18 @@ As usual, the method-level annotation has priority over class-level annotation.
 You can also create global `HttpSecurityPolicy` invoked on every request.
 Just do not implement the `io.quarkus.vertx.http.runtime.security.HttpSecurityPolicy.name` method and leave the policy nameless.
 ====
+
+[[policy-active-cdi-request-context]]
+=== Inject `@RequestScoped` beans into `HttpSecurityPolicy`
+
+`@RequestScoped` beans can only be injected when the xref:cdi-reference.adoc#request-context-lifecycle[CDI request context] is active.
+The context can be activated by users, for example with the `@ActivateRequestContext`, however authorization happens before Quarkus prepares some `@RequestScoped` beans.
+We recommend to let Quarkus activate and prepare CDI request context for you.
+For example, consider a situation where you want to inject a bean from the Jakarta REST context, such as the `jakarta.ws.rs.core.UriInfo` bean.
+In this case, you must apply the `HttpSecurityPolicy` to Jakarta REST endpoints. This can be achieved in one of the following ways:
+
+* Use the `@AuthorizationPolicy` security annotation.
+* Set the `quarkus.http.auth.permission.custom1.applies-to=jaxrs` configuration property.
 
 === Matching on paths and methods
 
@@ -251,7 +265,7 @@ quarkus.http.auth.permission.public.policy=permit
 Previous examples demonstrated matching all sub-paths when a path concludes with the `$$*$$`
 wildcard.
 
-This wildcard also applies in the middle of a path, representing a single path segment.
+This wildcard can also be applied in the middle of a path, representing a single path segment.
 It cannot be mixed with other path segment characters; thus, path separators always enclose the `$$*$$` wildcard, as seen in the `/public/$$*$$/about-us` path.
 
 When several path patterns correspond to the same request path, the system selects the longest sub-path leading to the `$$*$$` wildcard.
@@ -413,7 +427,7 @@ For more information, see link:https://quarkus.io/blog/path-resolution-in-quarku
 [[map-security-identity-roles]]
 === Map `SecurityIdentity` roles
 
-Winning role-based policy can map the `SecurityIdentity` roles to the deployment-specific roles.
+The winning role-based policy that was chosen to authorize the current request can map `SecurityIdentity` roles to deployment-specific roles.
 These roles are then applicable for endpoint authorization by using the `@RolesAllowed` annotation.
 
 [source,properties]
@@ -434,10 +448,27 @@ quarkus.http.auth.roles-mapping.admin=Admin1 <1> <2>
 <1> Map the `admin` role to `Admin1` role. The `SecurityIdentity` will have both `admin` and `Admin1` roles.
 <2> The `/*` path is not secured. You must secure your endpoints with standard security annotations or define HTTP permissions in addition to this configuration property.
 
+If you prefer a programmatic configuration, the same mapping can be added with the `io.quarkus.vertx.http.security.HttpSecurity` CDI event:
+
+[source,java]
+----
+package org.acme.http.security;
+
+import io.quarkus.vertx.http.security.HttpSecurity;
+import jakarta.enterprise.event.Observes;
+
+public class HttpSecurityConfiguration {
+
+    void configure(@Observes HttpSecurity httpSecurity) {
+        httpSecurity.rolesMapping("admin", "Admin1");
+    }
+}
+----
+
 === Shared permission checks
 
 One important rule for unshared permission checks is that only one path match is applied, the most specific one.
-Naturally you can specify as many permissions with the same winning path as you want and they will all be applied.
+When a path matches as the most specific, you can specify multiple permissions for that path and they are all applied.
 However, there can be permission checks you want to apply to many paths without repeating them over and over again.
 That's where shared permission checks come in, they are always applied when the permission path is matched.
 
@@ -477,11 +508,111 @@ quarkus.http.auth.permission.roles3.policy=role-policy3
 <2> The `/secured/*` path can only be accessed by authenticated users. This way, you have secured the `/secured/all` path and so on.
 <3> Shared permissions are always applied before unshared ones, therefore a `SecurityIdentity` with the `root` role will have the `user` role as well.
 
+[[path-specific-authz-programmatic-set-up]]
+=== Set up path-specific authorization programmatically
+
+You can also configure the authorization policies presented by this guide so far programmatically.
+Consider the example mentioned earlier:
+
+[source,properties]
+----
+quarkus.http.auth.permission.permit1.paths=/public/*
+quarkus.http.auth.permission.permit1.policy=permit
+quarkus.http.auth.permission.permit1.methods=GET
+
+quarkus.http.auth.permission.deny1.paths=/forbidden
+quarkus.http.auth.permission.deny1.policy=deny
+
+quarkus.http.auth.permission.roles1.paths=/roles-secured/*,/other/*,/api/*
+quarkus.http.auth.permission.roles1.policy=role-policy1
+quarkus.http.auth.policy.role-policy1.roles-allowed=user,admin
+----
+
+The same authorization policies can be configured programmatically:
+
+[source,java]
+----
+package org.acme.http.security;
+
+import jakarta.enterprise.event.Observes;
+
+import io.quarkus.vertx.http.security.HttpSecurity;
+
+public class HttpSecurityConfiguration {
+
+    void configure(@Observes HttpSecurity httpSecurity) {
+        httpSecurity
+                .get("/public/*").permit()
+                .path("/roles-secured/*", "/other/*", "/api/*").roles("admin", "user")
+                .path("/forbidden").authorization().deny();
+    }
+
+}
+----
+
+Additionally, the `io.quarkus.vertx.http.security.HttpSecurity` CDI event can be used to configure specific authentication mechanisms and policies:
+
+[source,java]
+----
+package org.acme.http.security;
+
+import io.quarkus.vertx.http.security.HttpSecurity;
+import jakarta.enterprise.event.Observes;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
+public class HttpSecurityConfiguration {
+
+    void configure(@Observes HttpSecurity httpSecurity, CustomHttpSecurityPolicy customHttpSecurityPolicy,
+                        @ConfigProperty(name = "secured-path") String securedPath) {
+
+        httpSecurity.path("/other/*").basic().policy(customHttpSecurityPolicy); <1>
+
+        httpSecurity.path("/roles-secured/*").bearer().authorization()
+                .policy(identity -> identity.hasRole("user") || "root".equals(identity.getPrincipal().getName()));  <2>
+
+        httpSecurity.path("/other/administration").authorizationCodeFlow()
+                .authorization().policy((identity, routingContext) -> {
+                    if (!identity.isAnonymous()) {
+                        String customAuthorization = routingContext.request().getHeader("Custom Authorization");
+                        return yourCustomAuthorizationCheck(customAuthorization);
+                    }
+                    return false;
+                });     <3>
+
+        httpSecurity.path(securedPath).form();  <4>
+
+        httpSecurity.path("/user-info").bearer().authorization().permissions("openid", "email", "profile"); <5>
+    }
+}
+----
+<1> Use the Basic authentication and authorize the requests with a custom `io.quarkus.vertx.http.runtime.security.HttpSecurityPolicy`.
+<2> Use the Bearer token authentication and authorize the `SecurityIdentity` with your own policy.
+<3> Use Authorization Code Flow mechanism and write your own policy based on incoming request headers.
+<4> When Quarkus fires the `HttpSecurity` CDI event, the runtime configuration is ready.
+<5> Require that all the requests to the `/user-info` path have string permissions `openid`, `email` and `profile`.
+The same authorization can be required with the `@PermissionsAllowed(value = { "openid", "email", "profile" }, inclusive = true)` annotation instance placed on an endpoint.
+
+==== Programmatic set up references
+
+* xref:security-basic-authentication.adoc#basic-auth-programmatic-set-up[Set up Basic authentication programmatically]
+* xref:security-openid-connect-multitenancy.adoc#programmatic-startup[Programmatic OIDC start-up for multitenant application]
+* xref:security-authentication-mechanisms.adoc#form-based-auth-programmatic-set-up[Set up Form-based authentication programmatically]
+* xref:security-authentication-mechanisms.adoc#mtls-programmatic-set-up[Set up the mutual TLS client authentication programmatically]
+* xref:security-cors.adoc#cors-filter-programmatic-set-up[Configuring the CORS filter programmatically]
+* xref:security-csrf-prevention.adoc#csrf-prevention-programmatic-set-up[Configuring the CSRF prevention programmatically]
+
 [[standard-security-annotations]]
 == Authorization using annotations
 
 {project-name} includes built-in security to allow for link:https://en.wikipedia.org/wiki/Role-based_access_control[Role-Based Access Control (RBAC)]
 based on the common security annotations `@RolesAllowed`, `@DenyAll`, `@PermitAll` on REST endpoints and CDI beans.
+
+[NOTE]
+====
+Authorization checks for `quarkus.http.auth.` configurations are performed before security checks for standard security annotations.
+Therefore, `@PermitAll` only permits access to paths that are not already restricted by HTTP permissions.
+`@PermitAll` cannot override HTTP-level security configurations, only relax restrictions imposed by other standard security annotations such as `@RolesAllowed`.
+====
 
 .{project-name} annotation types summary
 [options="header"]
@@ -494,7 +625,7 @@ s| `@PermitAll` | Specifies that all security roles are allowed to invoke the sp
 s| `@RolesAllowed` | Specifies the list of security roles allowed to access methods in an application.
 s| `@Authenticated` | {project-name} provides the `io.quarkus.security.Authenticated` annotation that permits any authenticated user to access the resource. It's equivalent to `@RolesAllowed("**")`.
 s| `@PermissionsAllowed` | Specifies the list of permissions that are allowed to invoke the specified methods.
-s| `@AuthorizationPolicy` | Specifies named `io.quarkus.vertx.http.runtime.security.HttpSecurityPolicy` that should authorize access to the specified endpoints.HttpSecurityPolicy.
+s| `@AuthorizationPolicy` | Specifies named `io.quarkus.vertx.http.runtime.security.HttpSecurityPolicy` that should authorize access to the specified Jakarta REST endpoints.
 Named HttpSecurityPolicy can be used for general authorization checks as demonstrated by <<authorization-policy-example>>.
 |===
 
@@ -563,7 +694,10 @@ This returns `non-null` for a secured endpoint.
 <6> The `/subject/denied` endpoint declares the `@DenyAll` annotation, disallowing all direct access to it as a REST method, regardless of the user calling it.
 The method is still invokable internally by other methods in this class.
 
-CAUTION: If you plan to use standard security annotations on the IO thread, review the information in xref:security-proactive-authentication.adoc[Proactive Authentication].
+[CAUTION]
+====
+If you plan to use standard security annotations on the IO thread, review the information in xref:security-proactive-authentication.adoc[Proactive Authentication].
+====
 
 The `@RolesAllowed` annotation value supports xref:config-reference.adoc#property-expressions[property expressions] including default values and nested property expressions.
 Configuration properties used with the annotation are resolved at runtime.
@@ -1121,6 +1255,49 @@ public class ProjectPermissionChecker {
 
 TIP: Permission checks run by default on event loops.
 Annotate a permission checker method with the `io.smallrye.common.annotation.Blocking` annotation if you want to run the check on a worker thread.
+
+Matching between the `@PermissionsAllowed` values and the `@PermissionChecker` value is based on string equality as shown in the example below:
+
+[source,java]
+----
+package org.acme.security;
+
+import io.quarkus.security.PermissionChecker;
+import io.quarkus.security.PermissionsAllowed;
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped
+public class FileService {
+
+    @PermissionsAllowed({ "delete:all", "delete:dir" }) <1>
+    void deleteDirectory(Path directoryPath) {
+        // delete directory
+    }
+
+    @PermissionsAllowed(value = { "delete:service", "delete:file" }, inclusive = true) <2>
+    void deleteServiceFile(Path serviceFilePath) {
+        // delete service file
+    }
+
+    @PermissionChecker("delete:all")
+    boolean canDeleteAllDirectories(SecurityIdentity identity) {
+        String filePermissions = identity.getAttribute("user-group-file-permissions");
+        return filePermissions != null && filePermissions.contains("w");
+    }
+
+    @PermissionChecker("delete:service")
+    boolean canDeleteService(SecurityIdentity identity) {
+        return identity.hasRole("admin");
+    }
+
+    @PermissionChecker("delete:file")
+    boolean canDeleteFile(Path serviceFilePath) {
+        return serviceFilePath != null && !serviceFilePath.endsWith("critical");
+    }
+}
+----
+<1> The permission checker method `canDeleteAllDirectories` grants access to the `deleteDirectory` because the `delete:all` values are equal.
+<2> There must be exactly two permission checker methods, one for the `delete:service` permission and other for the `delete:file` permission.
 
 [[permission-meta-annotation]]
 ==== Create permission meta-annotations

@@ -1,6 +1,6 @@
 package io.quarkus.awt.deployment;
 
-import static io.quarkus.deployment.builditem.nativeimage.UnsupportedOSBuildItem.Os.WINDOWS;
+import static io.quarkus.runtime.graal.GraalVM.Version.CURRENT;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +27,10 @@ import io.quarkus.deployment.pkg.builditem.NativeImageRunnerBuildItem;
 import io.quarkus.deployment.pkg.builditem.ProcessInheritIODisabled;
 import io.quarkus.deployment.pkg.builditem.ProcessInheritIODisabledBuildItem;
 import io.quarkus.deployment.pkg.steps.NativeOrNativeSourcesBuild;
+import io.quarkus.deployment.pkg.steps.NoopNativeImageBuildRunner;
+import io.quarkus.runtime.graal.GraalVM;
+import io.smallrye.common.cpu.CPU;
+import io.smallrye.common.os.OS;
 
 class AwtProcessor {
 
@@ -44,10 +48,31 @@ class AwtProcessor {
     }
 
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
-    UnsupportedOSBuildItem osSupportCheck() {
-        return new UnsupportedOSBuildItem(WINDOWS,
-                "Windows AWT integration is not ready in native-image and would result in " +
-                        "java.lang.UnsatisfiedLinkError: no awt in java.library.path.");
+    void supportCheck(BuildProducer<UnsupportedOSBuildItem> unsupported,
+            NativeImageRunnerBuildItem nativeImageRunnerBuildItem) {
+        unsupported.produce(new UnsupportedOSBuildItem(OS.WINDOWS,
+                "Windows AWT integration is not ready in Quarkus native-image and would result in " +
+                        "java.lang.UnsatisfiedLinkError: no awt in java.library.path."));
+        unsupported.produce(new UnsupportedOSBuildItem(OS.MAC,
+                "MacOS AWT integration is not ready in Quarkus native-image and would result in " +
+                        "java.lang.UnsatisfiedLinkError: Can't load library: awt | java.library.path = [.]."));
+        final GraalVM.Version v;
+        if (nativeImageRunnerBuildItem.getBuildRunner() instanceof NoopNativeImageBuildRunner) {
+            v = CURRENT;
+            log.warnf("native-image is not installed. " +
+                    "Using the default %s version as a reference to build native-sources step.", v.getVersionAsString());
+        } else {
+            v = nativeImageRunnerBuildItem.getBuildRunner().getGraalVMVersion();
+        }
+
+        if (v.compareTo(io.quarkus.deployment.pkg.steps.GraalVM.Version.VERSION_24_2_0) >= 0
+                && v.compareTo(GraalVM.Version.VERSION_25_0_0) < 0) {
+            unsupported.produce(new UnsupportedOSBuildItem(CPU.aarch64,
+                    "AWT needs JDK's JEP 454 FFI/FFM support and that is not available for AArch64 with " +
+                            "GraalVM's native-image prior to JDK 25, see: " +
+                            "https://www.graalvm.org/latest/reference-manual/native-image/native-code-interoperability/foreign-interface/#foreign-functions"));
+        }
+
     }
 
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
@@ -55,8 +80,8 @@ class AwtProcessor {
             BuildProducer<NativeImageResourcePatternsBuildItem> resourcePatternsBuildItemBuildProducer) {
         resourcePatternsBuildItemBuildProducer
                 .produce(NativeImageResourcePatternsBuildItem.builder()
-                        .includePattern(".*/iio-plugin.*properties$") // Texts for e.g. exceptions strings
-                        .includePattern(".*/.*pf$") // Default colour profiles
+                        .includeGlobs("**/iio-plugin*.properties", // Texts for e.g. exceptions strings
+                                "**/*.pf") // Default colour profiles
                         .build());
     }
 

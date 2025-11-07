@@ -175,6 +175,7 @@
                                             <cluster.deprecation_indexing.enabled>false</cluster.deprecation_indexing.enabled>
                                             <indices.lifecycle.history_index_enabled>false</indices.lifecycle.history_index_enabled>
                                             <slm.history_index_enabled>false</slm.history_index_enabled>
+                                            <ingest.geoip.downloader.enabled>false</ingest.geoip.downloader.enabled>
                                         </env>
                                         <log>
                                             <prefix>Elasticsearch:</prefix>
@@ -263,7 +264,7 @@
                                     <goal>exec</goal>
                                 </goals>
                                 <configuration>
-                                    <executable>${basedir}/../../.github/docker-prune.sh</executable>
+                                    <executable>${docker-prune.location}</executable>
                                 </configuration>
                             </execution>
                         </executions>

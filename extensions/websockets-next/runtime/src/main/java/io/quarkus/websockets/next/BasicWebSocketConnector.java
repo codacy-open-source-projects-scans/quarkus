@@ -9,9 +9,13 @@ import jakarta.enterprise.inject.Default;
 import jakarta.enterprise.inject.Instance;
 
 import io.quarkus.arc.Arc;
+import io.quarkus.tls.TlsConfiguration;
+import io.quarkus.websockets.next.UserData.TypedKey;
 import io.smallrye.common.annotation.CheckReturnValue;
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.WebSocketClientOptions;
+import io.vertx.core.http.WebSocketConnectOptions;
 
 /**
  * A basic connector can be used to configure and open a new client connection. Unlike with {@link WebSocketConnector} a
@@ -71,6 +75,15 @@ public interface BasicWebSocketConnector {
     }
 
     /**
+     * Set the name of the {@link TlsConfiguration}.
+     *
+     * @param tlsConfigurationName
+     * @return self
+     * @see io.quarkus.tls.TlsConfigurationRegistry#get(String)
+     */
+    BasicWebSocketConnector tlsConfigurationName(String tlsConfigurationName);
+
+    /**
      * Set the path that should be appended to the path of the URI set by {@link #baseUri(URI)}.
      * <p>
      * The path may contain path parameters as defined by {@link WebSocketClient#path()}. In this case, the
@@ -115,6 +128,18 @@ public interface BasicWebSocketConnector {
     BasicWebSocketConnector addSubprotocol(String value);
 
     /**
+     * Add a value to the connection user data.
+     *
+     * @param key
+     * @param value
+     * @param <VALUE>
+     * @return self
+     * @see UserData#put(TypedKey, Object)
+     * @see WebSocketClientConnection#userData()
+     */
+    <VALUE> BasicWebSocketConnector userData(TypedKey<VALUE> key, VALUE value);
+
+    /**
      * Set the execution model for callback handlers.
      * <p>
      * By default, {@link ExecutionModel#BLOCKING} is used.
@@ -155,6 +180,15 @@ public interface BasicWebSocketConnector {
      * @see #executionModel(ExecutionModel)
      */
     BasicWebSocketConnector onBinaryMessage(BiConsumer<WebSocketClientConnection, Buffer> consumer);
+
+    /**
+     * Set a callback to be invoked when a ping message is received from the server.
+     *
+     * @param consumer
+     * @return self
+     * @see #executionModel(ExecutionModel)
+     */
+    BasicWebSocketConnector onPing(BiConsumer<WebSocketClientConnection, Buffer> consumer);
 
     /**
      * Set a callback to be invoked when a pong message is received from the server.
@@ -213,4 +247,15 @@ public interface BasicWebSocketConnector {
         VIRTUAL_THREAD,
     }
 
+    /**
+     * This method allows to customize {@link WebSocketConnectOptions} and {@link WebSocketClientOptions}.
+     * Connection options configured directly with this API, such as host and port, have higher priority than this customizer.
+     * Client options configured directly with Quarkus configuration (e.g. if you configure the maximum size of a frame)
+     * have also higher priority than this customizer.
+     * Purpose of this customizer is to complement configuration options not configured elsewhere.
+     *
+     * @param customizer options customizer; must not be null
+     * @return self
+     */
+    BasicWebSocketConnector customizeOptions(BiConsumer<WebSocketConnectOptions, WebSocketClientOptions> customizer);
 }

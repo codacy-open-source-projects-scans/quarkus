@@ -30,7 +30,7 @@ when all that is needed is the ability to push to a container image registry.
 
 To use this feature, add the following extension to your project:
 
-:add-extension-extensions: container-image-jib
+:add-extension-extensions: quarkus-container-image-jib
 include::{includes}/devtools/extension-add.adoc[]
 
 WARNING: In situations where all that is needed to build a container image and no push to a registry is necessary (essentially by having set `quarkus.container-image.build=true` and left `quarkus.container-image.push` unset - it defaults to `false`), then this extension creates a container image and registers
@@ -48,7 +48,7 @@ For example, the presence of `src/main/jib/foo/bar` would result in  `/foo/bar` 
 
 There are cases where the built container image may need to have Java debugging conditionally enabled at runtime.
 
-When the base image has not been changed (and therefore `ubi8/openjdk-11-runtime`,  `ubi8/openjdk-17-runtime`, or `ubi8/openjdk-21-runtime` is used), then the `quarkus.jib.jvm-additional-arguments` configuration property can be used in order to
+When the base image has not been changed (and therefore `ubi9/openjdk-17-runtime`, or `ubi9/openjdk-21-runtime` is used), then the `quarkus.jib.jvm-additional-arguments` configuration property can be used in order to
 make the JVM listen on the debug port at startup.
 
 The exact configuration is:
@@ -64,7 +64,7 @@ Other base images might provide launch scripts that enable debugging when an env
 
 The `quarkus.jib.jvm-entrypoint` configuration property can be used to completely override the container entry point and can thus be used to either hard code the JVM debug configuration or point to a script that handles the details.
 
-For example, if the base images `ubi8/openjdk-11-runtime`, `ubi8/openjdk-17-runtime` or  `ubi8/openjdk-21-runtime` are used to build the container, the entry point can be hard-coded on the application properties file.
+For example, if the base images `ubi9/openjdk-17-runtime` or  `ubi9/openjdk-21-runtime` are used to build the container, the entry point can be hard-coded on the application properties file.
 
 .Example application.properties
 [source,properties]
@@ -89,7 +89,7 @@ java \
   -jar quarkus-run.jar
 ----
 
-NOTE: `/home/jboss` is the WORKDIR for all quarkus binaries in the base images `ubi8/openjdk-11-runtime`, `ubi8/openjdk-17-runtime` and `ubi8/openjdk-21-runtime` (https://catalog.redhat.com/software/containers/ubi8/openjdk-17/618bdbf34ae3739687568813?container-tabs=dockerfile[Dockerfile for ubi8/openjdk-17-runtime, window="_blank"])
+NOTE: `/home/jboss` is the WORKDIR for all quarkus binaries in the base images `ubi9/openjdk-17-runtime` and `ubi9/openjdk-21-runtime` (https://catalog.redhat.com/software/containers/ubi9/openjdk-21-runtime/6501ce769a0d86945c422d5f?container-tabs=dockerfile[Dockerfile for ubi9/openjdk-17-runtime, window="_blank"])
 
 ==== Multi-module projects and layering
 
@@ -114,7 +114,7 @@ The extension `quarkus-container-image-docker` is using the Docker binary and th
 
 To use this feature, add the following extension to your project.
 
-:add-extension-extensions: container-image-docker
+:add-extension-extensions: quarkus-container-image-docker
 include::{includes}/devtools/extension-add.adoc[]
 
 The `quarkus-container-image-docker` extension is capable of https://docs.docker.com/buildx/working-with-buildx/#build-multi-platform-images/[creating multi-platform (or multi-arch)] images using https://docs.docker.com/engine/reference/commandline/buildx_build/[`docker buildx build`]. See the `quarkus.docker.buildx.*` configuration items in the <<#DockerOptions,Docker Options>> section below.
@@ -133,7 +133,7 @@ The extension `quarkus-container-image-podman` uses https://podman.io/[Podman] a
 
 To use this feature, add the following extension to your project.
 
-:add-extension-extensions: container-image-podman
+:add-extension-extensions: quarkus-container-image-podman
 include::{includes}/devtools/extension-add.adoc[]
 
 [TIP]
@@ -150,13 +150,13 @@ For example, building multi-platform images is implemented differently for Docke
 === OpenShift
 
 The extension `quarkus-container-image-openshift` is using OpenShift binary builds in order to perform container builds inside the OpenShift cluster.
-The idea behind the binary build is that you just upload the artifact and its dependencies to the cluster and during the build they will be merged to a builder image (defaults to `fabric8/s2i-java`).
+The idea behind the binary build is that you just upload the artifact and its dependencies to the cluster and during the build they will be merged to a builder image (defaults to `ubi9/openjdk-17` or `ubi9/openjdk-21`).
 
 The benefit of this approach, is that it can be combined with OpenShift's `DeploymentConfig` that makes it easy to roll out changes to the cluster.
 
 To use this feature, add the following extension to your project.
 
-:add-extension-extensions: container-image-openshift
+:add-extension-extensions: quarkus-container-image-openshift
 include::{includes}/devtools/extension-add.adoc[]
 
 OpenShift builds require creating a `BuildConfig` and two `ImageStream` resources, one for the builder image and one for the output image.
@@ -186,7 +186,7 @@ quarkus.buildpack.native-builder-image=<native builder image>
 
 To use this feature, add the following extension to your project.
 
-:add-extension-extensions: container-image-buildpack
+:add-extension-extensions: quarkus-container-image-buildpack
 include::{includes}/devtools/extension-add.adoc[]
 
 NOTE: When using the buildpack container image extension it is strongly advised to avoid adding `quarkus.container-image.build=true` in your properties configuration as it might trigger nesting builds within builds. It's preferable to pass it as an option to the build command instead.
@@ -293,3 +293,10 @@ include::{generated-dir}/config/quarkus-container-image-podman.adoc[opts=optiona
 In addition to the generic container image options, the `container-image-openshift` also provides the following options:
 
 include::{generated-dir}/config/quarkus-container-image-openshift_quarkus.openshift.adoc[opts=optional, leveloffset=+1]
+
+[[BuildpackOptions]]
+=== Buildpack Options
+
+In addition to the generic container image options, the `container-image-buildpack` also provides the following options:
+
+include::{generated-dir}/config/quarkus-container-image-buildpack_quarkus.buildpack.adoc[opts=optional,leveloffset=+1]

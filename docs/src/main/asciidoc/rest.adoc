@@ -138,7 +138,7 @@ public static class MyApplication extends Application {
 ----
 
 This will cause all rest endpoints to be resolve relative to `/api`, so the endpoint above with `@Path("rest")` would
-be accessible at `/api/rest/`. You can also set the `quarkus.rest.path` build time property to set the root path if you
+be accessible at `/api/rest/`. You can also set the <<quarkus-rest-common_quarkus-rest-path,`quarkus.rest.path`>> build time property to set the root path if you
 don't want to use an annotation.
 
 === Declaring endpoints: HTTP methods
@@ -778,6 +778,34 @@ public class Endpoint {
 NOTE: You can also use the Jakarta REST type link:{jaxrsapi}/jakarta/ws/rs/core/Response.html[`Response`] but it is
 not strongly typed to your entity.
 
+==== Responding with files
+
+When a file needs to be returned, the following code ensures that Quarkus properly streams the file contents to the client.
+
+[source,java]
+----
+package org.acme.rest;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import org.jboss.resteasy.reactive.RestResponse;
+import org.jboss.resteasy.reactive.RestResponse.ResponseBuilder;
+
+@Path("")
+public class Endpoint {
+
+    @Path("file")
+    @GET
+    public RestResponse<java.nio.file.Path> largePathRestResponse() throws IOException {
+        java.nio.file.Path path = ...
+
+        return RestResponse.ResponseBuilder.ok(path)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "some-file-name")
+                .build();
+    }
+}
+----
+
 ==== Using annotations
 
 Alternatively, if you only need to set the status code and / or HTTP headers with static values, you can use `@org.jboss.resteasy.reactive.ResponseStatus` and /or `ResponseHeader` respectively.
@@ -917,6 +945,15 @@ See <<execution-model,Execution Model documentation>> for more information.
 The link:{jdkapi}/java/util/concurrent/CompletionStage.html[`CompletionStage`] return
 type is also supported.
 
+==== Request cancellation
+
+Async endpoints that return `Uni` support request cancellation, which means that if the underlying HTTP connection is closed for whatever reason,
+the request pipeline defined by the returned `Uni` is also cancelled. This can be very useful in avoiding unnecessary work on the server
+when the client isn't going to use the response anyway.
+
+If instead of cancelling the pipeline, it should be completed regardless of the state of the HTTP connection, Quarkus REST provides the `org.jboss.resteasy.reactive.server.Cancellable` annotation
+which can be applied to REST classes or methods to control the cancellation behavior.
+
 === Streaming support
 
 If you want to stream your response element by element, you can make your endpoint method return a
@@ -1011,7 +1048,7 @@ public class Endpoint {
     }
 
     interface SomeResponse {
-        Multi<byte[]> data;
+        Multi<byte[]> data();
 
         String myHeader();
     }
@@ -1407,7 +1444,7 @@ Instead of importing `io.quarkus:quarkus-rest`, you can import either of the fol
 |https://github.com/FasterXML/jackson[Jackson support]
 
 |`io.quarkus:quarkus-rest-jsonb`
-|https://eclipse-ee4j.github.io/jsonb-api/[JSON-B support]
+|https://github.com/jakartaee/jsonb-api/[JSON-B support]
 
 |===
 
@@ -1624,14 +1661,43 @@ public User userPrivate() {
 }
 ----
 
-When the result the `userPublic` method is serialized, the `id` field will not be contained in the response as the `Public` view does not include it.
+When the result of the `userPublic` method is serialized, the `id` field will not be contained in the response as the `Public` view does not include it.
 The result of `userPrivate` however will include the `id` as expected when serialized.
 
-===== Reflection-free Jackson serialization
+`@JsonView` is also supported for deserializing the request body. So for example in the following code:
 
-Out-of-the-box Jackson serialization converts objects into their JSON representation by introspecting them through a heavy use of reflection. However, the general Quarkus philosophy is to avoid reflection as much as possible, often replacing it with build time code generation. For this reason it is possible to automatically generate at build time implementations of the Jackson `StdSerializer`, one for each class to be converted in JSON. These generated serializers can be subsequently used by Quarkus at runtime to perform the JSON serialization of the objects returned by a REST endpoint without any use of reflection.
+[source,java]
+----
+        @POST
+        @Produces(MediaType.APPLICATION_JSON)
+        @Consumes(MediaType.APPLICATION_JSON)
+        public RestResponse<User> create(@JsonView(Views.Public.class) User user) {
+            return RestResponse.status(CREATED, user);
+        }
+----
 
-This feature is turned off by default, but it can be enabled by setting the configuration property `quarkus.rest.jackson.optimization.enable-reflection-free-serializers=true`.
+inside the `create` method, `user` would only contain the value of `name` while `id` would always be `null` (regardless if the JSON request contained it)
+
+===== Reflection-free Jackson serialization and deserialization
+
+By default, Jackson uses reflection to convert objects to and from JSON.
+However, {project-name} follows a build-time optimization philosophy.
+To align with this approach, configure your application to minimize reflection by using the link:https://quarkus.io/extensions/io.quarkus/quarkus-rest-jackson[`quarkus-rest-jackson`] extension.
+
+This feature is introduced as a Technology Preview and is disabled by default.
+
+By eliminating reliance on reflection during deserialization, applications can achieve better performance and reduced memory consumption, particularly for native applications where reflection can introduce overhead.
+If you implement this feature, run tests to assess its effect on your applications.
+
+To enable this feature, set the <<quarkus-rest-jackson_quarkus-rest-jackson-optimization-enable-reflection-free-serializers,`quarkus.rest.jackson.optimization.enable-reflection-free-serializers`>> configuration property to `true`:
+
+`quarkus.rest.jackson.optimization.enable-reflection-free-serializers=true`.
+
+Setting this property applies reflection-free optimization to deserialization and serialization.
+
+When enabled, {project-name} generates `StdSerializer` and `StdDeserializer` implementations at build time for each class requiring JSON conversion. The application then processes objects returned by REST endpoints using these generated serializers and deserializers, eliminating reliance on reflection and improving performance.
+
+Developers can further customize JSON processing by implementing the `ObjectMapperCustomizer` interface. This interface allows fine-grained control over the `ObjectMapper`, enabling the registration of custom serializers and deserializers while ensuring compatibility with the reflection-free optimization. If additional configuration is needed, implement an `ObjectMapperCustomizer` bean and register any necessary modules or settings.
 
 ===== Completely customized per method serialization/deserialization
 
@@ -2334,6 +2400,7 @@ If you wish to make sure your exception mapper is called for your exception type
 
 [source,java]
 ----
+@UnwrapException
 public class MyExceptionWrapper extends RuntimeException {
     public MyExceptionWrapper(Exception cause) {
         super(cause);
@@ -2851,17 +2918,19 @@ However, you can change this default behavior and constrain a provider to:
 === Parameter mapping
 
 All <<request-parameters,Request Parameters>> can be declared as link:{jdkapi}/java/lang/String.html[`String`],
-but also any of the following types:
+but also as any of the following types:
 
-- Types for which a link:{jaxrsapi}/jakarta/ws/rs/ext/ParamConverter.html[`ParamConverter`] is available via a registered
+1. Types for which a link:{jaxrsapi}/jakarta/ws/rs/ext/ParamConverter.html[`ParamConverter`] is available via a registered
 link:{jaxrsapi}/jakarta/ws/rs/ext/ParamConverterProvider.html[`ParamConverterProvider`].
-- Primitive types.
-- Types that have a constructor that accepts a single link:{jdkapi}/java/lang/String.html[`String`] argument.
-- Types that have a static method named `valueOf` or `fromString` with a single link:{jdkapi}/java/lang/String.html[`String`] argument
+2. Primitive types.
+3. Types that have a constructor that accepts a single link:{jdkapi}/java/lang/String.html[`String`] argument.
+4. Types that have a static method named `valueOf` or `fromString` with a single link:{jdkapi}/java/lang/String.html[`String`] argument
 that return an instance of the type. If both methods are present then `valueOf` will be used unless
 the type is an `enum` in which case `fromString` will be used.
-- link:{jdkapi}/java/util/List.html[`List<T>`], link:{jdkapi}/java/util/Set.html[`Set<T>`], or
-link:{jdkapi}/java/util/SortedSet.html[`SortedSet<T>`], where `T` satisfies any above criterion.
+5. link:{jdkapi}/java/util/List.html[`List<T>`], link:{jdkapi}/java/util/Set.html[`Set<T>`], or
+link:{jdkapi}/java/util/SortedSet.html[`SortedSet<T>`], where `T` satisfies 1, 3 or 4 above.
+
+For 3 and 4, constructor instantiation is prioritesed above method instantiation. Public, protected, and package private constructors and methods are supported for instantiation.
 
 The following example illustrates all those possibilities:
 
@@ -3342,3 +3411,9 @@ In addition to the Server side, Quarkus REST comes with a new MicroProfile REST 
 Please note that the `quarkus-resteasy-client` extension may not be used with Quarkus REST, use `quarkus-rest-client` instead.
 
 See the xref:rest-client.adoc[REST Client Guide] for more information about the REST client.
+
+[[rest-configuration-reference]]
+== Quarkus REST Configuration Reference
+
+include::{generated-dir}/config/quarkus-rest-common_quarkus.rest.adoc[leveloffset=+1, opts=optional]
+include::{generated-dir}/config/quarkus-rest-jackson.adoc[leveloffset=+1, opts=optional]

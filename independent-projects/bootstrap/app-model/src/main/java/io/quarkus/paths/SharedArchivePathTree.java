@@ -53,34 +53,51 @@ class SharedArchivePathTree extends ArchivePathTree {
     @Override
     public OpenPathTree open() {
         var lastOpen = this.lastOpen;
-        if (lastOpen != null && lastOpen.acquire()) {
-            return new CallerOpenPathTree(lastOpen);
+        if (lastOpen != null) {
+            var acquired = lastOpen.acquire();
+            if (acquired != null) {
+                return acquired;
+            }
         }
         try {
-            this.lastOpen = new SharedOpenArchivePathTree(archive, openFs());
+            lastOpen = this.lastOpen = new SharedOpenArchivePathTree(openFs());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        return new CallerOpenPathTree(this.lastOpen);
+        return new CallerOpenPathTree(lastOpen);
     }
 
     private class SharedOpenArchivePathTree extends OpenArchivePathTree {
 
         private final AtomicInteger users = new AtomicInteger(1);
 
-        protected SharedOpenArchivePathTree(Path archivePath, FileSystem fs) {
+        protected SharedOpenArchivePathTree(FileSystem fs) {
             super(fs);
             openCount.incrementAndGet();
         }
 
-        private boolean acquire() {
+        /**
+         * Returns a new handle for this open archive tree to the caller
+         * as long as this open archive tree is still open and is still
+         * the last one that was open for this archive. Otherwise, the method
+         * will return null.
+         *
+         * @return a new instance of {@link CallerOpenPathTree} or null,
+         *         if the current open archive tree has been closed or another open
+         *         archive tree has been created for this archive
+         */
+        private CallerOpenPathTree acquire() {
             readLock().lock();
-            final boolean result = lastOpen == this && isOpen();
-            if (result) {
-                users.incrementAndGet();
+            try {
+                final boolean result = lastOpen == this && isOpen();
+                if (result) {
+                    users.incrementAndGet();
+                    return new CallerOpenPathTree(this);
+                }
+            } finally {
+                readLock().unlock();
             }
-            readLock().unlock();
-            return result;
+            return null;
         }
 
         @Override
@@ -105,6 +122,11 @@ class SharedArchivePathTree extends ArchivePathTree {
             } finally {
                 writeLock().unlock();
             }
+        }
+
+        @Override
+        public String toString() {
+            return SharedArchivePathTree.this.toString();
         }
     }
 
@@ -201,6 +223,11 @@ class SharedArchivePathTree extends ArchivePathTree {
             } finally {
                 delegate.writeLock().unlock();
             }
+        }
+
+        @Override
+        public String toString() {
+            return delegate.toString();
         }
     }
 }

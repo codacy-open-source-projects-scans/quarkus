@@ -11,7 +11,9 @@ import java.util.Optional;
 
 import io.quarkus.oidc.client.runtime.OidcClientConfig;
 import io.quarkus.oidc.client.runtime.OidcClientConfig.Grant;
+import io.quarkus.oidc.client.runtime.OidcClientsConfig;
 import io.quarkus.oidc.common.runtime.config.OidcClientCommonConfigBuilder;
+import io.smallrye.config.SmallRyeConfigBuilder;
 
 /**
  * Builder for the {@link io.quarkus.oidc.client.runtime.OidcClientConfig}. This builder is not thread-safe.
@@ -26,10 +28,13 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
         private final Grant grant;
         private final boolean absoluteExpiresIn;
         private final Optional<Duration> accessTokenExpiresIn;
+        private final Optional<Duration> accessTokenExpirySkew;
         private final Optional<Duration> refreshTokenTimeSkew;
         private final Optional<List<String>> scopes;
+        private final Optional<List<String>> audience;
         private final boolean clientEnabled;
         private final Optional<String> id;
+        private final Optional<Duration> refreshInterval;;
 
         private OidcClientConfigImpl(OidcClientConfigBuilder builder) {
             super(builder);
@@ -39,10 +44,13 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
             this.grant = builder.grant;
             this.absoluteExpiresIn = builder.absoluteExpiresIn;
             this.accessTokenExpiresIn = builder.accessTokenExpiresIn;
+            this.accessTokenExpirySkew = builder.accessTokenExpirySkew;
             this.refreshTokenTimeSkew = builder.refreshTokenTimeSkew;
             this.scopes = builder.scopes.isEmpty() ? Optional.empty() : Optional.of(List.copyOf(builder.scopes));
+            this.audience = builder.audience.isEmpty() ? Optional.empty() : Optional.of(List.copyOf(builder.audience));
             this.clientEnabled = builder.clientEnabled;
             this.id = builder.id;
+            this.refreshInterval = builder.refreshInterval;
         }
 
         @Override
@@ -61,6 +69,11 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
         }
 
         @Override
+        public Optional<List<String>> audience() {
+            return audience;
+        }
+
+        @Override
         public Optional<Duration> refreshTokenTimeSkew() {
             return refreshTokenTimeSkew;
         }
@@ -68,6 +81,11 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
         @Override
         public Optional<Duration> accessTokenExpiresIn() {
             return accessTokenExpiresIn;
+        }
+
+        @Override
+        public Optional<Duration> accessTokenExpirySkew() {
+            return accessTokenExpirySkew;
         }
 
         @Override
@@ -94,18 +112,40 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
         public Map<String, String> headers() {
             return headers;
         }
+
+        @Override
+        public Optional<Duration> refreshInterval() {
+            return refreshInterval;
+        }
     }
+
+    /**
+     * {@link OidcClientConfig} with documented defaults.
+     * Cached here so that we avoid building the SmallRye Config again and again when no-args builder constructors
+     * are used.
+     */
+    private static volatile OidcClientConfig configWithDefaults = null;
 
     private final Map<String, String> headers = new HashMap<>();
     private boolean earlyTokensAcquisition;
     private final Map<String, Map<String, String>> grantOptions = new HashMap<>();
     private final List<String> scopes = new ArrayList<>();
+    private final List<String> audience = new ArrayList<>();
     private Grant grant;
     private boolean absoluteExpiresIn;
     private Optional<Duration> accessTokenExpiresIn;
+    private Optional<Duration> accessTokenExpirySkew;
     private Optional<Duration> refreshTokenTimeSkew;
     private boolean clientEnabled;
     private Optional<String> id;
+    private Optional<Duration> refreshInterval;
+
+    /**
+     * Creates {@link OidcClientConfigBuilder} builder populated with documented default values.
+     */
+    public OidcClientConfigBuilder() {
+        this(getConfigWithDefaults());
+    }
 
     /**
      * @param config created either by this builder or SmallRye Config; config methods must never return null
@@ -118,11 +158,16 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
         this.grant = config.grant();
         this.absoluteExpiresIn = config.absoluteExpiresIn();
         this.accessTokenExpiresIn = config.accessTokenExpiresIn();
+        this.accessTokenExpirySkew = config.accessTokenExpirySkew();
         this.refreshTokenTimeSkew = config.refreshTokenTimeSkew();
         this.clientEnabled = config.clientEnabled();
         this.id = config.id();
+        this.refreshInterval = config.refreshInterval();
         if (config.scopes().isPresent()) {
             this.scopes.addAll(config.scopes().get());
+        }
+        if (config.audience().isPresent()) {
+            this.audience.addAll(config.audience().get());
         }
     }
 
@@ -220,6 +265,15 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
     }
 
     /**
+     * @param accessTokenExpirySkew {@link OidcClientConfig#accessTokenExpirySkew()}
+     * @return this builder
+     */
+    public OidcClientConfigBuilder accessTokenExpirySkew(Duration accessTokenExpirySkew) {
+        this.accessTokenExpirySkew = Optional.ofNullable(accessTokenExpirySkew);
+        return this;
+    }
+
+    /**
      * @param refreshTokenTimeSkew {@link OidcClientConfig#refreshTokenTimeSkew()}
      * @return this builder
      */
@@ -249,6 +303,30 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
     public OidcClientConfigBuilder scopes(String... scopes) {
         Objects.requireNonNull(scopes);
         this.scopes.addAll(Arrays.asList(scopes));
+        return this;
+    }
+
+    /**
+     * Adds scopes to the {@link OidcClientConfig#audience()}.
+     *
+     * @param scopes {@link OidcClientConfig#audience()}
+     * @return this builder
+     */
+    public OidcClientConfigBuilder audience(List<String> audience) {
+        Objects.requireNonNull(audience);
+        this.audience.addAll(audience);
+        return this;
+    }
+
+    /**
+     * Adds scopes to the {@link OidcClientConfig#audience()}.
+     *
+     * @param scopes {@link OidcClientConfig#audience()}
+     * @return this builder
+     */
+    public OidcClientConfigBuilder audience(String... audience) {
+        Objects.requireNonNull(audience);
+        this.audience.addAll(Arrays.asList(audience));
         return this;
     }
 
@@ -296,6 +374,11 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
         return new GrantBuilder(this);
     }
 
+    public OidcClientConfigBuilder refreshInterval(Duration refreshInterval) {
+        this.refreshInterval = Optional.ofNullable(refreshInterval);
+        return this;
+    }
+
     /**
      * @return OidcClientConfig
      */
@@ -321,7 +404,7 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
         private String refreshExpiresInProperty;
 
         public GrantBuilder() {
-            this(OidcClientConfig.builder());
+            this(new OidcClientConfigBuilder());
         }
 
         public GrantBuilder(OidcClientConfigBuilder builder) {
@@ -386,5 +469,17 @@ public final class OidcClientConfigBuilder extends OidcClientCommonConfigBuilder
         public Grant build() {
             return new GrantImpl(type, accessTokenProperty, refreshTokenProperty, expiresInProperty, refreshExpiresInProperty);
         }
+    }
+
+    private static OidcClientConfig getConfigWithDefaults() {
+        if (configWithDefaults == null) {
+            final OidcClientsConfig clientsConfig = new SmallRyeConfigBuilder()
+                    .addDiscoveredConverters()
+                    .withMapping(OidcClientsConfig.class)
+                    .build()
+                    .getConfigMapping(OidcClientsConfig.class);
+            configWithDefaults = OidcClientsConfig.getDefaultClient(clientsConfig);
+        }
+        return configWithDefaults;
     }
 }

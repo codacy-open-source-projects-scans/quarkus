@@ -1,6 +1,7 @@
 package io.quarkus.opentelemetry.deployment.interceptor;
 
 import static io.opentelemetry.api.trace.SpanKind.INTERNAL;
+import static io.opentelemetry.semconv.incubating.CodeIncubatingAttributes.CODE_FUNCTION_NAME;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -104,9 +105,11 @@ public class AddingSpanAttributesInterceptorTest {
         SpanData spanDataOut = spanItems.get(0);
         assertEquals("HelloRouter.withSpanTakesPrecedence", spanDataOut.getName());
         assertEquals(INTERNAL, spanDataOut.getKind());
-        assertEquals(2, spanDataOut.getAttributes().size());
+        assertEquals(3, spanDataOut.getAttributes().size());
         assertEquals("implicit", getAttribute(spanDataOut, "implicitName"));
         assertEquals("explicit", getAttribute(spanDataOut, "explicitName"));
+        assertEquals(HelloRouter.class.getName() + ".withSpanTakesPrecedence",
+                spanDataOut.getAttributes().get((CODE_FUNCTION_NAME)));
     }
 
     @Test

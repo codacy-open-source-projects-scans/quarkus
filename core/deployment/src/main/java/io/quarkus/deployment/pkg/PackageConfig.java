@@ -1,6 +1,7 @@
 package io.quarkus.deployment.pkg;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -48,6 +49,13 @@ public interface PackageConfig {
      * The name of the final artifact, excluding the suffix and file extension.
      */
     Optional<String> outputName();
+
+    /**
+     * The timestamp used as a reference for generating the packages (e.g. for the creation timestamp of ZIP entries).
+     * <p>
+     * The approach is similar to what is done by the maven-jar-plugin with `project.build.outputTimestamp`.
+     */
+    Optional<Instant> outputTimestamp();
 
     /**
      * Setting this switch to {@code true} will cause Quarkus to write the transformed application bytecode
@@ -165,8 +173,7 @@ public interface PackageConfig {
         interface AppcdsConfig {
             /**
              * Whether to automate the creation of AppCDS.
-             * Furthermore, this option only works for Java 11+ and is considered experimental for the time being.
-             * Finally, care must be taken to use the same exact JVM version when building and running the application.
+             * Care must be taken to use the same exact JVM version when building and running the application.
              */
             @WithDefault("false")
             boolean enabled();
@@ -203,6 +210,13 @@ public interface PackageConfig {
              */
             @WithDefault("true")
             boolean useContainer();
+
+            /**
+             * Whether to use <a href="https://openjdk.org/jeps/483">Ahead-of-Time Class Loading & Linking</a> introduced in JDK
+             * 24.
+             */
+            @WithDefault("false")
+            boolean useAot();
         }
 
         /**

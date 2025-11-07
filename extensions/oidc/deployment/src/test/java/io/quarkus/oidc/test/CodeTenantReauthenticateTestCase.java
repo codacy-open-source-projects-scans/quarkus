@@ -144,7 +144,7 @@ public class CodeTenantReauthenticateTestCase {
         loginForm.getInputByName("username").setValueAttribute("alice");
         loginForm.getInputByName("password").setValueAttribute("alice");
 
-        page = loginForm.getInputByName("login").click();
+        page = loginForm.getButtonByName("login").click();
 
         assertEquals(expectedResponse, page.getBody().asNormalizedText());
         assertNotNull(getSessionCookie(webClient, tenant));
@@ -167,6 +167,8 @@ public class CodeTenantReauthenticateTestCase {
     }
 
     private static Cookie getSessionCookie(WebClient webClient, String tenantId) {
-        return webClient.getCookieManager().getCookie("q_session" + (tenantId == null ? "" : "_" + tenantId));
+        String sessionCookie = "q_session" + (tenantId == null ? "" : "_" + tenantId);
+
+        return webClient.getCookieManager().getCookie(sessionCookie);
     }
 }

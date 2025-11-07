@@ -18,7 +18,7 @@ import io.smallrye.config.WithName;
  * problem, but we need it for documentation purposes.
  * <br>
  * Relocation of the Config configurations to the Quarkus namespace is done in
- * {@link io.quarkus.runtime.configuration.ConfigUtils#configBuilder}.
+ * {@link io.quarkus.runtime.configuration.QuarkusConfigBuilderCustomizer}.
  */
 @ConfigMapping(prefix = "quarkus")
 @ConfigRoot(phase = ConfigPhase.RUN_TIME)
@@ -73,14 +73,6 @@ public interface ConfigConfig {
     @WithName("config.build-time-mismatch-at-runtime")
     @WithDefault("warn")
     BuildTimeMismatchAtRuntime buildTimeMismatchAtRuntime();
-
-    /**
-     * A property that allows accessing a generated UUID.
-     * It generates that UUID at startup time. So it changes between two starts including in dev mode.
-     * <br>
-     * Access this generated UUID using expressions: `${quarkus.uuid}`.
-     */
-    Optional<String> uuid();
 
     enum BuildTimeMismatchAtRuntime {
         warn,

@@ -6,8 +6,6 @@ import static io.smallrye.common.expression.Expression.Flag.NO_TRIM;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -21,7 +19,6 @@ import javax.inject.Named;
 import javax.inject.Singleton;
 
 import org.apache.maven.artifact.Artifact;
-import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Model;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.project.MavenProject;
@@ -43,7 +40,6 @@ import io.quarkus.bootstrap.resolver.maven.BootstrapMavenContext;
 import io.quarkus.bootstrap.resolver.maven.BootstrapMavenContextConfig;
 import io.quarkus.bootstrap.resolver.maven.BootstrapMavenException;
 import io.quarkus.bootstrap.resolver.maven.EffectiveModelResolver;
-import io.quarkus.bootstrap.resolver.maven.IncubatingApplicationModelResolver;
 import io.quarkus.bootstrap.resolver.maven.MavenArtifactResolver;
 import io.quarkus.bootstrap.resolver.maven.workspace.LocalProject;
 import io.quarkus.maven.components.ManifestSection;
@@ -81,28 +77,53 @@ public class QuarkusBootstrapProvider implements Closeable {
         return ArtifactKey.ga(project.getGroupId(), project.getArtifactId());
     }
 
-    static Map<Path, Model> getProjectMap(MavenSession session) {
-        final List<MavenProject> allProjects = session.getAllProjects();
-        if (allProjects == null) {
-            return Map.of();
-        }
-        final Map<Path, Model> projectModels = new HashMap<>(allProjects.size());
-        for (MavenProject mp : allProjects) {
-            final Model model = mp.getOriginalModel();
-            model.setPomFile(mp.getFile());
-            // activated profiles or custom extensions may have overridden the build defaults
-            model.setBuild(mp.getModel().getBuild());
-            projectModels.put(mp.getBasedir().toPath(), model);
-            // The Maven Model API determines the project directory as the directory containing the POM file.
-            // However, in case when plugins manipulating POMs store their results elsewhere
-            // (such as the flatten plugin storing the flattened POM under the target directory),
-            // both the base directory and the directory containing the POM file should be added to the map.
-            var pomDir = mp.getFile().getParentFile();
-            if (!pomDir.equals(mp.getBasedir())) {
-                projectModels.put(pomDir.toPath(), model);
+    static void setProjectModels(QuarkusBootstrapMojo mojo, BootstrapMavenContextConfig<?> config) {
+        final List<MavenProject> allProjects = mojo.mavenSession().getAllProjects();
+        if (allProjects != null) {
+            for (MavenProject mp : allProjects) {
+                if (mojo.reloadPoms.contains(mp.getFile())) {
+                    continue;
+                }
+                final Model model = getRawModel(mp);
+                config.addProvidedModule(mp.getFile().toPath(), model, mp.getModel());
+                // The Maven Model API determines the project directory as the directory containing the POM file.
+                // However, in case when plugins manipulating POMs store their results elsewhere
+                // (such as the flatten plugin storing the flattened POM under the target directory),
+                // both the base directory and the directory containing the POM file should be added to the map.
+                var pomDir = mp.getFile().getParentFile();
+                if (!pomDir.equals(mp.getBasedir())) {
+                    config.addProvidedModule(mp.getBasedir().toPath().resolve("pom.xml"), model, mp.getModel());
+                }
             }
         }
-        return projectModels;
+    }
+
+    /**
+     * This method is meant to return the "raw" model, i.e. the one that would be obtained
+     * by reading a {@code pom.xml} file, w/o interpolation, flattening, etc.
+     * However, plugins, such as, {@code flatten-maven-plugin}, may manipulate raw POMs
+     * early enough by stripping dependency management, test scoped dependencies, etc,
+     * to break our bootstrap. So this method attempts to make sure the essential configuration
+     * is still available to bootstrap a Quarkus app.
+     *
+     * @param mp Maven project
+     * @return raw POM
+     */
+    private static Model getRawModel(MavenProject mp) {
+        Model model = mp.getOriginalModel();
+        if (model.getDependencyManagement() == null) {
+            // clone the model to not modify the original model associated with the project,
+            // otherwise, the enforcer plugin may fail, for example
+            model = model.clone();
+            // this could be the flatten plugin removing the dependencyManagement
+            // in which case we set the effective dependency management to not lose the platform info
+            model.setDependencyManagement(mp.getDependencyManagement());
+            // it also helps to set the effective dependencies in this case
+            // since the flatten plugin may remove the test dependencies from the POM
+            model.setDependencies(mp.getDependencies());
+        }
+        model.setPomFile(mp.getFile());
+        return model;
     }
 
     private static String getBootstrapProviderId(ArtifactKey moduleKey, String bootstrapId) {
@@ -204,18 +225,18 @@ public class QuarkusBootstrapProvider implements Closeable {
         private MavenArtifactResolver artifactResolver(QuarkusBootstrapMojo mojo, LaunchMode mode) {
             try {
                 if (mode == LaunchMode.DEVELOPMENT || mode == LaunchMode.TEST || isWorkspaceDiscovery(mojo)) {
-                    var resolver = workspaceProvider.createArtifactResolver(
-                            BootstrapMavenContext.config()
-                                    // it's important to pass user settings in case the process was not launched using the original mvn script
-                                    // for example using org.codehaus.plexus.classworlds.launcher.Launcher
-                                    .setUserSettings(mojo.mavenSession().getRequest().getUserSettingsFile())
-                                    .setCurrentProject(mojo.mavenProject().getFile().toString())
-                                    .setPreferPomsFromWorkspace(true)
-                                    .setProjectModelProvider(getProjectMap(mojo.mavenSession())::get)
-                                    // pass the repositories since Maven extensions could manipulate repository configs
-                                    .setRemoteRepositories(mojo.remoteRepositories())
-                                    .setEffectiveModelBuilder(BootstrapMavenContextConfig
-                                            .getEffectiveModelBuilderProperty(mojo.mavenProject().getProperties())));
+                    final BootstrapMavenContextConfig<?> config = BootstrapMavenContext.config()
+                            // it's important to pass user settings in case the process was not launched using the original mvn script,
+                            // for example, using org.codehaus.plexus.classworlds.launcher.Launcher
+                            .setUserSettings(mojo.mavenSession().getRequest().getUserSettingsFile())
+                            .setCurrentProject(mojo.mavenProject().getFile().toString())
+                            .setPreferPomsFromWorkspace(true)
+                            // pass the repositories since Maven extensions could manipulate repository configs
+                            .setRemoteRepositories(mojo.remoteRepositories())
+                            .setEffectiveModelBuilder(BootstrapMavenContextConfig
+                                    .getEffectiveModelBuilderProperty(mojo.mavenProject().getProperties()));
+                    setProjectModels(mojo, config);
+                    var resolver = workspaceProvider.createArtifactResolver(config);
                     final LocalProject currentProject = resolver.getMavenContext().getCurrentProject();
                     if (currentProject != null && workspaceId == 0) {
                         workspaceId = currentProject.getWorkspace().getId();
@@ -239,18 +260,15 @@ public class QuarkusBootstrapProvider implements Closeable {
                 Consumer<QuarkusBootstrap.Builder> builderCustomizer) throws MojoExecutionException {
 
             final BootstrapAppModelResolver modelResolver = new BootstrapAppModelResolver(artifactResolver(mojo, mode))
-                    .setIncubatingModelResolver(
-                            IncubatingApplicationModelResolver.isIncubatingEnabled(mojo.mavenProject().getProperties())
-                                    || mode == LaunchMode.DEVELOPMENT
-                                            && !IncubatingApplicationModelResolver.isIncubatingModelResolverProperty(
-                                                    mojo.mavenProject().getProperties(), "false"))
+                    .setLegacyModelResolver(
+                            BootstrapAppModelResolver.isLegacyModelResolver(mojo.mavenProject().getProperties()))
                     .setDevMode(mode == LaunchMode.DEVELOPMENT)
                     .setTest(mode == LaunchMode.TEST)
                     .setCollectReloadableDependencies(mode == LaunchMode.DEVELOPMENT || mode == LaunchMode.TEST);
 
             final ResolvedDependencyBuilder appArtifact = getApplicationArtifactBuilder(mojo);
             Set<ArtifactKey> reloadableModules = Set.of();
-            if (mode == LaunchMode.NORMAL) {
+            if (mode.isProduction()) {
                 // collect reloadable artifacts for remote-dev
                 final List<MavenProject> localProjects = mojo.mavenProject().getCollectedProjects();
                 final Set<ArtifactKey> localProjectKeys = new HashSet<>(localProjects.size());
@@ -333,6 +351,11 @@ public class QuarkusBootstrapProvider implements Closeable {
 
             effectiveProperties.putIfAbsent("quarkus.application.name", mojo.mavenProject().getArtifactId());
             effectiveProperties.putIfAbsent("quarkus.application.version", mojo.mavenProject().getVersion());
+            // pass the project.build.outputTimestamp to Quarkus packaging subsystem
+            if (mojo.mavenProject().getProperties().containsKey("project.build.outputTimestamp")) {
+                effectiveProperties.putIfAbsent("quarkus.package.output-timestamp",
+                        mojo.mavenProject().getProperties().getProperty("project.build.outputTimestamp"));
+            }
 
             for (Map.Entry<String, String> attribute : mojo.manifestEntries().entrySet()) {
                 if (attribute.getValue() == null) {

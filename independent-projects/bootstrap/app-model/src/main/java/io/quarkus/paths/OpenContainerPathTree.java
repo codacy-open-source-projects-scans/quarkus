@@ -93,7 +93,11 @@ public abstract class OpenContainerPathTree extends PathTreeWithManifest impleme
 
     @Override
     public Collection<Path> getRoots() {
-        return List.of(getRootPath());
+        final Path rootPath = getRootPath();
+        if (rootPath == null) {
+            throw new RuntimeException("rootPath is null for " + getContainerPath());
+        }
+        return List.of(rootPath);
     }
 
     @Override
@@ -185,5 +189,10 @@ public abstract class OpenContainerPathTree extends PathTreeWithManifest impleme
         return Objects.equals(getContainerPath(), other.getContainerPath())
                 && Objects.equals(pathFilter, other.pathFilter)
                 && manifestEnabled == other.manifestEnabled;
+    }
+
+    @Override
+    public String toString() {
+        return getContainerPath().toString();
     }
 }

@@ -7,7 +7,7 @@ import java.util.function.Function;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.spi.ConfigProviderResolver;
 
-import io.quarkus.deployment.dev.testing.TestConfig;
+import io.quarkus.deployment.dev.testing.TestConfigCustomizer;
 import io.quarkus.runtime.LaunchMode;
 import io.quarkus.runtime.configuration.ConfigUtils;
 import io.smallrye.config.SmallRyeConfig;
@@ -19,6 +19,8 @@ import io.smallrye.config.SmallRyeConfigProviderResolver;
  * classloader.
  */
 public class TestConfigProviderResolver extends SmallRyeConfigProviderResolver {
+
+    // Note that this class both *extends* and *consumes* SmallRyeConfigProviderResolver. Every method in SmallRyeConfigProviderResolver should be replicated here with a delegation to the instance variable, or there will be subtle and horrible bugs.
     private final SmallRyeConfigProviderResolver resolver;
     private final ClassLoader classLoader;
     private final Map<LaunchMode, SmallRyeConfig> configs;
@@ -51,16 +53,20 @@ public class TestConfigProviderResolver extends SmallRyeConfigProviderResolver {
             SmallRyeConfig config = configs.computeIfAbsent(mode, new Function<LaunchMode, SmallRyeConfig>() {
                 @Override
                 public SmallRyeConfig apply(final LaunchMode launchMode) {
-                    return ConfigUtils.configBuilder(false, true, mode)
-                            .withProfile(mode.getDefaultProfile())
-                            .withMapping(TestConfig.class, "quarkus.test")
+                    LaunchMode current = LaunchMode.current();
+                    LaunchMode.set(launchMode);
+                    SmallRyeConfig config = ConfigUtils.configBuilder()
+                            .withCustomizers(new TestConfigCustomizer(mode))
                             .build();
+                    LaunchMode.set(current);
+                    return config;
                 }
             });
             resolver.registerConfig(config, classLoader);
             return config;
         }
-        throw new IllegalStateException();
+        throw new IllegalStateException("Context ClassLoader mismatch. Should be " + classLoader + " but was "
+                + Thread.currentThread().getContextClassLoader());
     }
 
     public void restoreConfig() {
@@ -68,7 +74,8 @@ public class TestConfigProviderResolver extends SmallRyeConfigProviderResolver {
             resolver.releaseConfig(classLoader);
             resolver.registerConfig(configs.get(LaunchMode.TEST), classLoader);
         } else {
-            throw new IllegalStateException();
+            throw new IllegalStateException("Context ClassLoader mismatch. Should be " + classLoader + " but was "
+                    + Thread.currentThread().getContextClassLoader());
         }
     }
 
@@ -95,5 +102,10 @@ public class TestConfigProviderResolver extends SmallRyeConfigProviderResolver {
     @Override
     public void releaseConfig(final Config config) {
         resolver.releaseConfig(config);
+    }
+
+    @Override
+    public void releaseConfig(final ClassLoader classLoader) {
+        resolver.releaseConfig(classLoader);
     }
 }

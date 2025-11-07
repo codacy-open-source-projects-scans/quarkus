@@ -10,16 +10,24 @@ import org.hibernate.reactive.session.impl.ReactiveSessionFactoryImpl;
 import io.quarkus.hibernate.orm.runtime.PersistenceUnitUtil;
 import io.quarkus.hibernate.orm.runtime.RuntimeSettings;
 import io.quarkus.hibernate.orm.runtime.boot.FastBootEntityManagerFactoryBuilder;
+import io.quarkus.hibernate.orm.runtime.boot.QuarkusPersistenceUnitDescriptor;
+import io.quarkus.hibernate.orm.runtime.customized.BuiltinFormatMapperBehaviour;
+import io.quarkus.hibernate.orm.runtime.customized.JsonFormatterCustomizationCheck;
 import io.quarkus.hibernate.orm.runtime.migration.MultiTenancyStrategy;
 import io.quarkus.hibernate.orm.runtime.recording.PrevalidatedQuarkusMetadata;
 
 public final class FastBootReactiveEntityManagerFactoryBuilder extends FastBootEntityManagerFactoryBuilder {
 
-    public FastBootReactiveEntityManagerFactoryBuilder(PrevalidatedQuarkusMetadata metadata, String persistenceUnitName,
+    public FastBootReactiveEntityManagerFactoryBuilder(QuarkusPersistenceUnitDescriptor puDescriptor,
+            PrevalidatedQuarkusMetadata metadata,
             StandardServiceRegistry standardServiceRegistry, RuntimeSettings runtimeSettings, Object validatorFactory,
-            Object cdiBeanManager, MultiTenancyStrategy strategy) {
-        super(metadata, persistenceUnitName, standardServiceRegistry, runtimeSettings, validatorFactory,
-                cdiBeanManager, strategy);
+            Object cdiBeanManager, MultiTenancyStrategy strategy,
+            boolean shouldApplySchemaMigration,
+            BuiltinFormatMapperBehaviour builtinFormatMapperBehaviour,
+            JsonFormatterCustomizationCheck jsonFormatterCustomizationCheck) {
+        super(puDescriptor, metadata, standardServiceRegistry, runtimeSettings, validatorFactory,
+                cdiBeanManager, strategy, shouldApplySchemaMigration, builtinFormatMapperBehaviour,
+                jsonFormatterCustomizationCheck);
     }
 
     @Override

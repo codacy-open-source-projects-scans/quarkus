@@ -17,6 +17,7 @@ import io.quarkus.deployment.builditem.RunTimeConfigurationDefaultBuildItem;
 import io.quarkus.runtime.RuntimeValue;
 import io.quarkus.smallrye.reactivemessaging.rabbitmq.runtime.CredentialsProviderLink;
 import io.quarkus.smallrye.reactivemessaging.rabbitmq.runtime.RabbitMQRecorder;
+import io.quarkus.smallrye.reactivemessaging.rabbitmq.runtime.RabbitmqClientConfigCustomizer;
 import io.smallrye.common.annotation.Identifier;
 
 public class SmallRyeReactiveMessagingRabbitMQProcessor {
@@ -27,21 +28,26 @@ public class SmallRyeReactiveMessagingRabbitMQProcessor {
     }
 
     @BuildStep
+    AdditionalBeanBuildItem build() {
+        return AdditionalBeanBuildItem.builder()
+                .addBeanClass(RabbitmqClientConfigCustomizer.class)
+                .setUnremovable()
+                .build();
+    }
+
+    @BuildStep
     @Record(ExecutionTime.RUNTIME_INIT)
     public void dynamicCredentials(RabbitMQRecorder recorder,
             RabbitMQBuildTimeConfig rabbitMQBuildTimeConfig,
             BuildProducer<SyntheticBeanBuildItem> syntheticBeans,
-            BuildProducer<AdditionalBeanBuildItem> additionalBeans,
             BuildProducer<RunTimeConfigurationDefaultBuildItem> configDefaults) {
 
-        additionalBeans.produce(AdditionalBeanBuildItem.builder().addBeanClass(Identifier.class).build());
-
-        if (rabbitMQBuildTimeConfig.credentialsProvider.isPresent()) {
-            String credentialsProvider = rabbitMQBuildTimeConfig.credentialsProvider.get();
+        if (rabbitMQBuildTimeConfig.credentialsProvider().isPresent()) {
+            String credentialsProvider = rabbitMQBuildTimeConfig.credentialsProvider().get();
 
             RuntimeValue<CredentialsProviderLink> credentialsProviderLink = recorder.configureOptions(
                     credentialsProvider,
-                    rabbitMQBuildTimeConfig.credentialsProviderName);
+                    rabbitMQBuildTimeConfig.credentialsProviderName());
 
             String identifier = "credentials-provider-link-" + credentialsProvider;
 

@@ -43,7 +43,7 @@ public class IdeProcessor {
         IDE_PROCESSES.put((processInfo -> processInfo.containInCommand("code")), Ide.VSCODE);
         IDE_PROCESSES.put((processInfo -> processInfo.containInCommand("eclipse")), Ide.ECLIPSE);
         IDE_PROCESSES.put(
-                (processInfo -> processInfo.containInArguments("netbeans")),
+                (processInfo -> (processInfo.containInArguments("netbeans") || processInfo.containInCommand("nbexec"))),
                 Ide.NETBEANS);
 
         IDE_ARGUMENTS_EXEC_INDICATOR.put(Ide.NETBEANS, (ProcessInfo processInfo) -> {
@@ -189,7 +189,6 @@ public class IdeProcessor {
         return new IdeRunningProcessBuildItem(result);
     }
 
-    // TODO: remove when we move to Java 11 and just call the methods of 'java.lang.ProcessHandle'
     private static class ProcessUtil {
 
         /**

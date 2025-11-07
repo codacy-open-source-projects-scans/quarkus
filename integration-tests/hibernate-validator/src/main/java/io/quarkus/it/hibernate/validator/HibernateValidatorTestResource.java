@@ -45,8 +45,10 @@ import io.quarkus.it.hibernate.validator.custom.MyOtherBean;
 import io.quarkus.it.hibernate.validator.groups.MyBeanWithGroups;
 import io.quarkus.it.hibernate.validator.groups.ValidationGroups;
 import io.quarkus.it.hibernate.validator.injection.InjectedConstraintValidatorConstraint;
+import io.quarkus.it.hibernate.validator.injection.InjectedRuntimeConstraintValidatorConstraint;
 import io.quarkus.it.hibernate.validator.injection.MyService;
 import io.quarkus.it.hibernate.validator.orm.TestEntity;
+import io.quarkus.it.hibernate.validator.xml.ValidationServiceBasedOnXmlConstraints;
 import io.quarkus.runtime.StartupEvent;
 
 @Path("/hibernate-validator/test")
@@ -62,6 +64,9 @@ public class HibernateValidatorTestResource
 
     @Inject
     EnhancedGreetingService enhancedGreetingService;
+
+    @Inject
+    ValidationServiceBasedOnXmlConstraints validationServiceBasedOnXmlConstraints;
 
     @Inject
     ZipCodeService zipCodeResource;
@@ -199,6 +204,12 @@ public class HibernateValidatorTestResource
 
         result.append(formatViolations(validator.validate(new BeanWithInjectedConstraintValidatorConstraint("Invalid value"))));
 
+        result.append(formatViolations(
+                validator.validate(new BeanWithInjectedRuntimeConstraintValidatorConstraint("any text is valid"))));
+
+        result.append(formatViolations(
+                validator.validate(new BeanWithInjectedRuntimeConstraintValidatorConstraint("numbers 12345 don't work"))));
+
         return result.build();
     }
 
@@ -334,6 +345,17 @@ public class HibernateValidatorTestResource
         return result.build();
     }
 
+    @GET
+    @Path("/constraints-defined-in-xml")
+    @Produces(MediaType.TEXT_PLAIN)
+    public String testConstraintsDefinedInXml() {
+        ResultBuilder result = new ResultBuilder();
+
+        result.append(formatViolations(validationServiceBasedOnXmlConstraints.validateSomeMyXmlBean()));
+
+        return result.build();
+    }
+
     private String formatViolations(Set<? extends ConstraintViolation<?>> violations) {
         if (violations.isEmpty()) {
             return "passed";
@@ -424,6 +446,20 @@ public class HibernateValidatorTestResource
         private String value;
 
         public BeanWithInjectedConstraintValidatorConstraint(String value) {
+            this.value = value;
+        }
+
+        public String getValue() {
+            return value;
+        }
+    }
+
+    public static class BeanWithInjectedRuntimeConstraintValidatorConstraint {
+
+        @InjectedRuntimeConstraintValidatorConstraint
+        private String value;
+
+        public BeanWithInjectedRuntimeConstraintValidatorConstraint(String value) {
             this.value = value;
         }
 

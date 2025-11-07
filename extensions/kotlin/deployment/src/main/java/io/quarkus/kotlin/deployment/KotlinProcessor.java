@@ -2,6 +2,8 @@ package io.quarkus.kotlin.deployment;
 
 import static io.quarkus.deployment.builditem.nativeimage.NativeImageResourcePatternsBuildItem.builder;
 
+import org.jboss.jandex.DotName;
+
 import io.quarkus.bootstrap.classloading.QuarkusClassLoader;
 import io.quarkus.deployment.Feature;
 import io.quarkus.deployment.annotations.BuildProducer;
@@ -9,7 +11,8 @@ import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourcePatternsBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
-import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassFinalFieldsWritablePredicateBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ReflectiveHierarchyIgnoreWarningBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ServiceProviderBuildItem;
 import io.quarkus.jackson.spi.ClassPathJacksonModuleBuildItem;
 
 public class KotlinProcessor {
@@ -35,21 +38,14 @@ public class KotlinProcessor {
         classPathJacksonModules.produce(new ClassPathJacksonModuleBuildItem(KOTLIN_JACKSON_MODULE));
     }
 
-    /**
-     * Kotlin data classes that have multiple constructors need to have their final fields writable,
-     * otherwise creating an instance of them with default values fails in native mode.
-     */
-    @BuildStep
-    ReflectiveClassFinalFieldsWritablePredicateBuildItem dataClassPredicate() {
-        return new ReflectiveClassFinalFieldsWritablePredicateBuildItem(new IsDataClassWithDefaultValuesPredicate());
-    }
-
     /*
      * Register the Kotlin reflection types if they are present.
      */
     @BuildStep
     void registerKotlinReflection(final BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
-            BuildProducer<NativeImageResourcePatternsBuildItem> nativeResourcePatterns) {
+            BuildProducer<ServiceProviderBuildItem> serviceProvider,
+            BuildProducer<NativeImageResourcePatternsBuildItem> nativeResourcePatterns,
+            BuildProducer<ReflectiveHierarchyIgnoreWarningBuildItem> reflectiveHierarchyIgnoreWarning) {
 
         reflectiveClass.produce(ReflectiveClassBuildItem.builder("kotlin.reflect.jvm.internal.ReflectionFactoryImpl")
                 .build());
@@ -66,10 +62,19 @@ public class KotlinProcessor {
                         .builder("kotlin.collections.EmptyList", "kotlin.collections.EmptyMap", "kotlin.collections.EmptySet")
                         .build());
 
-        nativeResourcePatterns.produce(builder().includePatterns(
-                "META-INF/.*.kotlin_module$",
+        nativeResourcePatterns.produce(builder().includeGlobs(
+                "META-INF/**/*.kotlin_module",
                 "META-INF/services/kotlin.reflect.*",
-                ".*.kotlin_builtins")
+                "**/*.kotlin_builtins")
                 .build());
+
+        reflectiveHierarchyIgnoreWarning.produce(
+                new ReflectiveHierarchyIgnoreWarningBuildItem(DotName.createSimple("kotlinx.serialization.KSerializer")));
+        reflectiveHierarchyIgnoreWarning.produce(new ReflectiveHierarchyIgnoreWarningBuildItem(
+                DotName.createSimple("kotlinx.serialization.descriptors.SerialDescriptor")));
+
+        serviceProvider.produce(
+                new ServiceProviderBuildItem("kotlin.reflect.jvm.internal.impl.km.internal.extensions.MetadataExtensions",
+                        "kotlin.reflect.jvm.internal.impl.km.jvm.internal.JvmMetadataExtensions"));
     }
 }

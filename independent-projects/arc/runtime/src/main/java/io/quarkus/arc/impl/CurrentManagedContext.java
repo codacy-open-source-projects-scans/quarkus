@@ -62,10 +62,16 @@ public abstract class CurrentManagedContext implements ManagedContext {
         if (initialState == null) {
             CurrentContextState state = initializeState();
             currentContext.set(state);
+            if (state.shouldFireInitializedEvent()) {
+                fireIfNotNull(initializedNotifier);
+            }
             return state;
         } else {
-            if (initialState instanceof CurrentContextState) {
-                currentContext.set((CurrentContextState) initialState);
+            if (initialState instanceof CurrentContextState current) {
+                currentContext.set(current);
+                if (current.isValid() && current.shouldFireInitializedEvent()) {
+                    fireIfNotNull(initializedNotifier);
+                }
                 return initialState;
             } else {
                 throw new IllegalArgumentException("Invalid initial state: " + initialState.getClass().getName());
@@ -171,9 +177,16 @@ public abstract class CurrentManagedContext implements ManagedContext {
         }
         if (state instanceof CurrentContextState) {
             CurrentContextState currentState = ((CurrentContextState) state);
-            if (currentState.invalidate()) {
+            if (currentState.isValid() && currentState.shouldFireBeforeDestroyedEvent()) {
                 fireIfNotNull(beforeDestroyedNotifier);
-                currentState.contextInstances.removeEach(ContextInstanceHandle::destroy);
+            }
+            if (currentState.invalidate()) {
+                currentState.contextInstances.removeEach(new Consumer<>() {
+                    @Override
+                    public void accept(ContextInstanceHandle<?> contextInstanceHandle) {
+                        contextInstanceHandle.destroy();
+                    }
+                });
                 fireIfNotNull(destroyedNotifier);
             }
         } else {
@@ -184,7 +197,6 @@ public abstract class CurrentManagedContext implements ManagedContext {
     @Override
     public CurrentContextState initializeState() {
         CurrentContextState state = new CurrentContextState(contextInstances.get());
-        fireIfNotNull(initializedNotifier);
         return state;
     }
 
@@ -228,20 +240,23 @@ public abstract class CurrentManagedContext implements ManagedContext {
         // the default field values are set before 'this' is accessible, hence
         // they should be the very first value observable even in presence of
         // unsafe publication of this object.
-        private static final int VALID = 0;
-        private static final int INVALID = 1;
-        private static final VarHandle IS_VALID;
+        private static final VarHandle STATE_UPDATER;
+
+        private static final byte INVALID_MASK = 0b00000001;
+        private static final byte INITIALIZED_FIRED_MASK = 0b00000010;
+        private static final byte BEFORE_DESTROYED_FIRED_MASK = 0b00000100;
 
         static {
             try {
-                IS_VALID = MethodHandles.lookup().findVarHandle(CurrentContextState.class, "isValid", int.class);
+                STATE_UPDATER = MethodHandles.lookup().findVarHandle(CurrentContextState.class, "state", byte.class);
             } catch (ReflectiveOperationException e) {
                 throw new Error(e);
             }
         }
 
         private final ContextInstances contextInstances;
-        private volatile int isValid;
+        // it contains 3 states: isValid, initializedFired and beforeDestroyedFired
+        private volatile byte state;
 
         CurrentContextState(ContextInstances contextInstances) {
             this.contextInstances = Objects.requireNonNull(contextInstances);
@@ -257,15 +272,39 @@ public abstract class CurrentManagedContext implements ManagedContext {
          * @return {@code true} if the state was successfully invalidated, {@code false} otherwise
          */
         boolean invalidate() {
-            // Atomically sets the value just like AtomicBoolean.compareAndSet(boolean, boolean)
-            return IS_VALID.compareAndSet(this, VALID, INVALID);
+            return set(INVALID_MASK);
         }
 
         @Override
         public boolean isValid() {
-            return isValid == VALID;
+            return isNotSet(INVALID_MASK);
+        }
+
+        boolean shouldFireInitializedEvent() {
+            return set(INITIALIZED_FIRED_MASK);
+        }
+
+        boolean shouldFireBeforeDestroyedEvent() {
+            return set(BEFORE_DESTROYED_FIRED_MASK);
+        }
+
+        private boolean isNotSet(byte bitMask) {
+            return (state & bitMask) == 0;
+        }
+
+        private boolean set(byte bitMask) {
+            byte state = this.state;
+            for (;;) {
+                if ((state & bitMask) != 0) {
+                    return false;
+                }
+                final byte newState = (byte) (state | bitMask);
+                state = (byte) STATE_UPDATER.compareAndExchange(this, state, newState);
+                if (state == newState) {
+                    return true;
+                }
+            }
         }
 
     }
-
 }

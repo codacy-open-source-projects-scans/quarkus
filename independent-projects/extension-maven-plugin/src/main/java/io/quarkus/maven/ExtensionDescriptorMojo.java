@@ -8,11 +8,18 @@ import java.io.InputStream;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.maven.artifact.Artifact;
-import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Scm;
 import org.apache.maven.plugin.AbstractMojo;
@@ -550,8 +557,13 @@ public class ExtensionDescriptorMojo extends AbstractMojo {
         if (version == null) {
             return null;
         }
-        DefaultArtifactVersion dav = new DefaultArtifactVersion(version);
-        return "[" + dav.getMajorVersion() + "." + dav.getMinorVersion() + ",)";
+
+        // we don't use DefaultArtifactVersion here as it doesn't support 4 dotted number parts
+        // we might get rid of this version scheme but let's make sure we support it just in case
+        String[] versionItems = version.split("-");
+        versionItems = versionItems[0].split("\\.");
+
+        return "[" + versionItems[0] + "." + (versionItems.length > 1 ? versionItems[1] : "0") + ",)";
     }
 
     private void ensureArtifactCoords(ObjectNode extObject) {
@@ -873,6 +885,25 @@ public class ExtensionDescriptorMojo extends AbstractMojo {
         final DependencyNode deploymentNode = collectDeploymentDeps().getRoot();
         visitDeploymentDeps(rootDeployment, deploymentNode);
 
+        if (!rootDeployment.riskyDeploymentDeps.isEmpty()) {
+            final Log log = getLog();
+            List<ArtifactKey> risks = new ArrayList<>(rootDeployment.riskyDeploymentDeps.size());
+            for (Map.Entry<ArtifactKey, org.eclipse.aether.artifact.Artifact> e : rootDeployment.unexpectedDeploymentDeps
+                    .entrySet()) {
+                // TODO this check doesn't make sense, if the second one isn't right it's worse?
+                if (rootDeployment.allDeploymentDeps.contains(e.getKey())) {
+                    risks.add(e.getKey());
+                } else {
+                    risks.add(toKey(e.getValue()));
+                }
+            }
+
+            log.warn("The deployment artifact " + rootDeploymentGact
+                    + " depends on the following Quarkus extension deployment artifacts whose corresponding runtime artifacts were not found among the dependencies of "
+                    + project.getArtifact() + ":");
+            highlightInTree(deploymentNode, risks);
+        }
+
         if (rootDeployment.hasErrors()) {
             final Log log = getLog();
             log.error("Quarkus Extension Dependency Verification Error");
@@ -1023,7 +1054,9 @@ public class ExtensionDescriptorMojo extends AbstractMojo {
         if (node != null) {
             if (!node.present) {
                 node.present = true;
-                --rootDeployment.deploymentDepsTotal;
+                if (!isExemptGact(node.gact)) {
+                    --rootDeployment.deploymentDepsTotal;
+                }
                 if (rootDeployment.allRtDeps.contains(key)) {
                     rootDeployment.deploymentsOnRtCp.add(key);
                 }
@@ -1031,7 +1064,12 @@ public class ExtensionDescriptorMojo extends AbstractMojo {
         } else if (!rootDeployment.allRtDeps.contains(key)) {
             final ArtifactKey deployment = getDeploymentKey(artifact);
             if (deployment != null) {
-                rootDeployment.unexpectedDeploymentDeps.put(deployment, artifact);
+                if (isExemptGact(deployment)) {
+                    rootDeployment.riskyDeploymentDeps.put(deployment, artifact);
+                } else {
+                    rootDeployment.unexpectedDeploymentDeps.put(deployment, artifact);
+
+                }
             }
         }
         visitDeploymentDeps(rootDeployment, dep);
@@ -1045,7 +1083,9 @@ public class ExtensionDescriptorMojo extends AbstractMojo {
         if (deployment != null) {
             currentNode = currentNode.newChild(deployment, ++currentId);
             root.expectedDeploymentNodes.put(currentNode.gact, currentNode);
-            ++root.deploymentDepsTotal;
+            if (!isExemptGact(currentNode.gact)) {
+                ++root.deploymentDepsTotal;
+            }
             if (root.allRtDeps.contains(deployment)) {
                 root.deploymentsOnRtCp.add(deployment);
                 if (root.directRuntimeDeps.contains(deployment)) {
@@ -1063,6 +1103,11 @@ public class ExtensionDescriptorMojo extends AbstractMojo {
             }
         }
         visitRuntimeDeps(root, currentNode, currentId, node);
+    }
+
+    private static boolean isExemptGact(ArtifactKey gact) {
+        return (gact.getArtifactId().equals("quarkus-devservices")
+                || gact.getArtifactId().equals("quarkus-devservices-deployment")) && gact.getGroupId().equals("io.quarkus");
     }
 
     private void visitRuntimeDeps(RootNode root, Node currentNode, int currentId, DependencyNode node)
@@ -1286,12 +1331,16 @@ public class ExtensionDescriptorMojo extends AbstractMojo {
         final Set<ArtifactKey> allRtDeps = new HashSet<>();
         final Set<ArtifactKey> allDeploymentDeps = new HashSet<>();
         final Map<ArtifactKey, org.eclipse.aether.artifact.Artifact> unexpectedDeploymentDeps = new HashMap<>(0);
+        final Map<ArtifactKey, org.eclipse.aether.artifact.Artifact> riskyDeploymentDeps = new HashMap<>(0);
 
         int deploymentDepsTotal = 1;
         List<ArtifactKey> deploymentsOnRtCp = new ArrayList<>(0);
 
         RootNode(ArtifactKey gact, int id) {
             super(null, gact, id);
+            if (isExemptGact(gact)) {
+                deploymentDepsTotal = 0;
+            }
         }
 
         boolean hasErrors() {

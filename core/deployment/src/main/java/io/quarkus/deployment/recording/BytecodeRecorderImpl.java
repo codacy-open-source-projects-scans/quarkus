@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -51,7 +52,6 @@ import org.jboss.jandex.ArrayType;
 import org.jboss.jandex.ClassInfo;
 import org.jboss.jandex.MethodInfo;
 import org.jboss.jandex.Type;
-import org.wildfly.common.Assert;
 
 import io.quarkus.deployment.proxy.ProxyConfiguration;
 import io.quarkus.deployment.proxy.ProxyFactory;
@@ -76,6 +76,7 @@ import io.quarkus.runtime.annotations.RelaxedValidation;
 import io.quarkus.runtime.types.GenericArrayTypeImpl;
 import io.quarkus.runtime.types.ParameterizedTypeImpl;
 import io.quarkus.runtime.types.WildcardTypeImpl;
+import io.smallrye.common.constraint.Assert;
 
 /**
  * A class that can be used to record invocations to bytecode so they can be replayed later. This is done through the
@@ -123,7 +124,8 @@ public class BytecodeRecorderImpl implements RecorderContext {
     private final Map<Class<?>, NewRecorder> existingRecorderValues = new ConcurrentHashMap<>();
     private final List<BytecodeInstruction> storedMethodCalls = new ArrayList<>();
 
-    private final IdentityHashMap<Class<?>, String> classProxies = new IdentityHashMap<>();
+    private final Map<String, String> classProxyNamesToOriginalClassNames = new HashMap<>();
+    private final Map<String, Class<?>> originalClassNamesToClassProxyClasses = new HashMap<>();
     private final Map<Class<?>, SubstitutionHolder> substitutions = new HashMap<>();
     private final Map<Class<?>, NonDefaultConstructorHolder> nonDefaultConstructors = new HashMap<>();
     private final String className;
@@ -273,14 +275,20 @@ public class BytecodeRecorderImpl implements RecorderContext {
                 return void.class;
         }
 
+        Class<?> proxyClass = originalClassNamesToClassProxyClasses.get(name);
+        if (proxyClass != null) {
+            return proxyClass;
+        }
+
         ProxyFactory<Object> factory = new ProxyFactory<>(new ProxyConfiguration<Object>()
                 .setSuperClass(Object.class)
                 .setClassLoader(classLoader)
                 .setAnchorClass(getClass())
                 .setProxyNameSuffix("$$ClassProxy" + COUNT.incrementAndGet()));
-        Class theClass = factory.defineClass();
-        classProxies.put(theClass, name);
-        return theClass;
+        proxyClass = factory.defineClass();
+        classProxyNamesToOriginalClassNames.put(proxyClass.getName(), name);
+        originalClassNamesToClassProxyClasses.put(name, proxyClass);
+        return proxyClass;
     }
 
     @Override
@@ -743,14 +751,10 @@ public class BytecodeRecorderImpl implements RecorderContext {
                             method.load(param.toString()));
                 }
             };
-        } else if (param instanceof Class<?>) {
-            if (!((Class) param).isPrimitive()) {
+        } else if (param instanceof Class<?> clazz) {
+            if (!clazz.isPrimitive()) {
                 // Only try to load the class by name if it is not a primitive class
-                String name = classProxies.get(param);
-                if (name == null) {
-                    name = ((Class) param).getName();
-                }
-                String finalName = name;
+                String finalName = classProxyNamesToOriginalClassNames.getOrDefault(clazz.getName(), clazz.getName());
                 return new DeferredParameter() {
                     @Override
                     ResultHandle doLoad(MethodContext context, MethodCreator method, ResultHandle array) {
@@ -770,7 +774,7 @@ public class BytecodeRecorderImpl implements RecorderContext {
                 return new DeferredParameter() {
                     @Override
                     ResultHandle doLoad(MethodContext context, MethodCreator method, ResultHandle array) {
-                        return method.loadClassFromTCCL((Class) param);
+                        return method.loadClassFromTCCL(clazz);
                     }
                 };
             }
@@ -1456,8 +1460,10 @@ public class BytecodeRecorderImpl implements RecorderContext {
             }
         }
 
-        //now handle accessible fields
-        for (Field field : param.getClass().getFields()) {
+        //now handle accessible fields, in a deterministic order
+        Field[] fields = param.getClass().getFields();
+        Arrays.sort(fields, Comparator.comparing(Field::getName));
+        for (Field field : fields) {
             // check if the field is ignored
             if (ignoreField(field)) {
                 continue;

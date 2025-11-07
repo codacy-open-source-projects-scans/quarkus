@@ -4,6 +4,12 @@ import static io.quarkus.deployment.annotations.ExecutionTime.RUNTIME_INIT;
 import static io.quarkus.deployment.annotations.ExecutionTime.STATIC_INIT;
 
 import java.io.Closeable;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.OffsetTime;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -44,7 +50,6 @@ import io.quarkus.runtime.RuntimeValue;
 import io.quarkus.smallrye.graphql.client.runtime.GraphQLClientBuildConfig;
 import io.quarkus.smallrye.graphql.client.runtime.GraphQLClientCertificateUpdateEventListener;
 import io.quarkus.smallrye.graphql.client.runtime.GraphQLClientSupport;
-import io.quarkus.smallrye.graphql.client.runtime.GraphQLClientsConfig;
 import io.quarkus.smallrye.graphql.client.runtime.SmallRyeGraphQLClientRecorder;
 import io.quarkus.vertx.core.deployment.CoreVertxBuildItem;
 import io.smallrye.graphql.client.model.ClientModelBuilder;
@@ -116,7 +121,7 @@ public class SmallRyeGraphQLClientProcessor {
 
     @BuildStep
     @Record(STATIC_INIT)
-    void initializeTypesafeClient(BeanArchiveIndexBuildItem index,
+    void initializeTypesafeClient(CombinedIndexBuildItem index,
             BuildProducer<SyntheticBeanBuildItem> syntheticBeans,
             SmallRyeGraphQLClientRecorder recorder,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
@@ -157,6 +162,14 @@ public class SmallRyeGraphQLClientProcessor {
         reflectiveClass.produce(ReflectiveClassBuildItem.builder("java.net.URI").methods().build());
         reflectiveClass.produce(ReflectiveClassBuildItem.builder("java.util.List").methods().build());
         reflectiveClass.produce(ReflectiveClassBuildItem.builder("java.util.Collection").methods().build());
+        // some more classes that the client may need to serialize
+        reflectiveClass.produce(ReflectiveClassBuildItem.builder(OffsetDateTime.class).methods().build());
+        reflectiveClass.produce(ReflectiveClassBuildItem.builder(Instant.class).methods().build());
+        reflectiveClass.produce(ReflectiveClassBuildItem.builder(ZonedDateTime.class).methods().build());
+        reflectiveClass.produce(ReflectiveClassBuildItem.builder(LocalDateTime.class).methods().build());
+        reflectiveClass.produce(ReflectiveClassBuildItem.builder(LocalTime.class).methods().build());
+        reflectiveClass.produce(ReflectiveClassBuildItem.builder(OffsetTime.class).methods().build());
+
     }
 
     /**
@@ -186,7 +199,6 @@ public class SmallRyeGraphQLClientProcessor {
     @Record(RUNTIME_INIT)
     @Consume(SyntheticBeansRuntimeInitBuildItem.class)
     GraphQLClientConfigInitializedBuildItem mergeClientConfigurations(SmallRyeGraphQLClientRecorder recorder,
-            GraphQLClientsConfig quarkusConfig,
             BeanArchiveIndexBuildItem index) {
         // to store config keys of all clients found in the application code
         List<String> knownConfigKeys = new ArrayList<>();
@@ -212,7 +224,7 @@ public class SmallRyeGraphQLClientProcessor {
         support.setShortNamesToQualifiedNamesMapping(shortNamesToQualifiedNames);
         support.setKnownConfigKeys(knownConfigKeys);
 
-        recorder.mergeClientConfigurations(support, quarkusConfig);
+        recorder.mergeClientConfigurations(support);
         return new GraphQLClientConfigInitializedBuildItem();
     }
 
@@ -221,7 +233,7 @@ public class SmallRyeGraphQLClientProcessor {
     void buildClientModel(CombinedIndexBuildItem index, SmallRyeGraphQLClientRecorder recorder,
             BuildProducer<SyntheticBeanBuildItem> syntheticBeans, GraphQLClientBuildConfig quarkusConfig) {
         if (!index.getIndex().getAnnotations(GRAPHQL_CLIENT_API).isEmpty()) {
-            ClientModels clientModels = (quarkusConfig.enableBuildTimeScanning) ? ClientModelBuilder.build(index.getIndex())
+            ClientModels clientModels = (quarkusConfig.enableBuildTimeScanning()) ? ClientModelBuilder.build(index.getIndex())
                     : new ClientModels(); // empty Client Model(s)
             RuntimeValue<ClientModels> modelRuntimeClientModel = recorder.getRuntimeClientModel(clientModels);
             DotName supportClassName = DotName.createSimple(ClientModels.class.getName());
@@ -252,7 +264,7 @@ public class SmallRyeGraphQLClientProcessor {
     @BuildStep
     void setAdditionalClassesToIndex(BuildProducer<AdditionalIndexedClassesBuildItem> additionalClassesToIndex,
             GraphQLClientBuildConfig quarkusConfig) {
-        if (quarkusConfig.enableBuildTimeScanning) {
+        if (quarkusConfig.enableBuildTimeScanning()) {
             additionalClassesToIndex.produce(new AdditionalIndexedClassesBuildItem(Closeable.class.getName()));
             additionalClassesToIndex.produce(new AdditionalIndexedClassesBuildItem(AutoCloseable.class.getName()));
             additionalClassesToIndex.produce(new AdditionalIndexedClassesBuildItem(Input.class.getName()));

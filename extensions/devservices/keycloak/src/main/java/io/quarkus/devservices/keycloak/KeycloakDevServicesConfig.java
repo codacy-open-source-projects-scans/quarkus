@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 
 import io.quarkus.runtime.annotations.ConfigDocMapKey;
 import io.quarkus.runtime.annotations.ConfigRoot;
@@ -39,7 +40,7 @@ public interface KeycloakDevServicesConfig {
      * ends with `-legacy`.
      * Override with `quarkus.keycloak.devservices.keycloak-x-image`.
      */
-    @WithDefault("quay.io/keycloak/keycloak:25.0.6")
+    @WithDefault("quay.io/keycloak/keycloak:26.4.0")
     String imageName();
 
     /**
@@ -74,7 +75,7 @@ public interface KeycloakDevServicesConfig {
      *
      * Applicable only in dev mode.
      */
-    @WithDefault("quarkus")
+    @WithDefault("keycloak")
     String serviceName();
 
     /**
@@ -119,6 +120,14 @@ public interface KeycloakDevServicesConfig {
      * Note, it is ignored when loading legacy Keycloak WildFly images.
      */
     Optional<String> startCommand();
+
+    /**
+     * Keycloak features.
+     * Use this property to enable one or more experimental Keycloak features.
+     * Note, if you also have to customize a Keycloak {@link #startCommand()}, you can use
+     * a `--features` option as part of the start command sequence, instead of configuring this property.
+     */
+    Optional<Set<String>> features();
 
     /**
      * The name of the Keycloak realm.
@@ -195,11 +204,11 @@ public interface KeycloakDevServicesConfig {
     Map<String, String> containerEnv();
 
     /**
-     * Memory limit for Keycloak container
+     * Memory limit for Keycloak container, up to {@code Long.MAX_VALUE} bytes.
      * </p>
-     * If not specified, 750MiB is the default memory limit.
+     * If not specified, 1250MiB is the default memory limit.
      */
-    @WithDefault("750M")
+    @WithDefault("1250M")
     MemorySize containerMemoryLimit();
 
     /**

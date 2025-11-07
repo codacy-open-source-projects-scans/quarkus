@@ -157,11 +157,12 @@ server.port=8080
 
 ==== `@WithParentName`
 
-The `@WithParentName` annotation allows to configurations mapping to inherit its container name, simplifying the
+The `@WithParentName` annotation allows the configuration mapping property to inherit its container name, simplifying the
 configuration property name required to match the mapping:
 
 [source,java]
 ----
+@ConfigMapping(prefix = "server")
 interface Server {
     @WithParentName
     ServerHostAndPort hostAndPort();
@@ -233,11 +234,11 @@ server.theHost=localhost
 server.thePort=8080
 ----
 
-The `@ConfigMapping` annotation support the following naming strategies:
+The `@ConfigMapping` annotation support the following naming strategies with the following enum values:
 
-- `KEBAB_CASE` (default) - The method name is derived by replacing case changes with a dash to map the configuration property.
-- `VERBATIM` - The method name is used as is to map the configuration property.
-- `SNAKE_CASE` - The method name is derived by replacing case changes with an underscore to map the configuration property.
+- `KEBAB_CASE` (default) - The method name is derived by replacing case changes with a dash to map the configuration property, i.e. `theHost` maps to `the-host`.
+- `VERBATIM` - The method name is used as is to map the configuration property, i.e. `theHost` maps to `theHost`.
+- `SNAKE_CASE` - The method name is derived by replacing case changes with an underscore to map the configuration property, i.e. `theHost` maps to `the_host`.
 
 === Conversions
 
@@ -536,6 +537,7 @@ requires a spy:
 [source,java]
 ----
 @ConfigMapping(prefix = "app")
+@Unremovable
 public interface AppConfig {
     @WithDefault("app")
     String name();

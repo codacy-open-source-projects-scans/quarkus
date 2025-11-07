@@ -3,6 +3,7 @@ package io.quarkus.rest.client.reactive.runtime;
 import java.net.URI;
 import java.net.URL;
 import java.security.KeyStore;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -17,6 +18,7 @@ import org.eclipse.microprofile.rest.client.ext.QueryParamStyle;
 import org.jboss.resteasy.reactive.client.api.ClientLogger;
 import org.jboss.resteasy.reactive.client.api.LoggingScope;
 
+import io.quarkus.proxy.ProxyType;
 import io.quarkus.rest.client.reactive.QuarkusRestClientBuilder;
 import io.quarkus.rest.client.reactive.runtime.context.ClientHeadersFactoryContextResolver;
 import io.quarkus.rest.client.reactive.runtime.context.HttpClientOptionsContextResolver;
@@ -25,176 +27,188 @@ import io.vertx.core.http.HttpClientOptions;
 
 public class QuarkusRestClientBuilderImpl implements QuarkusRestClientBuilder {
 
-    private final RestClientBuilderImpl proxy;
+    private final RestClientBuilderImpl delegate;
 
-    public QuarkusRestClientBuilderImpl(RestClientBuilderImpl proxy) {
-        this.proxy = proxy;
+    public QuarkusRestClientBuilderImpl(RestClientBuilderImpl delegate) {
+        this.delegate = delegate;
     }
 
     @Override
     public QuarkusRestClientBuilder baseUrl(URL url) {
-        proxy.baseUrl(url);
+        delegate.baseUrl(url);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder baseUri(URI uri) {
-        proxy.baseUri(uri);
+        delegate.baseUri(uri);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder connectTimeout(long timeout, TimeUnit unit) {
-        proxy.connectTimeout(timeout, unit);
+        delegate.connectTimeout(timeout, unit);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder readTimeout(long timeout, TimeUnit unit) {
-        proxy.readTimeout(timeout, unit);
+        delegate.readTimeout(timeout, unit);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder tlsConfiguration(TlsConfiguration tlsConfiguration) {
-        proxy.tlsConfiguration(tlsConfiguration);
+        delegate.tlsConfiguration(tlsConfiguration);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder sslContext(SSLContext sslContext) {
-        proxy.sslContext(sslContext);
+        delegate.sslContext(sslContext);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder verifyHost(boolean verifyHost) {
-        proxy.verifyHost(verifyHost);
+        delegate.verifyHost(verifyHost);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder trustStore(KeyStore trustStore) {
-        proxy.trustStore(trustStore);
+        delegate.trustStore(trustStore);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder trustStore(KeyStore trustStore, String trustStorePassword) {
-        proxy.trustStore(trustStore, trustStorePassword);
+        delegate.trustStore(trustStore, trustStorePassword);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder keyStore(KeyStore keyStore, String keystorePassword) {
-        proxy.keyStore(keyStore, keystorePassword);
+        delegate.keyStore(keyStore, keystorePassword);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder hostnameVerifier(HostnameVerifier hostnameVerifier) {
-        proxy.hostnameVerifier(hostnameVerifier);
+        delegate.hostnameVerifier(hostnameVerifier);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder followRedirects(boolean follow) {
-        proxy.followRedirects(follow);
+        delegate.followRedirects(follow);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder proxyAddress(String proxyHost, int proxyPort) {
-        proxy.proxyAddress(proxyHost, proxyPort);
+        delegate.proxyAddress(proxyHost, proxyPort);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder proxyPassword(String proxyPassword) {
-        proxy.proxyPassword(proxyPassword);
+        delegate.proxyPassword(proxyPassword);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder proxyUser(String proxyUser) {
-        proxy.proxyUser(proxyUser);
+        delegate.proxyUser(proxyUser);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder nonProxyHosts(String nonProxyHosts) {
-        proxy.nonProxyHosts(nonProxyHosts);
+        delegate.nonProxyHosts(nonProxyHosts);
+        return this;
+    }
+
+    @Override
+    public QuarkusRestClientBuilder proxyConnectTimeout(Duration connectTimeout) {
+        delegate.proxyConnectTimeout(connectTimeout);
+        return this;
+    }
+
+    @Override
+    public QuarkusRestClientBuilder proxyType(ProxyType proxyType) {
+        delegate.proxyType(proxyType);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder multipartPostEncoderMode(String mode) {
-        proxy.multipartPostEncoderMode(mode);
+        delegate.multipartPostEncoderMode(mode);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder queryParamStyle(QueryParamStyle style) {
-        proxy.queryParamStyle(style);
+        delegate.queryParamStyle(style);
         return this;
     }
 
     @Override
     public Configuration getConfiguration() {
-        return proxy.getConfiguration();
+        return delegate.getConfiguration();
     }
 
     @Override
     public QuarkusRestClientBuilder property(String name, Object value) {
-        proxy.property(name, value);
+        delegate.property(name, value);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder register(Class<?> componentClass) {
-        proxy.register(componentClass);
+        delegate.register(componentClass);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder register(Class<?> componentClass, int priority) {
-        proxy.register(componentClass, priority);
+        delegate.register(componentClass, priority);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder register(Class<?> componentClass, Class<?>... contracts) {
-        proxy.register(componentClass, contracts);
+        delegate.register(componentClass, contracts);
         return null;
     }
 
     @Override
     public QuarkusRestClientBuilder register(Class<?> componentClass, Map<Class<?>, Integer> contracts) {
-        proxy.register(componentClass, contracts);
+        delegate.register(componentClass, contracts);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder register(Object component) {
-        proxy.register(component);
+        delegate.register(component);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder register(Object component, int priority) {
-        proxy.register(component, priority);
+        delegate.register(component, priority);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder register(Object component, Class<?>... contracts) {
-        proxy.register(component, contracts);
+        delegate.register(component, contracts);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder register(Object component, Map<Class<?>, Integer> contracts) {
-        proxy.register(component, contracts);
+        delegate.register(component, contracts);
         return this;
     }
 
@@ -211,7 +225,7 @@ public class QuarkusRestClientBuilderImpl implements QuarkusRestClientBuilder {
 
     @Override
     public QuarkusRestClientBuilder clientHeadersFactory(ClientHeadersFactory clientHeadersFactory) {
-        proxy.register(new ClientHeadersFactoryContextResolver(clientHeadersFactory));
+        delegate.register(new ClientHeadersFactoryContextResolver(clientHeadersFactory));
         return this;
     }
 
@@ -228,48 +242,54 @@ public class QuarkusRestClientBuilderImpl implements QuarkusRestClientBuilder {
 
     @Override
     public QuarkusRestClientBuilder httpClientOptions(HttpClientOptions httpClientOptions) {
-        proxy.register(new HttpClientOptionsContextResolver(httpClientOptions));
+        delegate.register(new HttpClientOptionsContextResolver(httpClientOptions));
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder clientLogger(ClientLogger clientLogger) {
-        proxy.clientLogger(clientLogger);
+        delegate.clientLogger(clientLogger);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder loggingScope(LoggingScope loggingScope) {
-        proxy.loggingScope(loggingScope);
+        delegate.loggingScope(loggingScope);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder loggingBodyLimit(Integer limit) {
-        proxy.loggingBodyLimit(limit);
+        delegate.loggingBodyLimit(limit);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder trustAll(boolean trustAll) {
-        proxy.trustAll(trustAll);
+        delegate.trustAll(trustAll);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder userAgent(String userAgent) {
-        proxy.userAgent(userAgent);
+        delegate.userAgent(userAgent);
         return this;
     }
 
     @Override
     public QuarkusRestClientBuilder disableDefaultMapper(Boolean disable) {
-        proxy.disableDefaultMapper(disable);
+        delegate.disableDefaultMapper(disable);
+        return this;
+    }
+
+    @Override
+    public QuarkusRestClientBuilder enableCompression(boolean enableCompression) {
+        delegate.enableCompression(enableCompression);
         return this;
     }
 
     @Override
     public <T> T build(Class<T> clazz) throws IllegalStateException, RestClientDefinitionException {
-        return proxy.build(clazz);
+        return delegate.build(clazz);
     }
 }

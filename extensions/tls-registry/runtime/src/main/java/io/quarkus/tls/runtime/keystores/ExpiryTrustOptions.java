@@ -7,6 +7,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.CertificateExpiredException;
 import java.security.cert.CertificateNotYetValidException;
 import java.security.cert.X509Certificate;
+import java.util.Objects;
 import java.util.function.Function;
 
 import javax.net.ssl.ManagerFactoryParameters;
@@ -83,6 +84,11 @@ public class ExpiryTrustOptions implements TrustOptions {
     }
 
     private TrustManager[] getWrappedTrustManagers(TrustManager[] tms) {
+        // If we do not find any trust managers (for example in the SNI case, where we do not have a trust manager for
+        // a given name), return `null` and not an empty array.
+        if (tms == null) {
+            return null;
+        }
         var wrapped = new TrustManager[tms.length];
         for (int i = 0; i < tms.length; i++) {
             var manager = tms[i];
@@ -147,5 +153,23 @@ public class ExpiryTrustOptions implements TrustOptions {
         public java.security.cert.X509Certificate[] getAcceptedIssuers() {
             return tm.getAcceptedIssuers();
         }
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj != null && obj.getClass() == getClass()) {
+            ExpiryTrustOptions that = (ExpiryTrustOptions) obj;
+            return Objects.equals(delegate, that.delegate) &&
+                    Objects.equals(policy, that.policy);
+        }
+        return false;
+    }
+
+    public String toString() {
+        return "ExpiryTrustOptions[" +
+                "delegate=" + delegate + ", " +
+                "policy=" + policy + ']';
     }
 }

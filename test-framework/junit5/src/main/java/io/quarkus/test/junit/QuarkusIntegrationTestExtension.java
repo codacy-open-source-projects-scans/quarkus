@@ -8,7 +8,7 @@ import static io.quarkus.test.junit.IntegrationTestUtil.determineTestProfileAndP
 import static io.quarkus.test.junit.IntegrationTestUtil.doProcessTestInstance;
 import static io.quarkus.test.junit.IntegrationTestUtil.ensureNoInjectAnnotationIsUsed;
 import static io.quarkus.test.junit.IntegrationTestUtil.findProfile;
-import static io.quarkus.test.junit.IntegrationTestUtil.getArtifactType;
+import static io.quarkus.test.junit.IntegrationTestUtil.getEffectiveArtifactType;
 import static io.quarkus.test.junit.IntegrationTestUtil.getSysPropsToRestore;
 import static io.quarkus.test.junit.IntegrationTestUtil.handleDevServices;
 import static io.quarkus.test.junit.IntegrationTestUtil.readQuarkusArtifactProperties;
@@ -17,7 +17,6 @@ import static io.quarkus.test.junit.TestResourceUtil.TestResourceManagerReflecti
 
 import java.io.Closeable;
 import java.io.File;
-import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
@@ -45,10 +44,10 @@ import io.quarkus.bootstrap.app.CuratedApplication;
 import io.quarkus.bootstrap.logging.InitialConfigurator;
 import io.quarkus.deployment.dev.testing.TestConfig;
 import io.quarkus.runtime.logging.JBossVersion;
+import io.quarkus.runtime.logging.LogRuntimeConfig;
 import io.quarkus.runtime.test.TestHttpEndpointProvider;
 import io.quarkus.test.common.ArtifactLauncher;
 import io.quarkus.test.common.DevServicesContext;
-import io.quarkus.test.common.PropertyTestUtil;
 import io.quarkus.test.common.RestAssuredURLManager;
 import io.quarkus.test.common.RunCommandLauncher;
 import io.quarkus.test.common.TestConfigUtil;
@@ -138,7 +137,7 @@ public class QuarkusIntegrationTestExtension extends AbstractQuarkusTestWithCont
 
     private QuarkusTestExtensionState ensureStarted(ExtensionContext extensionContext) {
         Class<?> testClass = extensionContext.getRequiredTestClass();
-        ensureNoInjectAnnotationIsUsed(testClass);
+        ensureNoInjectAnnotationIsUsed(testClass, "@QuarkusIntegrationTest");
         Properties quarkusArtifactProperties = readQuarkusArtifactProperties(extensionContext);
 
         QuarkusTestExtensionState state = getState(extensionContext);
@@ -169,11 +168,12 @@ public class QuarkusIntegrationTestExtension extends AbstractQuarkusTestWithCont
                 setState(extensionContext, state);
             } catch (Throwable e) {
                 try {
-                    Path appLogPath = PropertyTestUtil.getLogFilePath();
-                    File appLogFile = appLogPath.toFile();
+                    LogRuntimeConfig logRuntimeConfig = ConfigProvider.getConfig().unwrap(SmallRyeConfig.class)
+                            .getConfigMapping(LogRuntimeConfig.class);
+                    File appLogFile = logRuntimeConfig.file().path();
                     if (appLogFile.exists() && (appLogFile.length() > 0)) {
                         System.err.println("Failed to launch the application. The application logs can be found at: "
-                                + appLogPath.toAbsolutePath());
+                                + appLogFile.getAbsolutePath());
                     }
                 } catch (IllegalStateException ignored) {
 
@@ -191,17 +191,13 @@ public class QuarkusIntegrationTestExtension extends AbstractQuarkusTestWithCont
             throws Throwable {
         JBossVersion.disableVersionLogging();
 
-        String artifactType = getArtifactType(quarkusArtifactProperties);
-
         SmallRyeConfig config = ConfigProvider.getConfig().unwrap(SmallRyeConfig.class);
+        String artifactType = getEffectiveArtifactType(quarkusArtifactProperties, config);
+
         TestConfig testConfig = config.getConfigMapping(TestConfig.class);
         boolean isDockerLaunch = isContainer(artifactType)
                 || (isJar(artifactType) && "test-with-native-agent".equals(testConfig.integrationTestProfile()));
 
-        ArtifactLauncher.InitContext.DevServicesLaunchResult devServicesLaunchResult = handleDevServices(context,
-                isDockerLaunch);
-        devServicesProps = devServicesLaunchResult.properties();
-        containerNetworkId = devServicesLaunchResult.networkId();
         quarkusTestProfile = profile;
         currentJUnitTestClass = context.getRequiredTestClass();
         TestResourceManager testResourceManager = null;
@@ -209,10 +205,17 @@ public class QuarkusIntegrationTestExtension extends AbstractQuarkusTestWithCont
             Class<?> requiredTestClass = context.getRequiredTestClass();
 
             Map<String, String> sysPropRestore = getSysPropsToRestore();
+
+            TestProfileAndProperties testProfileAndProperties = determineTestProfileAndProperties(profile, sysPropRestore);
+            // prepare dev services after profile and properties have been determined
+            ArtifactLauncher.InitContext.DevServicesLaunchResult devServicesLaunchResult = handleDevServices(context,
+                    isDockerLaunch);
+
+            devServicesProps = devServicesLaunchResult.properties();
+            containerNetworkId = devServicesLaunchResult.networkId();
             for (String devServicesProp : devServicesProps.keySet()) {
                 sysPropRestore.put(devServicesProp, null); // used to signal that the property needs to be cleared
             }
-            TestProfileAndProperties testProfileAndProperties = determineTestProfileAndProperties(profile, sysPropRestore);
 
             testResourceManager = new TestResourceManager(requiredTestClass, quarkusTestProfile,
                     copyEntriesFromProfile(testProfileAndProperties.testProfile,
@@ -233,7 +236,10 @@ public class QuarkusIntegrationTestExtension extends AbstractQuarkusTestWithCont
             // propagate Quarkus properties set from the build tool
             Properties existingSysProps = System.getProperties();
             for (String name : existingSysProps.stringPropertyNames()) {
-                if (name.startsWith("quarkus.")) {
+                if (name.startsWith("quarkus.")
+                        // don't include 'quarkus.profile' as that has already been taken into account when determining the launch profile
+                        // so we don't want this to end up in multiple launch arguments
+                        && !name.equals("quarkus.profile")) {
                     additionalProperties.put(name, existingSysProps.getProperty(name));
                 }
             }
@@ -254,9 +260,9 @@ public class QuarkusIntegrationTestExtension extends AbstractQuarkusTestWithCont
             }
             context.getStore(ExtensionContext.Namespace.GLOBAL).put(
                     QuarkusIntegrationTestExtension.class.getName() + ".systemProps",
-                    new ExtensionContext.Store.CloseableResource() {
+                    new AutoCloseable() {
                         @Override
-                        public void close() throws Throwable {
+                        public void close() throws Exception {
                             for (Map.Entry<String, String> i : old.entrySet()) {
                                 old.put(i.getKey(), System.getProperty(i.getKey()));
                                 if (i.getValue() == null) {
@@ -264,10 +270,14 @@ public class QuarkusIntegrationTestExtension extends AbstractQuarkusTestWithCont
                                 } else {
                                     System.setProperty(i.getKey(), i.getValue());
                                 }
+                                // recalculate the property names that may have changed with the restore
+                                ConfigProvider.getConfig().unwrap(SmallRyeConfig.class).getLatestPropertyNames();
                             }
                         }
                     });
             additionalProperties.putAll(resourceManagerProps);
+            // recalculate the property names that may have changed with testProfileAndProperties.properties
+            ConfigProvider.getConfig().unwrap(SmallRyeConfig.class).getLatestPropertyNames();
 
             ArtifactLauncher<?> launcher;
             String testHost = System.getProperty("quarkus.http.test-host");
@@ -327,42 +337,7 @@ public class QuarkusIntegrationTestExtension extends AbstractQuarkusTestWithCont
         ensureStarted(context);
         if (!failedBoot) {
             doProcessTestInstance(testInstance, context);
-            injectTestContext(testInstance);
         }
-    }
-
-    private void injectTestContext(Object testInstance) {
-        Class<?> c = testInstance.getClass();
-        while (c != Object.class) {
-            for (Field f : c.getDeclaredFields()) {
-                if (f.getType().equals(DevServicesContext.class)) {
-                    try {
-                        f.setAccessible(true);
-                        f.set(testInstance, createTestContext());
-                        return;
-                    } catch (Exception e) {
-                        throw new RuntimeException("Unable to set field '" + f.getName()
-                                + "' with the proper test context", e);
-                    }
-                } else if (DevServicesContext.ContextAware.class.isAssignableFrom(f.getType())) {
-                    f.setAccessible(true);
-                    try {
-                        DevServicesContext.ContextAware val = (DevServicesContext.ContextAware) f.get(testInstance);
-                        val.setIntegrationTestContext(createTestContext());
-                    } catch (Exception e) {
-                        throw new RuntimeException("Unable to inject context into field " + f.getName(), e);
-                    }
-                }
-            }
-            c = c.getSuperclass();
-        }
-    }
-
-    private DevServicesContext createTestContext() {
-        Map<String, String> devServicesPropsCopy = devServicesProps.isEmpty() ? Collections.emptyMap()
-                : Collections.unmodifiableMap(devServicesProps);
-        return new DefaultQuarkusIntegrationTestContext(devServicesPropsCopy,
-                containerNetworkId == null ? Optional.empty() : Optional.of(containerNetworkId));
     }
 
     private void throwBootFailureException() {

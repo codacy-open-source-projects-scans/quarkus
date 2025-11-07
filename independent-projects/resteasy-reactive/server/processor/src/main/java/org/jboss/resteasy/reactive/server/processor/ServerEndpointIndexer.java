@@ -21,6 +21,7 @@ import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNa
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.SET;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.SORTED_SET;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.YEAR;
+import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.YEAR_MONTH;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.ZONED_DATE_TIME;
 
 import java.io.File;
@@ -83,6 +84,7 @@ import org.jboss.resteasy.reactive.server.core.parameters.converters.PathSegment
 import org.jboss.resteasy.reactive.server.core.parameters.converters.RuntimeResolvedConverter;
 import org.jboss.resteasy.reactive.server.core.parameters.converters.SetConverter;
 import org.jboss.resteasy.reactive.server.core.parameters.converters.SortedSetConverter;
+import org.jboss.resteasy.reactive.server.core.parameters.converters.YearMonthParamConverter;
 import org.jboss.resteasy.reactive.server.core.parameters.converters.YearParamConverter;
 import org.jboss.resteasy.reactive.server.core.parameters.converters.ZonedDateTimeParamConverter;
 import org.jboss.resteasy.reactive.server.mapping.URITemplate;
@@ -298,9 +300,18 @@ public class ServerEndpointIndexer
                 actualEndpointInfo,
                 existingConverters, additionalReaders, injectableBeans, hasRuntimeConverters);
         if ((injectableBean.getFieldExtractorsCount() == 0) && !injectableBean.isInjectionRequired()) {
-            throw new DeploymentException(String.format("No annotations found on fields at '%s'. "
-                    + "Annotations like `@QueryParam` should be used in fields, not in methods.",
-                    beanParamClassInfo.name()));
+            long declaredMethodsCount = beanParamClassInfo.methods().stream()
+                    .filter(m -> !m.name().equals("<init>") && !m.name().equals("<clinit>")).count();
+            if (declaredMethodsCount == 0) {
+                throw new DeploymentException(String.format(
+                        "Class %s has no fields. Parameters containers are only supported if they have at least one annotated field.",
+                        beanParamClassInfo.name()));
+            } else {
+                throw new DeploymentException(String.format("No annotations found on fields at '%s'. "
+                        + "Annotations like `@QueryParam` should be used in fields, not in methods.",
+                        beanParamClassInfo.name()));
+            }
+
         }
         fileFormNames.addAll(injectableBean.getFileFormNames());
         return injectableBean.isFormParamRequired();
@@ -379,7 +390,7 @@ public class ServerEndpointIndexer
             }
             ServerIndexedParameter result = extractParameterInfo(currentClassInfo, actualEndpointInfo, null, existingConverters,
                     additionalReaders,
-                    annotations, field.type(), field.toString(), applyFieldRules, hasRuntimeConverters,
+                    annotations, field.type(), "%s", new Object[] { field }, applyFieldRules, hasRuntimeConverters,
                     // We don't support annotation-less path params in injectable beans: only annotations
                     Collections.emptySet(), field.name(), EMPTY_STRING_ARRAY, new HashMap<>());
             if ((result.getType() != null) && (result.getType() != ParameterType.BEAN)) {
@@ -623,6 +634,8 @@ public class ServerEndpointIndexer
             return new ZonedDateTimeParamConverter.Supplier(format, dateTimeFormatterProviderClassName);
         } else if (YEAR.equals(paramType)) {
             return new YearParamConverter.Supplier(format, dateTimeFormatterProviderClassName);
+        } else if (YEAR_MONTH.equals(paramType)) {
+            return new YearMonthParamConverter.Supplier(format, dateTimeFormatterProviderClassName);
         }
 
         throw new RuntimeException(

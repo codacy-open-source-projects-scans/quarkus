@@ -4,8 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.security.NoSuchAlgorithmException;
 
 import org.junit.jupiter.api.Test;
+
+import io.quarkus.runtime.RuntimeValue;
 
 public class NarayanaJtaRecorderTest {
 
@@ -13,35 +16,26 @@ public class NarayanaJtaRecorderTest {
     public static final String NODE_NAME_TO_SHORTEN = "dfe2420d-b12e-4ec3-92c0-ee7c4";
 
     @Test
-    void testByteLengthWithLongerString() {
-        TransactionManagerConfiguration transactions = new TransactionManagerConfiguration();
-        transactions.shortenNodeNameIfNecessary = true;
+    void testByteLengthWithLongerString() throws NoSuchAlgorithmException {
         // create nodeNames larger than 28 bytes
         assertTrue(NODE_NAME_TO_SHORTEN.getBytes(StandardCharsets.UTF_8).length > 28);
-        NarayanaJtaRecorder r = new NarayanaJtaRecorder();
-        transactions.nodeName = NODE_NAME_TO_SHORTEN;
-        r.setNodeName(transactions);
-        int numberOfBytes = transactions.nodeName.getBytes(StandardCharsets.UTF_8).length;
+        NarayanaJtaRecorder recorder = new NarayanaJtaRecorder(new RuntimeValue<>());
+        String shorterNodeName = recorder.shortenNodeName(NODE_NAME_TO_SHORTEN);
+        int numberOfBytes = shorterNodeName.getBytes(StandardCharsets.UTF_8).length;
         assertEquals(28, numberOfBytes,
                 "node name bytes was not 28 bytes limit, number of bytes is " + numberOfBytes);
     }
 
     @Test
-    void testPredictableConversion() {
-        TransactionManagerConfiguration transactions = new TransactionManagerConfiguration();
-        transactions.shortenNodeNameIfNecessary = true;
+    void testPredictableConversion() throws NoSuchAlgorithmException {
         assertTrue(NODE_NAME_TO_SHORTEN.getBytes(StandardCharsets.UTF_8).length > 28);
-        NarayanaJtaRecorder r = new NarayanaJtaRecorder();
-        transactions.nodeName = NODE_NAME_TO_SHORTEN;
-        r.setNodeName(transactions);
-        int numberOfBytes = transactions.nodeName.getBytes(StandardCharsets.UTF_8).length;
+        NarayanaJtaRecorder recorder = new NarayanaJtaRecorder(new RuntimeValue<>());
+        String firstConversion = recorder.shortenNodeName(NODE_NAME_TO_SHORTEN);
+        int numberOfBytes = firstConversion.getBytes(StandardCharsets.UTF_8).length;
         assertEquals(28, numberOfBytes,
                 "node name bytes was not 28 bytes limit, number of bytes is " + numberOfBytes);
-        String firstConversion = transactions.nodeName;
-        transactions.nodeName = NODE_NAME_TO_SHORTEN;
-        r.setNodeName(transactions);
-        String secondConversion = transactions.nodeName;
-        numberOfBytes = transactions.nodeName.getBytes(StandardCharsets.UTF_8).length;
+        String secondConversion = recorder.shortenNodeName(NODE_NAME_TO_SHORTEN);
+        numberOfBytes = secondConversion.getBytes(StandardCharsets.UTF_8).length;
         assertEquals(28, numberOfBytes,
                 "node name bytes was not 28 bytes limit, number of bytes is " + numberOfBytes);
         assertEquals(firstConversion, secondConversion,

@@ -1,6 +1,5 @@
 package org.jboss.resteasy.reactive.client.handlers;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -41,6 +40,7 @@ import org.jboss.resteasy.reactive.client.spi.MultipartResponseData;
 import org.jboss.resteasy.reactive.common.core.Serialisers;
 import org.jboss.resteasy.reactive.common.util.MultivaluedTreeMap;
 
+import io.netty.buffer.ByteBufInputStream;
 import io.netty.handler.codec.DecoderException;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.LastHttpContent;
@@ -66,7 +66,6 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.streams.Pipe;
-import io.vertx.core.streams.Pump;
 
 public class ClientSendRequestHandler implements ClientRestHandler {
     private static final Logger log = Logger.getLogger(ClientSendRequestHandler.class);
@@ -77,10 +76,13 @@ public class ClientSendRequestHandler implements ClientRestHandler {
     private final ClientLogger clientLogger;
     private final Map<Class<?>, MultipartResponseData> multipartResponseDataMap;
     private final int maxChunkSize;
+    private final int inputStreamChunkSize;
 
-    public ClientSendRequestHandler(int maxChunkSize, boolean followRedirects, LoggingScope loggingScope, ClientLogger logger,
+    public ClientSendRequestHandler(int maxChunkSize, int inputStreamChunkSize, boolean followRedirects,
+            LoggingScope loggingScope, ClientLogger logger,
             Map<Class<?>, MultipartResponseData> multipartResponseDataMap) {
         this.maxChunkSize = maxChunkSize;
+        this.inputStreamChunkSize = inputStreamChunkSize;
         this.followRedirects = followRedirects;
         this.loggingScope = loggingScope;
         this.clientLogger = logger;
@@ -99,6 +101,13 @@ public class ClientSendRequestHandler implements ClientRestHandler {
         future.subscribe().with(new Consumer<>() {
             @Override
             public void accept(HttpClientRequest httpClientRequest) {
+                if (requestContext.isUserCanceled()) {
+                    // in this case the user aborted before the request was even created
+                    return;
+                }
+
+                requestContext.setHttpClientRequest(httpClientRequest);
+
                 // adapt headers to HTTP/2 depending on the underlying HTTP connection
                 ClientSendRequestHandler.this.adaptRequest(httpClientRequest);
 
@@ -176,7 +185,7 @@ public class ClientSendRequestHandler implements ClientRestHandler {
                     Future<HttpClientResponse> sent = httpClientRequest.send(
                             new InputStreamReadStream(
                                     Vertx.currentContext().owner(), (InputStream) requestContext.getEntity().getEntity(),
-                                    httpClientRequest));
+                                    httpClientRequest, inputStreamChunkSize));
                     attachSentHandlers(sent, httpClientRequest, requestContext);
                 } else if (requestContext.isMultiBufferUpload()) {
                     MultivaluedMap<String, String> headerMap = requestContext.getRequestHeadersAsMap();
@@ -308,19 +317,14 @@ public class ClientSendRequestHandler implements ClientRestHandler {
                                                                 return;
                                                             }
                                                             final AsyncFile tmpAsyncFile = asyncFileOpened.result();
-                                                            final Pump downloadPump = Pump.pump(clientResponse,
-                                                                    tmpAsyncFile);
-                                                            downloadPump.start();
-
-                                                            clientResponse.resume();
-                                                            clientResponse.endHandler(new Handler<>() {
-                                                                public void handle(Void event) {
-                                                                    tmpAsyncFile.flush(new Handler<>() {
-                                                                        public void handle(AsyncResult<Void> flushed) {
-                                                                            if (flushed.failed()) {
-                                                                                reportFinish(flushed.cause(),
+                                                            clientResponse.pipeTo(tmpAsyncFile,
+                                                                    new Handler<>() {
+                                                                        @Override
+                                                                        public void handle(AsyncResult<Void> event) {
+                                                                            if (event.failed()) {
+                                                                                reportFinish(event.cause(),
                                                                                         requestContext);
-                                                                                requestContext.resume(flushed.cause());
+                                                                                requestContext.resume(event.cause());
                                                                                 return;
                                                                             }
 
@@ -333,21 +337,25 @@ public class ClientSendRequestHandler implements ClientRestHandler {
                                                                             requestContext.resume();
                                                                         }
                                                                     });
-                                                                }
-                                                            });
+                                                            clientResponse.resume();
                                                         }
                                                     });
                                         }
                                     });
 
-                        } else if (requestContext.isInputStreamDownload()) {
+                        } else if (requestContext.isInputStreamDownload() ||
+                        // when returning Response (and not Uni<Response>) we don't buffer the result
+                        // but instead set up the proper InputStream
+                        // for Uni<Response> we can't buffer because setting up the InputSteam would result in blocking the event loop
+                                (requestContext.isJakartaResponseDownload()
+                                        && !requestContext.invokedMethodReturnsAsyncType())) {
                             if (loggingScope != LoggingScope.NONE) {
                                 clientLogger.logResponse(clientResponse, false);
                             }
-                            //TODO: make timeout configureable
+                            //TODO: make timeout configurable
                             requestContext
                                     .setResponseEntityStream(
-                                            new VertxClientInputStream(clientResponse, 100000, requestContext));
+                                            new VertxClientInputStream(clientResponse, 100000));
                             requestContext.resume();
                         } else {
                             clientResponse.body(new Handler<>() {
@@ -361,7 +369,7 @@ public class ClientSendRequestHandler implements ClientRestHandler {
                                         try {
                                             if (buffer.length() > 0) {
                                                 requestContext.setResponseEntityStream(
-                                                        new ByteArrayInputStream(buffer.getBytes()));
+                                                        new ByteBufInputStream(buffer.getByteBuf(), true));
                                             } else {
                                                 requestContext.setResponseEntityStream(null);
                                             }
@@ -476,14 +484,13 @@ public class ClientSendRequestHandler implements ClientRestHandler {
 
     private QuarkusMultipartFormUpload setMultipartHeadersAndPrepareBody(HttpClientRequest httpClientRequest,
             RestClientRequestContext state) throws Exception {
-        if (!(state.getEntity().getEntity() instanceof QuarkusMultipartForm)) {
+        if (!(state.getEntity().getEntity() instanceof QuarkusMultipartForm multipartForm)) {
             throw new IllegalArgumentException(
                     "Multipart form upload expects an entity of type MultipartForm, got: " + state.getEntity().getEntity());
         }
 
         MultivaluedMap<String, String> headerMap = state.getRequestHeadersAsMap();
         updateRequestHeadersFromConfig(state, headerMap);
-        QuarkusMultipartForm multipartForm = (QuarkusMultipartForm) state.getEntity().getEntity();
         multipartForm.preparePojos(state);
 
         Object property = state.getConfiguration().getProperty(QuarkusRestClientProperties.MULTIPART_ENCODER_MODE);

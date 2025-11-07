@@ -70,7 +70,6 @@ import io.quarkus.narayana.jta.runtime.NarayanaJtaProducers;
 import io.quarkus.narayana.jta.runtime.NarayanaJtaRecorder;
 import io.quarkus.narayana.jta.runtime.TransactionManagerBuildTimeConfig;
 import io.quarkus.narayana.jta.runtime.TransactionManagerBuildTimeConfig.UnsafeMultipleLastResourcesMode;
-import io.quarkus.narayana.jta.runtime.TransactionManagerConfiguration;
 import io.quarkus.narayana.jta.runtime.context.TransactionContext;
 import io.quarkus.narayana.jta.runtime.graal.DisableLoggingFeature;
 import io.quarkus.narayana.jta.runtime.interceptor.TestTransactionInterceptor;
@@ -102,10 +101,10 @@ class NarayanaJtaProcessor {
             BuildProducer<FeatureBuildItem> feature,
             BuildProducer<LogCleanupFilterBuildItem> logCleanupFilters,
             BuildProducer<NativeImageFeatureBuildItem> nativeImageFeatures,
-            TransactionManagerConfiguration transactions, TransactionManagerBuildTimeConfig transactionManagerBuildTimeConfig,
+            TransactionManagerBuildTimeConfig transactionManagerBuildTimeConfig,
             ShutdownContextBuildItem shutdownContextBuildItem,
             Capabilities capabilities) {
-        recorder.handleShutdown(shutdownContextBuildItem, transactions);
+        recorder.handleShutdown(shutdownContextBuildItem);
         feature.produce(new FeatureBuildItem(Feature.NARAYANA_JTA));
         additionalBeans.produce(new AdditionalBeanBuildItem(NarayanaJtaProducers.class));
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf("io.quarkus.narayana.jta.RequestScopedTransaction"));
@@ -138,6 +137,7 @@ class NarayanaJtaProcessor {
                 JTANodeNameXAResourceOrphanFilter.class,
                 JTAActionStatusServiceXAResourceOrphanFilter.class,
                 ExpiredTransactionStatusManagerScanner.class)
+                .publicConstructors()
                 .reason(getClass().getName())
                 .build());
 
@@ -150,7 +150,7 @@ class NarayanaJtaProcessor {
         builder.addBeanClass(TransactionalInterceptorNotSupported.class);
         additionalBeans.produce(builder.build());
 
-        transactionManagerBuildTimeConfig.unsafeMultipleLastResources.ifPresent(mode -> {
+        transactionManagerBuildTimeConfig.unsafeMultipleLastResources().ifPresent(mode -> {
             if (!mode.equals(UnsafeMultipleLastResourcesMode.FAIL)) {
                 recorder.logUnsafeMultipleLastResourcesOnStartup(mode);
             }
@@ -169,15 +169,15 @@ class NarayanaJtaProcessor {
         recorder.disableTransactionStatusManager();
         allowUnsafeMultipleLastResources(recorder, transactionManagerBuildTimeConfig, capabilities, logCleanupFilters,
                 nativeImageFeatures);
-        recorder.setNodeName(transactions);
-        recorder.setDefaultTimeout(transactions);
-        recorder.setConfig(transactions);
+        recorder.setNodeName();
+        recorder.setDefaultTimeout();
+        recorder.setConfig();
     }
 
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     public void nativeImageFeature(TransactionManagerBuildTimeConfig transactionManagerBuildTimeConfig,
             BuildProducer<NativeImageFeatureBuildItem> nativeImageFeatures) {
-        switch (transactionManagerBuildTimeConfig.unsafeMultipleLastResources
+        switch (transactionManagerBuildTimeConfig.unsafeMultipleLastResources()
                 .orElse(UnsafeMultipleLastResourcesMode.DEFAULT)) {
             case ALLOW, WARN_FIRST, WARN_EACH -> {
                 nativeImageFeatures.produce(new NativeImageFeatureBuildItem(DisableLoggingFeature.class));
@@ -189,8 +189,7 @@ class NarayanaJtaProcessor {
     @Record(RUNTIME_INIT)
     @Consume(NarayanaInitBuildItem.class)
     @Consume(SyntheticBeansRuntimeInitBuildItem.class)
-    public void startRecoveryService(NarayanaJtaRecorder recorder,
-            List<JdbcDataSourceBuildItem> jdbcDataSourceBuildItems, TransactionManagerConfiguration transactions) {
+    public void startRecoveryService(NarayanaJtaRecorder recorder, List<JdbcDataSourceBuildItem> jdbcDataSourceBuildItems) {
         Map<String, String> configuredDataSourcesConfigKeys = jdbcDataSourceBuildItems.stream()
                 .map(j -> j.getName())
                 .collect(Collectors.toMap(Function.identity(),
@@ -200,7 +199,7 @@ class NarayanaJtaProcessor {
                 .map(j -> j.getName())
                 .collect(Collectors.toSet());
 
-        recorder.startRecoveryService(transactions, configuredDataSourcesConfigKeys, dataSourcesWithTransactionIntegration);
+        recorder.startRecoveryService(configuredDataSourcesConfigKeys, dataSourcesWithTransactionIntegration);
     }
 
     @BuildStep(onlyIf = IsTest.class)
@@ -263,7 +262,7 @@ class NarayanaJtaProcessor {
             TransactionManagerBuildTimeConfig transactionManagerBuildTimeConfig,
             Capabilities capabilities, BuildProducer<LogCleanupFilterBuildItem> logCleanupFilters,
             BuildProducer<NativeImageFeatureBuildItem> nativeImageFeatures) {
-        switch (transactionManagerBuildTimeConfig.unsafeMultipleLastResources
+        switch (transactionManagerBuildTimeConfig.unsafeMultipleLastResources()
                 .orElse(UnsafeMultipleLastResourcesMode.DEFAULT)) {
             case ALLOW -> {
                 recorder.allowUnsafeMultipleLastResources(capabilities.isPresent(Capability.AGROAL), true);

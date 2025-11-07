@@ -13,7 +13,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import jakarta.enterprise.inject.spi.DefinitionException;
+
 import org.jboss.jandex.AnnotationInstance;
+import org.jboss.jandex.AnnotationTarget;
 import org.jboss.jandex.AnnotationTarget.Kind;
 import org.jboss.jandex.ClassInfo;
 import org.jboss.jandex.CompositeIndex;
@@ -95,12 +98,13 @@ public class BeanArchiveProcessor {
                     knownMissingClasses, Thread.currentThread().getContextClassLoader());
         }
         Set<DotName> generatedClassNames = new HashSet<>();
-        for (GeneratedBeanBuildItem generatedBeanClass : generatedBeans) {
-            IndexingUtil.indexClass(generatedBeanClass.getName(), additionalBeanIndexer, applicationIndex, additionalIndex,
-                    knownMissingClasses, Thread.currentThread().getContextClassLoader(), generatedBeanClass.getData());
-            generatedClassNames.add(DotName.createSimple(generatedBeanClass.getName().replace('/', '.')));
-            generatedClass.produce(new GeneratedClassBuildItem(true, generatedBeanClass.getName(), generatedBeanClass.getData(),
-                    generatedBeanClass.getSource()));
+        for (GeneratedBeanBuildItem generatedBean : generatedBeans) {
+            IndexingUtil.indexClass(generatedBean.getName(), additionalBeanIndexer, applicationIndex, additionalIndex,
+                    knownMissingClasses, Thread.currentThread().getContextClassLoader(), generatedBean.getData());
+            generatedClassNames.add(DotName.createSimple(generatedBean.getName().replace('/', '.')));
+            generatedClass.produce(new GeneratedClassBuildItem(generatedBean.isApplicationClass(), generatedBean.getName(),
+                    generatedBean.getData(),
+                    generatedBean.getSource()));
         }
 
         PersistentClassIndex index = liveReloadBuildItem.getContextObject(PersistentClassIndex.class);
@@ -148,13 +152,16 @@ public class BeanArchiveProcessor {
                         .map(bda -> new BeanDefiningAnnotation(bda.getName(), bda.getDefaultScope()))
                         .collect(Collectors.toList()), stereotypes);
         beanDefiningAnnotations.addAll(customScopes.getCustomScopeNames());
-        // Also include archives that are not bean archives but contain scopes, qualifiers or interceptor bindings
+        // Also include archives that are not bean archives but contain scopes, qualifiers,
+        // interceptor bindings, interceptors or decorators
         beanDefiningAnnotations.add(DotNames.SCOPE);
         beanDefiningAnnotations.add(DotNames.NORMAL_SCOPE);
         beanDefiningAnnotations.add(DotNames.QUALIFIER);
         beanDefiningAnnotations.add(DotNames.INTERCEPTOR_BINDING);
+        beanDefiningAnnotations.add(DotNames.DECORATOR);
+        beanDefiningAnnotations.add(DotNames.INTERCEPTOR);
 
-        boolean rootIsAlwaysBeanArchive = !config.strictCompatibility;
+        boolean rootIsAlwaysBeanArchive = !config.strictCompatibility();
         Collection<ApplicationArchive> candidateArchives = applicationArchivesBuildItem.getApplicationArchives();
         if (!rootIsAlwaysBeanArchive) {
             candidateArchives = new ArrayList<>(candidateArchives);
@@ -174,13 +181,39 @@ public class BeanArchiveProcessor {
             if (isExplicitBeanArchive(archive)
                     || isImplicitBeanArchive(index, beanDefiningAnnotations)
                     || isAdditionalBeanArchive(archive, beanArchivePredicates)) {
+                // check for occurrences of incompatible annotations - currently only @Specializes
+                validateArchiveCompatibility(archive, index, knownCompatibleBeanArchives);
                 indexes.add(index);
             }
         }
         if (rootIsAlwaysBeanArchive) {
-            indexes.add(applicationArchivesBuildItem.getRootArchive().getIndex());
+            ApplicationArchive rootArchive = applicationArchivesBuildItem.getRootArchive();
+            validateArchiveCompatibility(rootArchive, rootArchive.getIndex(), knownCompatibleBeanArchives);
+            indexes.add(rootArchive.getIndex());
         }
         return CompositeIndex.create(indexes);
+    }
+
+    private void validateArchiveCompatibility(ApplicationArchive archive, IndexView index,
+            KnownCompatibleBeanArchives knownCompatibleBeanArchives) {
+        // check for occurrences of incompatible annotations - currently only @Specializes
+        Collection<AnnotationInstance> annotations = index.getAnnotations(DotNames.SPECIALIZES);
+        if (!annotations.isEmpty() && !knownCompatibleBeanArchives.isKnownCompatible(archive,
+                KnownCompatibleBeanArchiveBuildItem.Reason.SPECIALIZES_ANNOTATION)) {
+            Set<String> definitionErrors = new HashSet<>();
+            for (AnnotationInstance annInstance : annotations) {
+                DotName targetClassName = annInstance.target().kind().equals(AnnotationTarget.Kind.CLASS)
+                        ? annInstance.target().asClass().name()
+                        : annInstance.target().asMethod().declaringClass().name();
+                definitionErrors.add(targetClassName.toString());
+                throw new DefinitionException(
+                        "Quarkus does not support CDI Full @Specializes annotation; try using an @Alternative instead. "
+                                +
+                                "If you want to mark one or more archives as Quarkus compatible, take a " +
+                                "look at io.quarkus.arc.deployment.KnownCompatibleBeanArchiveBuildItem.\n" +
+                                "Annotation was found in the following classes: " + definitionErrors);
+            }
+        }
     }
 
     private boolean isExplicitBeanArchive(ApplicationArchive archive) {
@@ -225,7 +258,8 @@ public class BeanArchiveProcessor {
                         if (text.contains("bean-discovery-mode='all'")
                                 || text.contains("bean-discovery-mode=\"all\"")) {
 
-                            if (!knownCompatibleBeanArchives.isKnownCompatible(archive)) {
+                            if (!knownCompatibleBeanArchives.isKnownCompatible(archive,
+                                    KnownCompatibleBeanArchiveBuildItem.Reason.BEANS_XML_ALL)) {
                                 LOGGER.warnf("Detected bean archive with bean discovery mode of 'all', "
                                         + "this is not portable in CDI Lite and is treated as 'annotated' in Quarkus! "
                                         + "Path to beans.xml: %s",
@@ -249,9 +283,9 @@ public class BeanArchiveProcessor {
             ApplicationArchive archive) {
         if (archive.getKey() != null) {
             final ArtifactKey key = archive.getKey();
-            for (IndexDependencyConfig excludeDependency : config.excludeDependency.values()) {
-                if (archiveMatches(key, excludeDependency.groupId, excludeDependency.artifactId,
-                        excludeDependency.classifier)) {
+            for (IndexDependencyConfig excludeDependency : config.excludeDependency().values()) {
+                if (archiveMatches(key, excludeDependency.groupId(), excludeDependency.artifactId(),
+                        excludeDependency.classifier())) {
                     return true;
                 }
             }

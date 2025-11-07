@@ -1,9 +1,10 @@
 package io.quarkus.paths;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.io.Serializable;
 import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.util.Objects;
 
 public class DirectoryPathTree extends OpenContainerPathTree implements Serializable {
 
@@ -28,12 +29,12 @@ public class DirectoryPathTree extends OpenContainerPathTree implements Serializ
 
     public DirectoryPathTree(Path dir, PathFilter pathFilter, boolean manifestEnabled) {
         super(pathFilter, manifestEnabled);
-        this.dir = dir;
+        this.dir = Objects.requireNonNull(dir, "Directory is null");
     }
 
     protected DirectoryPathTree(Path dir, PathFilter pathFilter, PathTreeWithManifest pathTreeWithManifest) {
         super(pathFilter, pathTreeWithManifest);
-        this.dir = dir;
+        this.dir = Objects.requireNonNull(dir, "Directory is null");
     }
 
     @Override
@@ -65,14 +66,16 @@ public class DirectoryPathTree extends OpenContainerPathTree implements Serializ
         return this;
     }
 
+    @Serial
     private void writeObject(java.io.ObjectOutputStream out) throws IOException {
         out.writeUTF(dir.toAbsolutePath().toString());
         out.writeObject(pathFilter);
         out.writeBoolean(manifestEnabled);
     }
 
+    @Serial
     private void readObject(java.io.ObjectInputStream in) throws IOException, ClassNotFoundException {
-        dir = Paths.get(in.readUTF());
+        dir = Path.of(in.readUTF());
         pathFilter = (PathFilter) in.readObject();
         manifestEnabled = in.readBoolean();
     }

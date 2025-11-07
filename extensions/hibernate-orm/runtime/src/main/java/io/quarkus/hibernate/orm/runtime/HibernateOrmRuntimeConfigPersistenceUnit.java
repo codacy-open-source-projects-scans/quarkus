@@ -28,8 +28,14 @@ public interface HibernateOrmRuntimeConfigPersistenceUnit {
      *
      * @asciidoclet
      */
-    @ConfigDocDefault("'true' if Hibernate ORM is enabled; 'false' otherwise")
+    @ConfigDocDefault("`true` if Hibernate ORM is enabled and there are entity types or an active datasource assigned to the persistence unit; `false` otherwise")
     Optional<Boolean> active();
+
+    /**
+     * Schema management configuration.
+     */
+    @ConfigDocSection
+    HibernateOrmConfigPersistenceUnitSchemaManagement schemaManagement();
 
     /**
      * Database related configuration.
@@ -84,19 +90,18 @@ public interface HibernateOrmRuntimeConfigPersistenceUnit {
         /**
          * Schema generation configuration.
          */
+        @Deprecated(forRemoval = true, since = "3.22")
         HibernateOrmConfigPersistenceUnitDatabaseGeneration generation();
 
         /**
          * The default catalog to use for the database objects.
          */
-        @WithConverter(TrimmedStringConverter.class)
-        Optional<String> defaultCatalog();
+        Optional<@WithConverter(TrimmedStringConverter.class) String> defaultCatalog();
 
         /**
          * The default schema to use for the database objects.
          */
-        @WithConverter(TrimmedStringConverter.class)
-        Optional<String> defaultSchema();
+        Optional<@WithConverter(TrimmedStringConverter.class) String> defaultSchema();
 
         /**
          * Whether Hibernate ORM should check on startup
@@ -107,14 +112,22 @@ public interface HibernateOrmRuntimeConfigPersistenceUnit {
          *
          * @asciidoclet
          */
-        // TODO change the default to "always enabled" when we solve version detection problems
-        //   See https://github.com/quarkusio/quarkus/issues/43703
-        //   See https://github.com/quarkusio/quarkus/issues/42255
-        // TODO disable the check by default when offline startup is opted in
-        //   See https://github.com/quarkusio/quarkus/issues/13522
         @WithName("version-check.enabled")
-        @ConfigDocDefault("`true` if the dialect was set automatically by Quarkus, `false` if it was set explicitly")
+        @ConfigDocDefault("`false` if starting offline (see `start-offline`), `true` otherwise")
         Optional<Boolean> versionCheckEnabled();
+
+        /**
+         * Instructs Hibernate ORM to avoid connecting to the database on startup.
+         *
+         * When starting offline:
+         * * Hibernate ORM will not attempt to create a schema automatically, so it must already be created when the application
+         * hits the database for the first time.
+         * * Quarkus will not check that the database version matches the one configured at build time.
+         *
+         * @asciidoclet
+         */
+        @WithDefault("false")
+        boolean startOffline();
     }
 
     @ConfigGroup
@@ -128,22 +141,25 @@ public interface HibernateOrmRuntimeConfigPersistenceUnit {
     }
 
     @ConfigGroup
-    interface HibernateOrmConfigPersistenceUnitDatabaseGeneration {
+    interface HibernateOrmConfigPersistenceUnitSchemaManagement {
 
         /**
          * Select whether the database schema is generated or not.
          *
          * `drop-and-create` is awesome in development mode.
          *
-         * This defaults to 'none', however if Dev Services is in use and no other extensions that manage the schema are present
-         * this will default to 'drop-and-create'.
+         * This defaults to 'none'.
+         *
+         * However if Dev Services is in use and no other extensions that manage the schema are present
+         * the value will be automatically overridden to 'drop-and-create'.
          *
          * Accepted values: `none`, `create`, `drop-and-create`, `drop`, `update`, `validate`.
+         *
+         * @asciidoclet
          */
-        @WithParentName
-        @WithDefault("none")
         @WithConverter(TrimmedStringConverter.class)
-        String generation();
+        @WithDefault("none")
+        String strategy();
 
         /**
          * If Hibernate ORM should create the schemas automatically (for databases supporting them).
@@ -157,6 +173,50 @@ public interface HibernateOrmRuntimeConfigPersistenceUnit {
         @WithDefault("false")
         boolean haltOnError();
 
+        /**
+         * Additional database object types to include in schema management operations.
+         *
+         * By default, Hibernate ORM only considers tables and sequences when performing
+         * schema management operations.
+         * This setting allows you to specify additional database object types that should be included,
+         * such as "MATERIALIZED VIEW", "VIEW", or other database-specific object types.
+         *
+         * The exact supported values depend on the underlying database and dialect.
+         *
+         * @asciidoclet
+         */
+        Optional<@WithConverter(TrimmedStringConverter.class) String> extraPhysicalTableTypes();
+    }
+
+    @ConfigGroup
+    @Deprecated(forRemoval = true, since = "3.22")
+    interface HibernateOrmConfigPersistenceUnitDatabaseGeneration {
+
+        /**
+         * Select whether the database schema is generated or not.
+         *
+         * `drop-and-create` is awesome in development mode.
+         *
+         * This defaults to 'none', however if Dev Services is in use and no other extensions that manage the schema are present
+         * this will default to 'drop-and-create'.
+         *
+         * Accepted values: `none`, `create`, `drop-and-create`, `drop`, `update`, `validate`.
+         */
+        @WithParentName
+        @Deprecated(forRemoval = true, since = "3.22")
+        Optional<@WithConverter(TrimmedStringConverter.class) String> generation();
+
+        /**
+         * If Hibernate ORM should create the schemas automatically (for databases supporting them).
+         */
+        @Deprecated(forRemoval = true, since = "3.22")
+        Optional<Boolean> createSchemas();
+
+        /**
+         * Whether we should stop on the first error when applying the schema.
+         */
+        @Deprecated(forRemoval = true, since = "3.22")
+        Optional<Boolean> haltOnError();
     }
 
     @ConfigGroup
@@ -175,14 +235,12 @@ public interface HibernateOrmRuntimeConfigPersistenceUnit {
         /**
          * Filename or URL where the database create DDL file should be generated.
          */
-        @WithConverter(TrimmedStringConverter.class)
-        Optional<String> createTarget();
+        Optional<@WithConverter(TrimmedStringConverter.class) String> createTarget();
 
         /**
          * Filename or URL where the database drop DDL file should be generated.
          */
-        @WithConverter(TrimmedStringConverter.class)
-        Optional<String> dropTarget();
+        Optional<@WithConverter(TrimmedStringConverter.class) String> dropTarget();
 
     }
 

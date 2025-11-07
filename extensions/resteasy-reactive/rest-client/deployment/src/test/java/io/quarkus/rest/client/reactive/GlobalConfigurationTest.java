@@ -54,7 +54,6 @@ public class GlobalConfigurationTest {
         assertThat(configRoot.disableContextualErrorMessages()).isTrue();
 
         // global defaults for client specific properties:
-        assertThat(configRoot.scope().get()).isEqualTo("Singleton");
         assertThat(configRoot.proxyAddress().get()).isEqualTo("host:123");
         assertThat(configRoot.proxyUser().get()).isEqualTo("proxyUser");
         assertThat(configRoot.proxyPassword().get()).isEqualTo("proxyPassword");
@@ -63,10 +62,10 @@ public class GlobalConfigurationTest {
         assertThat(configRoot.readTimeout()).isEqualTo(2001);
         assertThat(configRoot.userAgent().get()).isEqualTo("agent");
         assertThat(configRoot.headers()).isEqualTo(Collections.singletonMap("foo", "bar"));
-        assertThat(configRoot.connectionTTL().get()).isEqualTo(20000); // value in ms, will be converted to seconds
-        assertThat(configRoot.connectionPoolSize().get()).isEqualTo(2);
+        assertThat(configRoot.connectionTTL().getAsInt()).isEqualTo(20000); // value in ms, will be converted to seconds
+        assertThat(configRoot.connectionPoolSize().getAsInt()).isEqualTo(2);
         assertThat(configRoot.keepAliveEnabled().get()).isTrue();
-        assertThat(configRoot.maxRedirects().get()).isEqualTo(2);
+        assertThat(configRoot.maxRedirects().getAsInt()).isEqualTo(2);
         assertThat(configRoot.followRedirects().get()).isTrue();
         assertThat(configRoot.providers().get())
                 .isEqualTo("io.quarkus.rest.client.reactive.HelloClientWithBaseUri$MyResponseFilter");

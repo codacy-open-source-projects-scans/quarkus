@@ -132,11 +132,15 @@ public class IsolatedDevModeMain implements BiConsumer<CuratedApplication, Map<S
                                 }
                             } catch (Exception e) {
                                 close();
-                                log.error("Failed to start quarkus", t);
-                                log.error("Failed to recover after failed start", e);
+                                // Don't use logs here, as logging might not be setup yet
+                                // Resulting in a silent exit
+                                System.err.println("Failed to start quarkus");
+                                t.printStackTrace();
+                                System.err.println("Failed to recover after failed start");
+                                e.printStackTrace();
                                 //this is the end of the road, we just exit
                                 //generally we only hit this if something is already listening on the HTTP port
-                                //or the system config is so broken we can't start HTTP
+                                //or the system config is so broken we can't start HTTP]
                                 System.exit(1);
                             }
                         }
@@ -169,7 +173,7 @@ public class IsolatedDevModeMain implements BiConsumer<CuratedApplication, Map<S
                 //so we just setup basic console logging
                 InitialConfigurator.DELAYED_HANDLER.addHandler(new ConsoleHandler(
                         ConsoleHandler.Target.SYSTEM_OUT,
-                        new ColorPatternFormatter("%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{3.}] (%t) %s%e%n")));
+                        new ColorPatternFormatter("%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c] (%t) %s%e%n")));
                 consoleContext.reset(new ConsoleCommand(' ', "Restarts the application", "to restart", 0, null,
                         () -> {
                             consoleContext.reset();

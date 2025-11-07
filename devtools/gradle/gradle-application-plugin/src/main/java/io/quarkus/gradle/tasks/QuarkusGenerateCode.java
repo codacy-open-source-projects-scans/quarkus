@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -23,7 +24,6 @@ import org.gradle.api.tasks.CompileClasspath;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.InputFiles;
-import org.gradle.api.tasks.Nested;
 import org.gradle.api.tasks.OutputDirectory;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
@@ -37,13 +37,10 @@ import io.quarkus.gradle.tooling.ToolingUtils;
 import io.quarkus.runtime.LaunchMode;
 
 @CacheableTask
-public abstract class QuarkusGenerateCode extends QuarkusTask {
+public abstract class QuarkusGenerateCode extends QuarkusTaskWithExtensionView {
 
     public static final String QUARKUS_GENERATED_SOURCES = "quarkus-generated-sources";
     public static final String QUARKUS_TEST_GENERATED_SOURCES = "quarkus-test-generated-sources";
-    // TODO dynamically load generation provider, or make them write code directly in quarkus-generated-sources
-    public static final String[] CODE_GENERATION_PROVIDER = new String[] { "grpc", "avdl", "avpr", "avsc" };
-    public static final String[] CODE_GENERATION_INPUT = new String[] { "proto", "avro" };
 
     private Set<Path> sourcesDirectories;
     private FileCollection compileClasspath;
@@ -51,20 +48,15 @@ public abstract class QuarkusGenerateCode extends QuarkusTask {
     private final LaunchMode launchMode;
     private final String inputSourceSetName;
 
-    private final QuarkusPluginExtensionView extensionView;
+    private final List<String> codeGenInput;
 
     @Inject
-    public QuarkusGenerateCode(LaunchMode launchMode, String inputSourceSetName) {
+    public QuarkusGenerateCode(LaunchMode launchMode, String inputSourceSetName, List<String> codeGenInput) {
         super("Performs Quarkus pre-build preparations, such as sources generation", true);
         this.launchMode = launchMode;
         this.inputSourceSetName = inputSourceSetName;
-        this.extensionView = getProject().getObjects().newInstance(QuarkusPluginExtensionView.class, extension());
+        this.codeGenInput = codeGenInput;
 
-    }
-
-    @Nested
-    protected QuarkusPluginExtensionView getExtensionView() {
-        return extensionView;
     }
 
     /**
@@ -98,7 +90,7 @@ public abstract class QuarkusGenerateCode extends QuarkusTask {
 
         Path src = projectDir.toPath().resolve("src").resolve(inputSourceSetName);
 
-        for (String input : CODE_GENERATION_INPUT) {
+        for (String input : codeGenInput) {
             Path providerSrcDir = src.resolve(input);
             if (Files.exists(providerSrcDir)) {
                 inputDirectories.add(providerSrcDir.toFile());
@@ -118,8 +110,7 @@ public abstract class QuarkusGenerateCode extends QuarkusTask {
     @TaskAction
     public void generateCode() throws IOException {
         ApplicationModel appModel = ToolingUtils.deserializeAppModel(getApplicationModel().get().getAsFile().toPath());
-        Map<String, String> configMap = getExtensionView()
-                .buildEffectiveConfiguration(appModel.getAppArtifact(), new HashMap<>()).getValues();
+        Map<String, String> configMap = effectiveProvider().buildEffectiveConfiguration(appModel, new HashMap<>()).getValues();
 
         File outputPath = getGeneratedOutputDirectory().get().getAsFile();
 

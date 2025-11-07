@@ -9,6 +9,7 @@ import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,7 +31,6 @@ import org.jboss.logging.Logger;
 import org.jboss.resteasy.reactive.client.TlsConfig;
 import org.jboss.resteasy.reactive.client.api.ClientLogger;
 import org.jboss.resteasy.reactive.client.api.LoggingScope;
-import org.jboss.resteasy.reactive.client.interceptors.ClientGZIPDecodingInterceptor;
 import org.jboss.resteasy.reactive.client.logging.DefaultClientLogger;
 import org.jboss.resteasy.reactive.client.spi.ClientContextResolver;
 import org.jboss.resteasy.reactive.common.jaxrs.ConfigurationImpl;
@@ -41,6 +41,7 @@ import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.net.JksOptions;
 import io.vertx.core.net.ProxyOptions;
+import io.vertx.core.net.ProxyType;
 import io.vertx.core.net.SSLOptions;
 
 public class ClientBuilderImpl extends ClientBuilder {
@@ -57,6 +58,8 @@ public class ClientBuilderImpl extends ClientBuilder {
     private String proxyPassword;
     private String proxyUser;
     private String nonProxyHosts;
+    private Duration proxyConnectTimeout;
+    private ProxyType proxyType;
 
     private boolean followRedirects;
 
@@ -73,16 +76,17 @@ public class ClientBuilderImpl extends ClientBuilder {
     // overridden security settings
     private TlsConfig tlsConfig;
 
-    private LoggingScope loggingScope;
+    private ClientLogger clientLogger = new DefaultClientLogger();
+    private LoggingScope loggingScope = LoggingScope.NONE;
     private Integer loggingBodySize = 100;
 
     private int maxChunkSize = 8096;
     private MultiQueryParamMode multiQueryParamMode;
 
-    private ClientLogger clientLogger = new DefaultClientLogger();
     private String userAgent = RestClientRequestContext.DEFAULT_USER_AGENT_VALUE;
 
-    private boolean enableCompression;
+    private Boolean enableCompression;
+    private Integer http2UpgradeMaxContentLength;
 
     public ClientBuilderImpl() {
         configuration = new ConfigurationImpl(RuntimeType.CLIENT);
@@ -156,6 +160,11 @@ public class ClientBuilderImpl extends ClientBuilder {
         return this;
     }
 
+    public ClientBuilder http2UpgradeMaxContentLength(int http2UpgradeMaxContentLength) {
+        this.http2UpgradeMaxContentLength = http2UpgradeMaxContentLength;
+        return this;
+    }
+
     public ClientBuilder alpn(boolean alpn) {
         this.alpn = alpn;
         return this;
@@ -202,14 +211,18 @@ public class ClientBuilderImpl extends ClientBuilder {
         return this;
     }
 
-    public ClientBuilder enableCompression() {
-        this.enableCompression = true;
+    public ClientBuilder enableCompression(boolean enableCompression) {
+        this.enableCompression = enableCompression;
         return this;
     }
 
     public ClientBuilder maxChunkSize(int maxChunkSize) {
         this.maxChunkSize = maxChunkSize;
         return this;
+    }
+
+    public TlsConfig getTlsConfig() {
+        return tlsConfig;
     }
 
     @Override
@@ -223,6 +236,10 @@ public class ClientBuilderImpl extends ClientBuilder {
         if (http2 || alpn) {
             options.setUseAlpn(true);
             options.setAlpnVersions(List.of(HttpVersion.HTTP_2, HttpVersion.HTTP_1_1));
+        }
+
+        if (http2UpgradeMaxContentLength != null) {
+            options.setHttp2UpgradeMaxContentLength(http2UpgradeMaxContentLength);
         }
 
         if (tlsConfig != null) {
@@ -241,6 +258,12 @@ public class ClientBuilderImpl extends ClientBuilder {
                 }
                 if (proxyUser != null && !proxyUser.isBlank()) {
                     proxyOptions.setUsername(proxyUser);
+                }
+                if (proxyConnectTimeout != null) {
+                    proxyOptions.setConnectTimeout(proxyConnectTimeout);
+                }
+                if (proxyType != null) {
+                    proxyOptions.setType(proxyType);
                 }
                 options.setProxyOptions(proxyOptions);
                 configureNonProxyHosts(options, nonProxyHosts);
@@ -278,22 +301,22 @@ public class ClientBuilderImpl extends ClientBuilder {
             }
         }
 
-        if (enableCompression) {
-            configuration.register(ClientGZIPDecodingInterceptor.class);
+        if (Boolean.TRUE.equals(enableCompression)) {
+            options.setDecompressionSupported(true);
         }
 
         clientLogger.setBodySize(loggingBodySize);
 
         options.setMaxChunkSize(maxChunkSize);
         return new ClientImpl(options,
-                configuration,
+                new ConfigurationImpl(configuration),
                 CLIENT_CONTEXT_RESOLVER.resolve(Thread.currentThread().getContextClassLoader()),
                 null,
                 null,
                 followRedirects,
                 multiQueryParamMode,
                 loggingScope,
-                clientLogger, userAgent);
+                clientLogger, userAgent, tlsConfig != null ? tlsConfig.getName().orElse(null) : null);
 
     }
 
@@ -476,6 +499,16 @@ public class ClientBuilderImpl extends ClientBuilder {
 
     public ClientBuilderImpl nonProxyHosts(String nonProxyHosts) {
         this.nonProxyHosts = nonProxyHosts;
+        return this;
+    }
+
+    public ClientBuilderImpl proxyConnectTimeout(Duration proxyConnectTimeout) {
+        this.proxyConnectTimeout = proxyConnectTimeout;
+        return this;
+    }
+
+    public ClientBuilderImpl proxyType(ProxyType proxyType) {
+        this.proxyType = proxyType;
         return this;
     }
 }

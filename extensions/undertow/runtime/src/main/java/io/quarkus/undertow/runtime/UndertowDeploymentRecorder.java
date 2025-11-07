@@ -50,9 +50,9 @@ import io.quarkus.security.UnauthorizedException;
 import io.quarkus.security.identity.CurrentIdentityAssociation;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.vertx.http.runtime.CurrentVertxRequest;
-import io.quarkus.vertx.http.runtime.HttpBuildTimeConfig;
 import io.quarkus.vertx.http.runtime.HttpCompressionHandler;
-import io.quarkus.vertx.http.runtime.HttpConfiguration;
+import io.quarkus.vertx.http.runtime.VertxHttpBuildTimeConfig;
+import io.quarkus.vertx.http.runtime.VertxHttpConfig;
 import io.quarkus.vertx.http.runtime.VertxHttpRecorder;
 import io.quarkus.vertx.http.runtime.devmode.ResourceNotFoundData;
 import io.quarkus.vertx.http.runtime.security.QuarkusHttpUser;
@@ -158,10 +158,17 @@ public class UndertowDeploymentRecorder {
 
     }
 
-    final RuntimeValue<HttpConfiguration> httpConfiguration;
+    private final VertxHttpBuildTimeConfig httpBuildTimeConfig;
+    private final RuntimeValue<VertxHttpConfig> httpRuntimeConfig;
+    private final RuntimeValue<ServletRuntimeConfig> servletRuntimeConfig;
 
-    public UndertowDeploymentRecorder(RuntimeValue<HttpConfiguration> httpConfiguration) {
-        this.httpConfiguration = httpConfiguration;
+    public UndertowDeploymentRecorder(
+            final VertxHttpBuildTimeConfig httpBuildTimeConfig,
+            final RuntimeValue<VertxHttpConfig> httpRuntimeConfig,
+            final RuntimeValue<ServletRuntimeConfig> servletRuntimeConfig) {
+        this.httpBuildTimeConfig = httpBuildTimeConfig;
+        this.httpRuntimeConfig = httpRuntimeConfig;
+        this.servletRuntimeConfig = servletRuntimeConfig;
     }
 
     public static void setHotDeploymentResources(List<Path> resources) {
@@ -199,7 +206,7 @@ public class UndertowDeploymentRecorder {
             resourceManager = new DelegatingResourceManager(managers.toArray(new ResourceManager[0]));
         }
 
-        if (launchMode == LaunchMode.NORMAL) {
+        if (launchMode.isProduction()) {
             //todo: cache configuration
             resourceManager = new CachingResourceManager(1000, 0, null, resourceManager, 2000);
         }
@@ -354,9 +361,7 @@ public class UndertowDeploymentRecorder {
     }
 
     public Handler<RoutingContext> startUndertow(ShutdownContext shutdown, ExecutorService executorService,
-            DeploymentManager manager, List<HandlerWrapper> wrappers,
-            ServletRuntimeConfig servletRuntimeConfig, HttpBuildTimeConfig httpBuildTimeConfig) throws Exception {
-
+            DeploymentManager manager, List<HandlerWrapper> wrappers) throws Exception {
         shutdown.addShutdownTask(new Runnable() {
             @Override
             public void run() {
@@ -383,15 +388,16 @@ public class UndertowDeploymentRecorder {
         DefaultExchangeHandler defaultHandler = new DefaultExchangeHandler(ROOT_HANDLER);
 
         UndertowBufferAllocator allocator = new UndertowBufferAllocator(
-                servletRuntimeConfig.directBuffers.orElse(DEFAULT_DIRECT_BUFFERS), (int) servletRuntimeConfig.bufferSize
+                servletRuntimeConfig.getValue().directBuffers().orElse(DEFAULT_DIRECT_BUFFERS),
+                (int) servletRuntimeConfig.getValue().bufferSize()
                         .orElse(new MemorySize(BigInteger.valueOf(DEFAULT_BUFFER_SIZE))).asLongValue());
 
         UndertowOptionMap.Builder undertowOptions = UndertowOptionMap.builder();
-        undertowOptions.set(UndertowOptions.MAX_PARAMETERS, servletRuntimeConfig.maxParameters);
+        undertowOptions.set(UndertowOptions.MAX_PARAMETERS, servletRuntimeConfig.getValue().maxParameters());
         UndertowOptionMap undertowOptionMap = undertowOptions.getMap();
 
-        Set<String> compressMediaTypes = httpBuildTimeConfig.enableCompression
-                ? Set.copyOf(httpBuildTimeConfig.compressMediaTypes.get())
+        Set<String> compressMediaTypes = httpBuildTimeConfig.enableCompression()
+                ? Set.copyOf(httpBuildTimeConfig.compressMediaTypes().get())
                 : Collections.emptySet();
 
         return new Handler<RoutingContext>() {
@@ -422,11 +428,11 @@ public class UndertowDeploymentRecorder {
                     });
                 }
 
-                Optional<MemorySize> maxBodySize = httpConfiguration.getValue().limits.maxBodySize;
+                Optional<MemorySize> maxBodySize = httpRuntimeConfig.getValue().limits().maxBodySize();
                 if (maxBodySize.isPresent()) {
                     exchange.setMaxEntitySize(maxBodySize.get().asLongValue());
                 }
-                Duration readTimeout = httpConfiguration.getValue().readTimeout;
+                Duration readTimeout = httpRuntimeConfig.getValue().readTimeout();
                 exchange.setReadTimeout(readTimeout.toMillis());
 
                 exchange.setUndertowOptions(undertowOptionMap);

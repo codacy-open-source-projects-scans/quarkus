@@ -11,7 +11,7 @@ import io.quarkus.arc.ArcContainer;
 import io.quarkus.arc.InjectableContext;
 import io.quarkus.arc.ManagedContext;
 import io.quarkus.runtime.LaunchMode;
-import io.quarkus.security.AuthenticationFailedException;
+import io.quarkus.security.AuthenticationException;
 import io.quarkus.security.ForbiddenException;
 import io.quarkus.security.UnauthorizedException;
 import io.quarkus.websockets.next.CloseReason;
@@ -25,7 +25,10 @@ import io.vertx.core.Context;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClosedException;
 import io.vertx.core.http.WebSocketBase;
+import io.vertx.core.http.WebSocketFrame;
+import io.vertx.core.http.WebSocketFrameType;
 
 class Endpoints {
 
@@ -111,6 +114,9 @@ class Endpoints {
                             });
                         }
                     } else {
+                        if (telemetrySupport != null) {
+                            telemetrySupport.connectionOpeningFailed(r.cause());
+                        }
                         handleFailure(unhandledFailureStrategy, r.cause(), "Unable to complete @OnOpen callback", connection);
                     }
                 });
@@ -136,7 +142,6 @@ class Endpoints {
         } else {
             textMessageHandler(connection, endpoint, ws, onOpenContext, m -> {
                 contextSupport.start();
-                securitySupport.start();
                 try {
                     if (trafficLogger != null) {
                         trafficLogger.textMessageReceived(connection, m);
@@ -173,7 +178,6 @@ class Endpoints {
         } else {
             binaryMessageHandler(connection, endpoint, ws, onOpenContext, m -> {
                 contextSupport.start();
-                securitySupport.start();
                 try {
                     if (trafficLogger != null) {
                         trafficLogger.binaryMessageReceived(connection, m);
@@ -191,13 +195,24 @@ class Endpoints {
             }, false);
         }
 
+        pingMessageHandler(connection, endpoint, ws, onOpenContext, m -> {
+            endpoint.onPingMessage(m).onComplete(r -> {
+                if (r.succeeded()) {
+                    LOG.debugf("@OnPingMessage callback consumed application message: %s", connection);
+                } else {
+                    handleFailure(unhandledFailureStrategy, r.cause(),
+                            "Unable to consume application message in @OnPingMessage callback", connection);
+                }
+            });
+        });
+
         pongMessageHandler(connection, endpoint, ws, onOpenContext, m -> {
             endpoint.onPongMessage(m).onComplete(r -> {
                 if (r.succeeded()) {
-                    LOG.debugf("@OnPongMessage callback consumed text message: %s", connection);
+                    LOG.debugf("@OnPongMessage callback consumed application message: %s", connection);
                 } else {
                     handleFailure(unhandledFailureStrategy, r.cause(),
-                            "Unable to consume text message in @OnPongMessage callback", connection);
+                            "Unable to consume application message in @OnPongMessage callback", connection);
                 }
             });
         });
@@ -207,7 +222,12 @@ class Endpoints {
             timerId = vertx.setPeriodic(autoPingInterval.get().toMillis(), new Handler<Long>() {
                 @Override
                 public void handle(Long timerId) {
-                    connection.sendAutoPing();
+                    if (connection.isOpen()) {
+                        connection.sendAutoPing();
+                    } else {
+                        LOG.debugf("Try to cancel the autoPing timer for a closed connection: %s", connection.id());
+                        vertx.cancelTimer(timerId);
+                    }
                 }
             });
         } else {
@@ -224,16 +244,20 @@ class Endpoints {
                     @Override
                     public void handle(Void event) {
                         endpoint.onClose().onComplete(r -> {
-                            if (r.succeeded()) {
-                                LOG.debugf("@OnClose callback completed: %s", connection);
-                            } else {
-                                handleFailure(unhandledFailureStrategy, r.cause(), "Unable to complete @OnClose callback",
-                                        connection);
-                            }
-                            securitySupport.onClose();
-                            onClose.run();
-                            if (timerId != null) {
-                                vertx.cancelTimer(timerId);
+                            try {
+                                if (r.succeeded()) {
+                                    LOG.debugf("@OnClose callback completed: %s", connection);
+                                } else {
+                                    handleFailure(unhandledFailureStrategy, r.cause(), "Unable to complete @OnClose callback",
+                                            connection);
+                                }
+                                securitySupport.onClose();
+                                onClose.run();
+                            } finally {
+                                // Make sure we always try to cancel the timer
+                                if (timerId != null) {
+                                    vertx.cancelTimer(timerId);
+                                }
                             }
                         });
                     }
@@ -277,8 +301,13 @@ class Endpoints {
             return;
         }
         CloseReason closeReason;
-        int statusCode = connection instanceof WebSocketClientConnectionImpl ? WebSocketCloseStatus.INVALID_MESSAGE_TYPE.code()
-                : WebSocketCloseStatus.INTERNAL_SERVER_ERROR.code();
+        final int statusCode;
+        if (isSecurityFailure(cause)) {
+            statusCode = WebSocketCloseStatus.POLICY_VIOLATION.code();
+        } else {
+            statusCode = connection instanceof WebSocketClientConnectionImpl ? WebSocketCloseStatus.INVALID_MESSAGE_TYPE.code()
+                    : WebSocketCloseStatus.INTERNAL_SERVER_ERROR.code();
+        }
         if (LaunchMode.current().isDevOrTest()) {
             closeReason = new CloseReason(statusCode, cause.getMessage());
         } else {
@@ -307,11 +336,14 @@ class Endpoints {
 
     private static boolean isSecurityFailure(Throwable throwable) {
         return throwable instanceof UnauthorizedException
-                || throwable instanceof AuthenticationFailedException
+                || throwable instanceof AuthenticationException
                 || throwable instanceof ForbiddenException;
     }
 
     static boolean isWebSocketIsClosedFailure(Throwable throwable, WebSocketConnectionBase connection) {
+        if (throwable instanceof HttpClosedException) {
+            return true;
+        }
         if (!connection.isClosed()) {
             return false;
         }
@@ -357,6 +389,24 @@ class Endpoints {
                         binaryAction.accept(message);
                     }
                 });
+            }
+        });
+    }
+
+    private static void pingMessageHandler(WebSocketConnectionBase connection, WebSocketEndpoint endpoint, WebSocketBase ws,
+            Context context, Consumer<Buffer> pingAction) {
+        ws.frameHandler(new Handler<WebSocketFrame>() {
+            @Override
+            public void handle(WebSocketFrame frame) {
+                if (frame.type() == WebSocketFrameType.PING) {
+                    Context duplicatedContext = ContextSupport.createNewDuplicatedContext(context, connection);
+                    duplicatedContext.runOnContext(new Handler<Void>() {
+                        @Override
+                        public void handle(Void event) {
+                            pingAction.accept(frame.binaryData());
+                        }
+                    });
+                }
             }
         });
     }

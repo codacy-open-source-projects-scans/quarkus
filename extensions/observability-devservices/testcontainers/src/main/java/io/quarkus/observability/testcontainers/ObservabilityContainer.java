@@ -1,5 +1,7 @@
 package io.quarkus.observability.testcontainers;
 
+import static io.quarkus.devservices.common.Labels.QUARKUS_DEV_SERVICE;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -7,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.jboss.logging.Logger;
 import org.testcontainers.containers.GenericContainer;
@@ -28,6 +31,7 @@ public abstract class ObservabilityContainer<T extends ObservabilityContainer<T,
         super(DockerImageName.parse(config.imageName()));
         withLogConsumer(frameConsumer());
         withLabel(config.label(), config.serviceName());
+        withLabel(QUARKUS_DEV_SERVICE, config.serviceName());
         Optional<Set<String>> aliases = config.networkAliases();
         aliases.map(s -> s.toArray(new String[0])).ifPresent(this::withNetworkAliases);
         if (config.shared()) {
@@ -37,8 +41,14 @@ public abstract class ObservabilityContainer<T extends ObservabilityContainer<T,
 
     protected abstract String prefix();
 
+    protected Predicate<OutputFrame> getLoggingFilter() {
+        return f -> true;
+    }
+
     protected Consumer<OutputFrame> frameConsumer() {
-        return new JBossLoggingConsumer(log).withPrefix(prefix());
+        return new JBossLoggingConsumer(log)
+                .withPrefix(prefix())
+                .withLoggingFilter(getLoggingFilter());
     }
 
     protected byte[] getResourceAsBytes(String resource) {
@@ -51,7 +61,7 @@ public abstract class ObservabilityContainer<T extends ObservabilityContainer<T,
 
     @SuppressWarnings("OctalInteger")
     protected void addFileToContainer(byte[] content, String pathInContainer) {
-        log.infof("Content [%s]: \n%s", pathInContainer, new String(content, StandardCharsets.UTF_8));
+        log.debugf("Content [%s]: \n%s", pathInContainer, new String(content, StandardCharsets.UTF_8));
         withCopyToContainer(Transferable.of(content, 0777), pathInContainer);
     }
 

@@ -117,7 +117,6 @@ import io.quarkus.undertow.runtime.HttpSessionContext;
 import io.quarkus.undertow.runtime.QuarkusIdentityManager;
 import io.quarkus.undertow.runtime.ServletHttpSecurityPolicy;
 import io.quarkus.undertow.runtime.ServletProducer;
-import io.quarkus.undertow.runtime.ServletRuntimeConfig;
 import io.quarkus.undertow.runtime.ServletSecurityInfoProxy;
 import io.quarkus.undertow.runtime.ServletSecurityInfoSubstitution;
 import io.quarkus.undertow.runtime.UndertowDeploymentRecorder;
@@ -125,7 +124,7 @@ import io.quarkus.undertow.runtime.UndertowHandlersConfServletExtension;
 import io.quarkus.vertx.http.deployment.DefaultRouteBuildItem;
 import io.quarkus.vertx.http.deployment.HttpRootPathBuildItem;
 import io.quarkus.vertx.http.deployment.RouteBuildItem;
-import io.quarkus.vertx.http.runtime.HttpBuildTimeConfig;
+import io.quarkus.vertx.http.runtime.VertxHttpBuildTimeConfig;
 import io.undertow.servlet.api.DeploymentInfo;
 import io.undertow.servlet.api.FilterInfo;
 import io.undertow.servlet.api.HttpMethodSecurityInfo;
@@ -180,25 +179,23 @@ public class UndertowBuildStep {
 
     @BuildStep
     @Record(RUNTIME_INIT)
-    public ServiceStartBuildItem boot(UndertowDeploymentRecorder recorder,
+    public ServiceStartBuildItem boot(
+            UndertowDeploymentRecorder recorder,
             ServletDeploymentManagerBuildItem servletDeploymentManagerBuildItem,
             List<HttpHandlerWrapperBuildItem> wrappers,
             ShutdownContextBuildItem shutdown,
             Consumer<DefaultRouteBuildItem> undertowProducer,
             BuildProducer<RouteBuildItem> routeProducer,
             ExecutorBuildItem executorBuildItem,
-            ServletRuntimeConfig servletRuntimeConfig,
             ServletContextPathBuildItem servletContextPathBuildItem,
-            Capabilities capabilities,
-            HttpBuildTimeConfig httpBuildTimeConfig) throws Exception {
+            Capabilities capabilities) throws Exception {
 
         if (capabilities.isPresent(Capability.SECURITY)) {
             recorder.setupSecurity(servletDeploymentManagerBuildItem.getDeploymentManager());
         }
         Handler<RoutingContext> ut = recorder.startUndertow(shutdown, executorBuildItem.getExecutorProxy(),
                 servletDeploymentManagerBuildItem.getDeploymentManager(),
-                wrappers.stream().map(HttpHandlerWrapperBuildItem::getValue).collect(Collectors.toList()),
-                servletRuntimeConfig, httpBuildTimeConfig);
+                wrappers.stream().map(HttpHandlerWrapperBuildItem::getValue).collect(Collectors.toList()));
 
         if (servletContextPathBuildItem.getServletContextPath().equals("/")) {
             undertowProducer.accept(new DefaultRouteBuildItem(ut));
@@ -320,8 +317,8 @@ public class UndertowBuildStep {
             ServletConfig servletConfig,
             WebMetadataBuildItem webMetadataBuildItem) {
         String contextPath;
-        if (servletConfig.contextPath.isPresent()) {
-            contextPath = servletConfig.contextPath.get();
+        if (servletConfig.contextPath().isPresent()) {
+            contextPath = servletConfig.contextPath().get();
         } else if (webMetadataBuildItem.getWebMetaData().getDefaultContextPath() != null) {
             contextPath = webMetadataBuildItem.getWebMetaData().getDefaultContextPath();
         } else {
@@ -397,7 +394,7 @@ public class UndertowBuildStep {
             KnownPathsBuildItem knownPaths,
             LogBuildTimeConfig logBuildTimeConfig,
             Optional<LoggingDecorateBuildItem> loggingDecorateBuildItem,
-            HttpBuildTimeConfig httpBuildTimeConfig,
+            VertxHttpBuildTimeConfig httpBuildTimeConfig,
             HttpRootPathBuildItem httpRootPath,
             ServletConfig servletConfig,
             final Capabilities capabilities) throws Exception {
@@ -416,8 +413,8 @@ public class UndertowBuildStep {
         RuntimeValue<DeploymentInfo> deployment = recorder.createDeployment("test", knownPaths.knownFiles,
                 knownPaths.knownDirectories,
                 launchMode.getLaunchMode(), shutdownContext, httpRootPath.relativePath(contextPath),
-                servletConfig.defaultCharset, webMetaData.getRequestCharacterEncoding(),
-                webMetaData.getResponseCharacterEncoding(), httpBuildTimeConfig.auth.proactive,
+                servletConfig.defaultCharset(), webMetaData.getRequestCharacterEncoding(),
+                webMetaData.getResponseCharacterEncoding(), httpBuildTimeConfig.auth().proactive(),
                 webMetaData.getWelcomeFileList() != null ? webMetaData.getWelcomeFileList().getWelcomeFiles() : null,
                 hasSecurityCapability(capabilities));
 

@@ -1,9 +1,12 @@
 package io.quarkus.qute.deployment;
 
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.Objects;
 
 import io.quarkus.builder.item.MultiBuildItem;
+import io.quarkus.qute.runtime.EngineProducer;
+import io.quarkus.qute.runtime.QuteConfig;
 
 /**
  * Discovered template.
@@ -11,9 +14,29 @@ import io.quarkus.builder.item.MultiBuildItem;
  * Templates backed by files located in a template root are discovered automatically. Furthermore, extensions can produce this
  * build item in order to provide a template that is not backed by a file.
  *
+ * <h2>Warning</h2>
+ *
+ * Extensions should never <i>consume</i> this build item directly. However, they may consume the
+ * {@link EffectiveTemplatePathsBuildItem} instead.
+ *
  * @see TemplateRootBuildItem
  */
 public final class TemplatePathBuildItem extends MultiBuildItem {
+
+    /**
+     * The priority used for templates from the root application archive.
+     */
+    public static final int ROOT_ARCHIVE_PRIORITY = 30;
+
+    /**
+     * The default priority used for templates that are not backed by a file.
+     */
+    public static final int BUILD_ITEM_PRIORITY = 20;
+
+    /**
+     * The priority used for templates from non-root application archives.
+     */
+    public static final int APP_ARCHIVE_PRIORITY = 10;
 
     /**
      *
@@ -23,30 +46,23 @@ public final class TemplatePathBuildItem extends MultiBuildItem {
         return new Builder();
     }
 
-    static final String TAGS = "tags/";
-
     private final String path;
     private final String content;
     private final Path fullPath;
     private final String extensionInfo;
 
-    /**
-     *
-     * @param path
-     * @param fullPath
-     * @param content
-     * @deprecated Use the {@link #builder()} instead
-     */
-    @Deprecated
-    public TemplatePathBuildItem(String path, Path fullPath, String content) {
-        this(Objects.requireNonNull(path), Objects.requireNonNull(content), Objects.requireNonNull(fullPath), null);
-    }
+    private final int priority;
 
-    private TemplatePathBuildItem(String path, String content, Path fullPath, String extensionInfo) {
+    private final URI source;
+
+    private TemplatePathBuildItem(String path, String content, Path fullPath, String extensionInfo, int priority,
+            URI source) {
         this.path = path;
         this.content = content;
         this.fullPath = fullPath;
         this.extensionInfo = extensionInfo;
+        this.priority = priority;
+        this.source = source;
     }
 
     /**
@@ -72,6 +88,14 @@ public final class TemplatePathBuildItem extends MultiBuildItem {
 
     /**
      *
+     * @return the source, or {@code null} if not available
+     */
+    public URI getSource() {
+        return source;
+    }
+
+    /**
+     *
      * @return the content of the template
      */
     public String getContent() {
@@ -87,11 +111,20 @@ public final class TemplatePathBuildItem extends MultiBuildItem {
     }
 
     /**
+     * Templates with higher priority take precedence when duplicates are found.
+     *
+     * @return the priority
+     */
+    public int getPriority() {
+        return priority;
+    }
+
+    /**
      *
      * @return {@code true} if it represents a user tag, {@code false} otherwise
      */
     public boolean isTag() {
-        return path.startsWith(TAGS);
+        return path.startsWith(EngineProducer.TAGS);
     }
 
     /**
@@ -111,7 +144,7 @@ public final class TemplatePathBuildItem extends MultiBuildItem {
     }
 
     public String getSourceInfo() {
-        return isFileBased() ? getFullPath().toString() : extensionInfo;
+        return (isFileBased() ? getFullPath().toString() : extensionInfo) + " [" + getPriority() + "]";
     }
 
     public static class Builder {
@@ -119,7 +152,9 @@ public final class TemplatePathBuildItem extends MultiBuildItem {
         private String path;
         private String content;
         private Path fullPath;
+        private URI source;
         private String extensionInfo;
+        private int priority = BUILD_ITEM_PRIORITY;
 
         /**
          * Set the path relative to the template root. The {@code /} is used as a path separator.
@@ -158,6 +193,17 @@ public final class TemplatePathBuildItem extends MultiBuildItem {
         }
 
         /**
+         * Set the source path of the template.
+         *
+         * @param source
+         * @return self
+         */
+        public Builder source(URI source) {
+            this.source = source;
+            return this;
+        }
+
+        /**
          * Set the extension info for templates that are not backed by a file.
          *
          * @param info
@@ -168,11 +214,23 @@ public final class TemplatePathBuildItem extends MultiBuildItem {
             return this;
         }
 
+        /**
+         * Set the priority of the template.
+         *
+         * @param priority
+         * @return self
+         * @see QuteConfig#duplicitTemplatesStrategy()
+         */
+        public Builder priority(int priority) {
+            this.priority = priority;
+            return this;
+        }
+
         public TemplatePathBuildItem build() {
             if (fullPath == null && extensionInfo == null) {
                 throw new IllegalStateException("Templates that are not backed by a file must provide extension info");
             }
-            return new TemplatePathBuildItem(path, content, fullPath, extensionInfo);
+            return new TemplatePathBuildItem(path, content, fullPath, extensionInfo, priority, source);
         }
 
     }

@@ -17,6 +17,7 @@ import io.quarkus.deployment.dev.testing.TestConfig;
 import io.quarkus.test.common.ArtifactLauncher;
 import io.quarkus.test.common.DefaultNativeImageLauncher;
 import io.quarkus.test.common.NativeImageLauncher;
+import io.quarkus.test.common.TestConfigUtil;
 import io.smallrye.config.SmallRyeConfig;
 
 public class NativeImageLauncherProvider implements ArtifactLauncherProvider {
@@ -44,8 +45,8 @@ public class NativeImageLauncherProvider implements ArtifactLauncherProvider {
                     config.getValue("quarkus.http.test-port", OptionalInt.class).orElse(DEFAULT_PORT),
                     config.getValue("quarkus.http.test-ssl-port", OptionalInt.class).orElse(DEFAULT_HTTPS_PORT),
                     testConfig.waitTime(),
-                    testConfig.nativeImageProfile(),
-                    testConfig.argLine().orElse(List.of()),
+                    testConfig.integrationTestProfile(),
+                    TestConfigUtil.argLineValues(testConfig.argLine().orElse("")),
                     testConfig.env(),
                     context.devServicesLaunchResult(),
                     System.getProperty("native.image.path"),

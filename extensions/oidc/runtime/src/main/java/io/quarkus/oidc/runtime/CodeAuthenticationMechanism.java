@@ -12,6 +12,7 @@ import java.util.Base64.Encoder;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -22,13 +23,13 @@ import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.jboss.logging.Logger;
 import org.jose4j.jwt.consumer.ErrorCodes;
 import org.jose4j.jwt.consumer.InvalidJwtException;
-import org.jose4j.lang.JoseException;
+import org.jose4j.lang.UnresolvableKeyException;
 
 import io.netty.handler.codec.http.HttpResponseStatus;
-import io.quarkus.logging.Log;
 import io.quarkus.oidc.AuthorizationCodeTokens;
 import io.quarkus.oidc.IdTokenCredential;
 import io.quarkus.oidc.JavaScriptRequestChecker;
+import io.quarkus.oidc.LogoutUtils;
 import io.quarkus.oidc.OidcRedirectFilter;
 import io.quarkus.oidc.OidcRedirectFilter.OidcRedirectContext;
 import io.quarkus.oidc.OidcTenantConfig;
@@ -39,7 +40,9 @@ import io.quarkus.oidc.common.runtime.AbstractJsonObject;
 import io.quarkus.oidc.common.runtime.OidcCommonUtils;
 import io.quarkus.oidc.common.runtime.OidcConstants;
 import io.quarkus.oidc.runtime.OidcTenantConfig.Authentication;
+import io.quarkus.oidc.runtime.OidcTenantConfig.Authentication.CacheControl;
 import io.quarkus.oidc.runtime.OidcTenantConfig.Authentication.ResponseMode;
+import io.quarkus.oidc.runtime.OidcTenantConfig.Logout.LogoutMode;
 import io.quarkus.security.AuthenticationCompletionException;
 import io.quarkus.security.AuthenticationFailedException;
 import io.quarkus.security.AuthenticationRedirectException;
@@ -48,7 +51,6 @@ import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.spi.runtime.BlockingSecurityExecutor;
 import io.quarkus.security.spi.runtime.SecurityEventHelper;
 import io.quarkus.vertx.http.runtime.security.ChallengeData;
-import io.smallrye.jwt.algorithm.KeyEncryptionAlgorithm;
 import io.smallrye.jwt.build.Jwt;
 import io.smallrye.jwt.build.JwtClaimsBuilder;
 import io.smallrye.jwt.build.JwtSignatureBuilder;
@@ -56,9 +58,7 @@ import io.smallrye.jwt.util.KeyUtils;
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.MultiMap;
 import io.vertx.core.http.Cookie;
-import io.vertx.core.http.CookieSameSite;
 import io.vertx.core.http.HttpHeaders;
-import io.vertx.core.http.impl.ServerCookie;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 
@@ -337,13 +337,15 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
         context.put(TenantConfigContext.class.getName(), configContext);
         return resolver.getTokenStateManager().getTokens(context, configContext.oidcConfig(),
                 sessionCookie, getTokenStateRequestContext)
-                .onFailure(AuthenticationCompletionException.class)
+                .onFailure(Throwable.class)
                 .recoverWithUni(
                         new Function<Throwable, Uni<? extends AuthorizationCodeTokens>>() {
                             @Override
                             public Uni<AuthorizationCodeTokens> apply(Throwable t) {
+                                Throwable failure = t instanceof AuthenticationFailedException ? t
+                                        : new AuthenticationFailedException(t);
                                 return removeSessionCookie(context, configContext.oidcConfig())
-                                        .replaceWith(Uni.createFrom().failure(t));
+                                        .replaceWith(Uni.createFrom().failure(failure));
                             }
                         })
                 .chain(new Function<AuthorizationCodeTokens, Uni<? extends SecurityIdentity>>() {
@@ -352,7 +354,7 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                         context.put(OidcConstants.ACCESS_TOKEN_VALUE, session.getAccessToken());
                         context.put(AuthorizationCodeTokens.class.getName(), session);
                         // Default token state manager may have encrypted ID token when it was saved in a cookie
-                        final String currentIdToken = decryptIdTokenIfEncryptedByProvider(configContext, session.getIdToken());
+                        final String currentIdToken = decryptIdToken(configContext, session.getIdToken());
                         return authenticate(identityProviderManager, context,
                                 new IdTokenCredential(currentIdToken,
                                         isInternalIdToken(currentIdToken, configContext)))
@@ -366,7 +368,8 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                                         }
                                         if (t instanceof LogoutException) {
                                             LOG.debugf("User has been logged out, authentication challenge is required");
-                                            return Uni.createFrom().failure(new AuthenticationFailedException(t));
+                                            return Uni.createFrom()
+                                                    .failure(new AuthenticationFailedException(t, tokenMap(currentIdToken)));
                                         }
 
                                         if (!(t instanceof TokenAutoRefreshException)) {
@@ -375,14 +378,31 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                                                             .hasErrorCode(ErrorCodes.EXPIRED);
 
                                             if (!expired) {
-                                                String error = logAuthenticationError(context, t);
+
+                                                Throwable failure = null;
+
+                                                boolean unresolvedKey = t.getCause() instanceof InvalidJwtException
+                                                        && (t.getCause().getCause() instanceof UnresolvableKeyException);
+                                                if (unresolvedKey
+                                                        && !configContext.oidcConfig().authentication().failOnUnresolvedKid()
+                                                        && OidcUtils.isJwtTokenExpired(currentIdToken)) {
+                                                    // It can happen in multi-tab applications where a user login causes a JWK set refresh
+                                                    // due to the key rotation, discarding old keys, and the old tab still keeps the session
+                                                    // whose signature can only be verified with the now discarded key.
+                                                    LOG.debugf(
+                                                            "Session can not be verified due to an unresolved key exception, reauthentication is required");
+                                                    // Redirect the user to the OIDC provider to re-authenticate
+                                                    failure = new AuthenticationFailedException(tokenMap(currentIdToken));
+                                                } else {
+                                                    // Failures such as the signature verification failures require 401 status
+                                                    String error = logAuthenticationError(context, t);
+                                                    failure = t.getCause() instanceof AuthenticationCompletionException
+                                                            ? t.getCause()
+                                                            : new AuthenticationCompletionException(error, t.getCause());
+                                                }
+
                                                 return removeSessionCookie(context, configContext.oidcConfig())
-                                                        .replaceWith(Uni.createFrom()
-                                                                .failure(t
-                                                                        .getCause() instanceof AuthenticationCompletionException
-                                                                                ? t.getCause()
-                                                                                : new AuthenticationCompletionException(
-                                                                                        error, t.getCause())));
+                                                        .replaceWith(Uni.createFrom().failure(failure));
                                             }
                                             // Token has expired, try to refresh
                                             if (isRpInitiatedLogout(context, configContext)) {
@@ -483,22 +503,6 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
         return removeSessionCookie(context, configContext.oidcConfig())
                 .chain(() -> Uni.createFrom().failure(new AuthenticationRedirectException(
                         filterRedirect(context, configContext, sessionExpiredUri, Redirect.Location.SESSION_EXPIRED_PAGE))));
-    }
-
-    private static String decryptIdTokenIfEncryptedByProvider(TenantConfigContext resolvedContext, String token) {
-        if ((resolvedContext.provider().tokenDecryptionKey != null
-                || resolvedContext.provider().client.getClientJwtKey() != null)
-                && OidcUtils.isEncryptedToken(token)) {
-            try {
-                return OidcUtils.decryptString(token,
-                        resolvedContext.provider().tokenDecryptionKey != null ? resolvedContext.provider().tokenDecryptionKey
-                                : resolvedContext.provider().client.getClientJwtKey(),
-                        KeyEncryptionAlgorithm.RSA_OAEP);
-            } catch (JoseException ex) {
-                Log.debugf("Failed to decrypt a token: %s, a token introspection will be attempted instead", ex.getMessage());
-            }
-        }
-        return token;
     }
 
     private boolean isLogout(RoutingContext context, TenantConfigContext configContext, SecurityIdentity identity) {
@@ -843,10 +847,15 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                             if (isIdTokenRequired(configContext)) {
                                 LOG.errorf("ID token is not available in the authorization code grant response");
                                 return Uni.createFrom().failure(new AuthenticationCompletionException());
-                            } else {
+                            } else if (tokens.getAccessToken() != null) {
                                 tokens.setIdToken(generateInternalIdToken(configContext, null, null,
                                         tokens.getAccessTokenExpiresIn()));
                                 internalIdToken = true;
+                            } else {
+                                LOG.errorf(
+                                        "Neither ID token nor access tokens are available in the authorization code grant response."
+                                                + " Please check logs for more details, enable debug log level if no details are visible.");
+                                return Uni.createFrom().failure(new AuthenticationCompletionException());
                             }
                         } else {
                             if (!prepareNonceForVerification(context, configContext.oidcConfig(), stateBean)) {
@@ -860,7 +869,7 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                         context.put(AuthorizationCodeTokens.class.getName(), tokens);
 
                         // Default token state manager may have encrypted ID token
-                        final String idToken = decryptIdTokenIfEncryptedByProvider(configContext, tokens.getIdToken());
+                        final String idToken = decryptIdToken(configContext, tokens.getIdToken());
 
                         LOG.debug("Authorization code has been exchanged, verifying ID token");
                         return authenticate(identityProviderManager, context,
@@ -900,7 +909,7 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                                                                 configContext.oidcConfig()));
                                             }
                                             if (finalUserQuery != null) {
-                                                finalUriWithoutQuery.append(!removeRedirectParams ? "" : "?");
+                                                finalUriWithoutQuery.append(!removeRedirectParams ? "&" : "?");
                                                 finalUriWithoutQuery.append(finalUserQuery);
                                             }
                                             String finalRedirectUri = finalUriWithoutQuery.toString();
@@ -983,10 +992,10 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
             JsonObject json = null;
 
             try {
-                json = OidcUtils.decryptJson(parsedStateCookieValue[1], configContext.getStateEncryptionKey());
+                json = OidcUtils.decryptJson(parsedStateCookieValue[1], configContext.getStateCookieEncryptionKey());
             } catch (Exception ex) {
-                LOG.errorf("State cookie value can not be decrypted for the %s tenant",
-                        configContext.oidcConfig().tenantId().get());
+                LOG.errorf("State cookie value for the %s tenant can not be decrypted: %s",
+                        configContext.oidcConfig().tenantId().get(), ex.getMessage());
                 throw new AuthenticationCompletionException(ex);
             }
             bean.setRestorePath(json.getString(OidcUtils.STATE_COOKIE_RESTORE_PATH));
@@ -1019,10 +1028,10 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
         } else if (accessTokenExpiresInSecs != null) {
             builder.expiresIn(accessTokenExpiresInSecs);
         }
-        builder.audience(context.oidcConfig().getClientId().get());
+        builder.audience(context.oidcConfig().clientId().get());
 
         JwtSignatureBuilder sigBuilder = builder.jws().header(INTERNAL_IDTOKEN_HEADER, true);
-        String clientOrJwtSecret = OidcCommonUtils.getClientOrJwtSecret(context.oidcConfig().credentials);
+        String clientOrJwtSecret = OidcCommonUtils.getClientOrJwtSecret(context.oidcConfig().credentials());
         if (clientOrJwtSecret != null) {
             LOG.debug("Signing internal ID token with a configured client secret");
             return sigBuilder.sign(KeyUtils.createSecretKeyFromSecret(clientOrJwtSecret));
@@ -1033,7 +1042,7 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                             .getEncoded()));
         } else {
             LOG.debug("Signing internal ID token with a generated secret key");
-            return sigBuilder.sign(context.getInternalIdTokenSecretKey());
+            return sigBuilder.sign(context.getInternalIdTokenSigningKey());
         }
     }
 
@@ -1095,24 +1104,22 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                                                             + " CDI bean with the alternative priority set to 1 and save the tokens on the server.",
                                                     configContext.oidcConfig().tenantId().get(),
                                                     OidcUtils.MAX_COOKIE_VALUE_LENGTH);
-                                            for (int sessionIndex = 1,
-                                                    currentPos = 0; currentPos < cookieValue.length(); sessionIndex++) {
-                                                int nextPos = currentPos + OidcUtils.MAX_COOKIE_VALUE_LENGTH;
-                                                int nextValueUpperPos = nextPos < cookieValue.length() ? nextPos
-                                                        : cookieValue.length();
-                                                String nextValue = cookieValue.substring(currentPos, nextValueUpperPos);
-                                                // q_session_session_chunk_1, etc
-                                                String nextName = sessionName + OidcUtils.SESSION_COOKIE_CHUNK + sessionIndex;
-                                                LOG.debugf("Creating the %s session cookie chunk, size: %d", nextName,
-                                                        nextValue.length());
-                                                createCookie(context, configContext.oidcConfig(), nextName, nextValue,
-                                                        sessionMaxAge, true);
-                                                currentPos = nextPos;
-                                            }
+                                            OidcUtils.createChunkedCookie(context, configContext.oidcConfig(), sessionName,
+                                                    cookieValue, sessionMaxAge);
                                         } else {
-                                            createCookie(context, configContext.oidcConfig(), sessionName, cookieValue,
-                                                    sessionMaxAge, true);
+                                            OidcUtils.createSessionCookie(context, configContext.oidcConfig(), sessionName,
+                                                    cookieValue, sessionMaxAge);
                                         }
+
+                                        Set<CacheControl> cacheControl = configContext.oidcConfig().authentication()
+                                                .cacheControl()
+                                                .orElse(Set.of());
+                                        if (!cacheControl.isEmpty()) {
+                                            // Only 'no-store' is currently supported
+                                            context.response().putHeader(HttpHeaders.CACHE_CONTROL,
+                                                    cacheControl.iterator().next().directive());
+                                        }
+
                                         fireEvent(SecurityEvent.Type.OIDC_LOGIN, securityIdentity);
                                         return null;
                                     }
@@ -1133,6 +1140,19 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
     private void fireEvent(SecurityEvent.Type eventType, Map<String, Object> properties) {
         if (resolver.isSecurityEventObserved()) {
             SecurityEventHelper.fire(resolver.getSecurityEvent(), new SecurityEvent(eventType, properties));
+        }
+    }
+
+    private static String decryptIdToken(TenantConfigContext configContext, String idToken) {
+        if (configContext.oidcConfig().token().decryptIdToken().isPresent() &&
+                !configContext.oidcConfig().token().decryptIdToken().get()) {
+            return idToken;
+        }
+        if (configContext.oidcConfig().token().decryptIdToken().orElse(false)
+                || configContext.oidcConfig().token().decryptionKeyLocation().isPresent()) {
+            return OidcUtils.decryptToken(configContext, idToken);
+        } else {
+            return idToken;
         }
     }
 
@@ -1188,7 +1208,7 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
             cookieValue += (COOKIE_DELIM + encodeExtraStateValue(extraStateValue, configContext));
         }
         String stateCookieNameSuffix = configContext.oidcConfig().authentication().allowMultipleCodeFlows() ? "_" + uuid : "";
-        createCookie(context, configContext.oidcConfig(),
+        OidcUtils.createCookie(context, configContext.oidcConfig(),
                 getStateCookieName(configContext.oidcConfig()) + stateCookieNameSuffix, cookieValue,
                 configContext.oidcConfig().authentication().stateCookieAge().toSeconds());
         return uuid;
@@ -1212,9 +1232,10 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                 json.put(OidcUtils.STATE_COOKIE_RESTORE_PATH, extraStateValue.getRestorePath());
             }
             try {
-                return OidcUtils.encryptJson(json, configContext.getStateEncryptionKey());
+                return OidcUtils.encryptJson(json, configContext.getStateCookieEncryptionKey());
             } catch (Exception ex) {
-                LOG.errorf("State containing the code verifier can not be encrypted: %s", ex.getMessage());
+                LOG.errorf("State cookie value for the %s tenant can not be encrypted: %s",
+                        configContext.oidcConfig().tenantId().get(), ex.getMessage());
                 throw new AuthenticationCompletionException(ex);
             }
         } else {
@@ -1227,24 +1248,9 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
 
     private String generatePostLogoutState(RoutingContext context, TenantConfigContext configContext) {
         OidcUtils.removeCookie(context, configContext.oidcConfig(), getPostLogoutCookieName(configContext.oidcConfig()));
-        return createCookie(context, configContext.oidcConfig(), getPostLogoutCookieName(configContext.oidcConfig()),
+        return OidcUtils.createCookie(context, configContext.oidcConfig(), getPostLogoutCookieName(configContext.oidcConfig()),
                 UUID.randomUUID().toString(),
                 60 * 30).getValue();
-    }
-
-    static ServerCookie createCookie(RoutingContext context, OidcTenantConfig oidcConfig,
-            String name, String value, long maxAge) {
-        return createCookie(context, oidcConfig, name, value, maxAge, false);
-    }
-
-    static ServerCookie createCookie(RoutingContext context, OidcTenantConfig oidcConfig,
-            String name, String value, long maxAge, boolean sessionCookie) {
-        ServerCookie cookie = OidcUtils.createCookie(context, oidcConfig, name, value, maxAge);
-        if (sessionCookie) {
-            cookie.setSameSite(CookieSameSite.valueOf(oidcConfig.authentication().cookieSameSite().name()));
-        }
-        context.response().addCookie(cookie);
-        return cookie;
     }
 
     private String buildUri(RoutingContext context, boolean forceHttps, String path) {
@@ -1307,21 +1313,22 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                                     LOG.debug("Using the current SecurityIdentity since the ID token is still valid");
                                     return Uni.createFrom().item(fallback);
                                 } else {
-                                    return Uni.createFrom().failure(new AuthenticationFailedException(t));
+                                    return Uni.createFrom()
+                                            .failure(new AuthenticationFailedException(t, tokenMap(currentIdToken)));
                                 }
                             } else if (configContext.oidcConfig().authentication().sessionExpiredPath().isPresent()) {
                                 // Token has expired but the refresh does not work, check if the session expired page is available
                                 return redirectToSessionExpiredPage(context, configContext);
                             }
                             // Redirect to the OIDC provider to reauthenticate
-                            return Uni.createFrom().failure(new AuthenticationFailedException(t));
+                            return Uni.createFrom().failure(new AuthenticationFailedException(t, tokenMap(currentIdToken)));
                         } else {
                             context.put(OidcConstants.ACCESS_TOKEN_VALUE, tokens.getAccessToken());
                             context.put(AuthorizationCodeTokens.class.getName(), tokens);
                             context.put(REFRESH_TOKEN_GRANT_RESPONSE, Boolean.TRUE);
 
                             // Default token state manager may have encrypted the refreshed ID token
-                            final String idToken = decryptIdTokenIfEncryptedByProvider(configContext, tokens.getIdToken());
+                            final String idToken = decryptIdToken(configContext, tokens.getIdToken());
 
                             LOG.debug("Verifying the refreshed ID token");
                             return authenticate(identityProviderManager, context,
@@ -1348,7 +1355,7 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                                         @Override
                                         public Throwable apply(Throwable tInner) {
                                             LOG.debugf("Verifying the refreshed ID token failed %s", errorMessage(tInner));
-                                            return new AuthenticationFailedException(tInner);
+                                            return new AuthenticationFailedException(tInner, tokenMap(currentIdToken));
                                         }
                                     });
                         }
@@ -1372,7 +1379,7 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                                 if (!autoRefresh) {
                                     LOG.debugf(
                                             "ID token is not returned in the refresh token grant response, re-authentication is required");
-                                    throw new AuthenticationFailedException();
+                                    throw new AuthenticationFailedException(tokenMap(currentIdToken));
                                 } else {
                                     // Auto-refresh is triggered while current ID token is still valid, continue using it.
                                     tokens.setIdToken(currentIdToken);
@@ -1414,8 +1421,10 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
 
     private String buildLogoutRedirectUri(TenantConfigContext configContext, String idToken, RoutingContext context) {
         String logoutPath = configContext.provider().getMetadata().getEndSessionUri();
+        Map<String, String> extraParams = configContext.oidcConfig().logout().extraParams();
         StringBuilder logoutUri = new StringBuilder(logoutPath);
-        if (idToken != null || configContext.oidcConfig().logout().postLogoutPath().isPresent()) {
+        if (idToken != null || configContext.oidcConfig().logout().postLogoutPath().isPresent()
+                || (extraParams != null && !extraParams.isEmpty())) {
             logoutUri.append("?");
         }
         if (idToken != null) {
@@ -1456,10 +1465,29 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
                 .map(new Function<Void, Void>() {
                     @Override
                     public Void apply(Void t) {
-                        String logoutUri = buildLogoutRedirectUri(configContext, idToken, context);
-                        LOG.debugf("Logout uri: %s", logoutUri);
-                        throw new AuthenticationRedirectException(
-                                filterRedirect(context, configContext, logoutUri, Redirect.Location.OIDC_LOGOUT));
+                        if (configContext.oidcConfig().logout().logoutMode() == LogoutMode.QUERY) {
+                            String logoutUri = buildLogoutRedirectUri(configContext, idToken, context);
+                            LOG.debugf("Logout uri: %s", logoutUri);
+                            throw new AuthenticationRedirectException(
+                                    filterRedirect(context, configContext, logoutUri, Redirect.Location.OIDC_LOGOUT));
+                        } else {
+                            String postLogoutUrl = null;
+                            String postLogoutState = null;
+                            if (configContext.oidcConfig().logout().postLogoutPath().isPresent()) {
+                                postLogoutUrl = buildUri(context, isForceHttps(configContext.oidcConfig()),
+                                        configContext.oidcConfig().logout().postLogoutPath().get());
+                                postLogoutState = generatePostLogoutState(context, configContext);
+                            }
+
+                            String logoutUrl = filterRedirect(context, configContext,
+                                    configContext.provider().getMetadata().getEndSessionUri(), Redirect.Location.OIDC_LOGOUT);
+                            // Target URL is embedded in the form post payload
+                            String formPostLogout = LogoutUtils.createFormPostLogout(configContext.oidcConfig().logout(),
+                                    logoutUrl, idToken,
+                                    postLogoutUrl, postLogoutState);
+                            LOG.debugf("Initiating form post logout");
+                            throw new AuthenticationRedirectException(200, formPostLogout);
+                        }
                     }
                 });
     }
@@ -1492,11 +1520,13 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
             if (isRpInitiatedLogout(context, configContext)) {
                 LOG.debug("Performing an RP initiated logout");
                 fireEvent(SecurityEvent.Type.OIDC_LOGOUT_RP_INITIATED, identity);
+                OidcUtils.setClearSiteData(context, configContext.oidcConfig());
                 return buildLogoutRedirectUriUni(context, configContext, idToken);
             }
             if (isBackChannelLogoutPendingAndValid(configContext, identity)
                     || isFrontChannelLogoutValid(context, configContext,
                             identity)) {
+                OidcUtils.setClearSiteData(context, configContext.oidcConfig());
                 return removeSessionCookie(context, configContext.oidcConfig())
                         .map(new Function<Void, Void>() {
                             @Override
@@ -1508,5 +1538,10 @@ public class CodeAuthenticationMechanism extends AbstractOidcAuthenticationMecha
             }
             return VOID_UNI;
         }
+
+    }
+
+    private static Map<String, Object> tokenMap(String token) {
+        return Map.of(OidcConstants.ID_TOKEN_VALUE, token);
     }
 }

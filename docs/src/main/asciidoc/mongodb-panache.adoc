@@ -205,6 +205,11 @@ List<Person> allPersons = Person.listAll();
 ObjectId personId = new ObjectId(idAsString);
 person = Person.findById(personId);
 
+// finding a specific persons by their ID
+ObjectId personId1 = new ObjectId(id1AsString);
+ObjectId personId2 = new ObjectId(id2AsString);
+List<Person> person = Person.findByIds(List.of(personId1, personId2);
+
 // finding a specific person by ID via an Optional
 Optional<Person> optional = Person.findByIdOptional(personId);
 person = optional.orElseThrow(() -> new NotFoundException());
@@ -242,7 +247,7 @@ List<String> namesButEmmanuels = persons
     .collect(Collectors.toList());
 ----
 
-NOTE: A `persistOrUpdate()` method exist that persist or update an entity in the database, it uses the __upsert__ capability of MongoDB to do it in a single query.
+NOTE: A `persistOrUpdate()` method persists or updates an entity in the database, it uses the __upsert__ capability of MongoDB to do it in a single query.
 
 === Adding entity methods
 
@@ -373,6 +378,11 @@ List<Person> allPersons = personRepository.listAll();
 ObjectId personId = new ObjectId(idAsString);
 person = personRepository.findById(personId);
 
+// finding a specific persons by their ID
+ObjectId personId1 = new ObjectId(id1AsString);
+ObjectId personId2 = new ObjectId(id2AsString);
+List<Person> person = personRepository.findByIds(List.of(personId1, personId2);
+
 // finding a specific person by ID via an Optional
 Optional<Person> optional = personRepository.findByIdOptional(personId);
 person = optional.orElseThrow(() -> new NotFoundException());
@@ -410,7 +420,7 @@ List<String> namesButEmmanuels = persons
     .collect(Collectors.toList());
 ----
 
-NOTE: A `persistOrUpdate()` method exist that persist or update an entity in the database, it uses the __upsert__ capability of MongoDB to do it in a single query.
+NOTE: A `persistOrUpdate()` method persists or updates an entity in the database, it uses the __upsert__ capability of MongoDB to do it in a single query.
 
 NOTE: The rest of the documentation show usages based on the active record pattern only,
 but keep in mind that they can be performed with the repository pattern as well.
@@ -861,6 +871,12 @@ data class Person (
 ): PanacheMongoEntity()
 ----
 
+[IMPORTANT]
+====
+Unlike the @BsonCreator approach, `val` cannot be used here. Properties must be defined as `var`, otherwise, the system creates an object with
+`null` values for every property.
+====
+
 [[reactive]]
 == Reactive Entities and Repositories
 
@@ -928,6 +944,11 @@ Uni<List<ReactivePerson>> allPersons = ReactivePerson.listAll();
 // here we build a new ObjectId, but you can also retrieve it from the existing entity after being persisted
 ObjectId personId = new ObjectId(idAsString);
 Uni<ReactivePerson> personById = ReactivePerson.findById(personId);
+
+// finding a specific persons by their ID
+ObjectId personId1 = new ObjectId(id1AsString);
+ObjectId personId2 = new ObjectId(id2AsString);
+Uni<List<Person>> person = ReactivePerson.findByIds(List.of(personId1, personId2);
 
 // finding a specific person by ID via an Optional
 Uni<Optional<ReactivePerson>> optional = ReactivePerson.findByIdOptional(personId);

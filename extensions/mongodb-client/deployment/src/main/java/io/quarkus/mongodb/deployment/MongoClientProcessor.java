@@ -73,7 +73,6 @@ import io.quarkus.mongodb.runtime.MongoClientSupport;
 import io.quarkus.mongodb.runtime.MongoClients;
 import io.quarkus.mongodb.runtime.MongoReactiveContextProvider;
 import io.quarkus.mongodb.runtime.MongoServiceBindingConverter;
-import io.quarkus.mongodb.runtime.MongodbConfig;
 import io.quarkus.mongodb.runtime.dns.MongoDnsClient;
 import io.quarkus.mongodb.runtime.dns.MongoDnsClientProvider;
 import io.quarkus.mongodb.tracing.MongoTracingCommandListener;
@@ -117,7 +116,7 @@ public class MongoClientProcessor {
 
     @BuildStep
     AdditionalIndexedClassesBuildItem includeMongoCommandListener(MongoClientBuildTimeConfig buildTimeConfig) {
-        if (buildTimeConfig.tracingEnabled) {
+        if (buildTimeConfig.tracingEnabled()) {
             return new AdditionalIndexedClassesBuildItem(
                     MongoTracingCommandListener.class.getName(),
                     MongoReactiveContextProvider.class.getName());
@@ -130,7 +129,7 @@ public class MongoClientProcessor {
             BuildProducer<AdditionalIndexedClassesBuildItem> additionalIndexedClasses,
             MongoClientBuildTimeConfig buildTimeConfig,
             Optional<MetricsCapabilityBuildItem> metricsCapability) {
-        if (!buildTimeConfig.metricsEnabled) {
+        if (!buildTimeConfig.metricsEnabled()) {
             return;
         }
         boolean withMicrometer = metricsCapability.map(cap -> cap.metricsSupported(MetricsFactory.MICROMETER))
@@ -259,7 +258,7 @@ public class MongoClientProcessor {
 
         // Construction of MongoClient isn't compatible with the MetricsFactoryConsumer pattern.
         // Use a supplier to defer construction of the pool listener for the supported metrics system
-        if (buildTimeConfig.metricsEnabled && metricsCapability.isPresent()) {
+        if (buildTimeConfig.metricsEnabled() && metricsCapability.isPresent()) {
             if (metricsCapability.get().metricsSupported(MetricsFactory.MICROMETER)) {
                 return new MongoConnectionPoolListenerBuildItem(recorder.createMicrometerConnectionPoolListener());
             } else {
@@ -338,7 +337,6 @@ public class MongoClientProcessor {
             BeanRegistrationPhaseBuildItem registrationPhase,
             List<MongoClientNameBuildItem> mongoClientNames,
             MongoClientBuildTimeConfig mongoClientBuildTimeConfig,
-            MongodbConfig mongodbConfig,
             List<MongoUnremovableClientsBuildItem> mongoUnremovableClientsBuildItem,
             BuildProducer<SyntheticBeanBuildItem> syntheticBeanBuildItemBuildProducer,
             VertxBuildItem vertxBuildItem) {
@@ -347,7 +345,7 @@ public class MongoClientProcessor {
 
         boolean createDefaultBlockingMongoClient = false;
         boolean createDefaultReactiveMongoClient = false;
-        if (makeUnremovable || mongoClientBuildTimeConfig.forceDefaultClients) {
+        if (makeUnremovable || mongoClientBuildTimeConfig.forceDefaultClients()) {
             // all clients are expected to exist in this case
             createDefaultBlockingMongoClient = true;
             createDefaultReactiveMongoClient = true;
@@ -368,31 +366,31 @@ public class MongoClientProcessor {
         }
 
         if (createDefaultBlockingMongoClient) {
-            syntheticBeanBuildItemBuildProducer.produce(createBlockingSyntheticBean(recorder, mongodbConfig,
-                    makeUnremovable || mongoClientBuildTimeConfig.forceDefaultClients,
+            syntheticBeanBuildItemBuildProducer.produce(createBlockingSyntheticBean(recorder,
+                    makeUnremovable || mongoClientBuildTimeConfig.forceDefaultClients(),
                     MongoClientBeanUtil.DEFAULT_MONGOCLIENT_NAME, false));
         }
         if (createDefaultReactiveMongoClient) {
-            syntheticBeanBuildItemBuildProducer.produce(createReactiveSyntheticBean(recorder, mongodbConfig,
-                    makeUnremovable || mongoClientBuildTimeConfig.forceDefaultClients,
+            syntheticBeanBuildItemBuildProducer.produce(createReactiveSyntheticBean(recorder,
+                    makeUnremovable || mongoClientBuildTimeConfig.forceDefaultClients(),
                     MongoClientBeanUtil.DEFAULT_MONGOCLIENT_NAME, false));
         }
 
         for (MongoClientNameBuildItem mongoClientName : mongoClientNames) {
             // named blocking client
             syntheticBeanBuildItemBuildProducer
-                    .produce(createBlockingSyntheticBean(recorder, mongodbConfig, makeUnremovable, mongoClientName.getName(),
+                    .produce(createBlockingSyntheticBean(recorder, makeUnremovable, mongoClientName.getName(),
                             mongoClientName.isAddQualifier()));
             // named reactive client
             syntheticBeanBuildItemBuildProducer
-                    .produce(createReactiveSyntheticBean(recorder, mongodbConfig, makeUnremovable, mongoClientName.getName(),
+                    .produce(createReactiveSyntheticBean(recorder, makeUnremovable, mongoClientName.getName(),
                             mongoClientName.isAddQualifier()));
         }
 
-        recorder.performInitialization(mongodbConfig, vertxBuildItem.getVertx());
+        recorder.performInitialization(vertxBuildItem.getVertx());
     }
 
-    private SyntheticBeanBuildItem createBlockingSyntheticBean(MongoClientRecorder recorder, MongodbConfig mongodbConfig,
+    private SyntheticBeanBuildItem createBlockingSyntheticBean(MongoClientRecorder recorder,
             boolean makeUnremovable, String clientName, boolean addMongoClientQualifier) {
 
         SyntheticBeanBuildItem.ExtendedBeanConfigurator configurator = SyntheticBeanBuildItem
@@ -400,13 +398,13 @@ public class MongoClientProcessor {
                 .scope(ApplicationScoped.class)
                 // pass the runtime config into the recorder to ensure that the DataSource related beans
                 // are created after runtime configuration has been set up
-                .supplier(recorder.mongoClientSupplier(clientName, mongodbConfig))
+                .supplier(recorder.mongoClientSupplier(clientName))
                 .setRuntimeInit();
 
         return applyCommonBeanConfig(makeUnremovable, clientName, addMongoClientQualifier, configurator, false);
     }
 
-    private SyntheticBeanBuildItem createReactiveSyntheticBean(MongoClientRecorder recorder, MongodbConfig mongodbConfig,
+    private SyntheticBeanBuildItem createReactiveSyntheticBean(MongoClientRecorder recorder,
             boolean makeUnremovable, String clientName, boolean addMongoClientQualifier) {
 
         SyntheticBeanBuildItem.ExtendedBeanConfigurator configurator = SyntheticBeanBuildItem
@@ -414,7 +412,7 @@ public class MongoClientProcessor {
                 .scope(ApplicationScoped.class)
                 // pass the runtime config into the recorder to ensure that the DataSource related beans
                 // are created after runtime configuration has been set up
-                .supplier(recorder.reactiveMongoClientSupplier(clientName, mongodbConfig))
+                .supplier(recorder.reactiveMongoClientSupplier(clientName))
                 .setRuntimeInit();
 
         return applyCommonBeanConfig(makeUnremovable, clientName, addMongoClientQualifier, configurator, true);
@@ -471,7 +469,7 @@ public class MongoClientProcessor {
     @BuildStep
     HealthBuildItem addHealthCheck(MongoClientBuildTimeConfig buildTimeConfig) {
         return new HealthBuildItem("io.quarkus.mongodb.health.MongoHealthCheck",
-                buildTimeConfig.healthEnabled);
+                buildTimeConfig.healthEnabled());
     }
 
     @BuildStep

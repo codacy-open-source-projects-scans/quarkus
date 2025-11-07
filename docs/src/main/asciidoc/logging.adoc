@@ -12,6 +12,8 @@ include::_attributes.adoc[]
 
 Read about the use of logging API in {project-name}, configuring logging output, and using logging adapters to unify the output from other logging APIs.
 
+include::{includes}/observability-include.adoc[]
+
 Quarkus uses the JBoss Log Manager logging backend for publishing application and framework logs.
 Quarkus supports the JBoss Logging API and multiple other logging APIs, seamlessly integrated with JBoss Log Manager.
 You can use any of the <<logging-apis,following APIs>>:
@@ -141,7 +143,13 @@ For extension development, use `org.jboss.logging.Logger.getLogger(String)` inst
 
 The injection of a configured `org.jboss.logging.Logger` logger instance with the `@Inject` annotation is another alternative to adding an application logger, but is applicable only to CDI beans.
 
-You can use `@Inject Logger log`, where the logger gets named after the class you inject it to, or `@Inject @LoggerName("...") Logger log`, where the logger will receive the specified name.
+You can use `@Inject Logger log`, where the logger gets named after the class you inject it to, or `@LoggerName("...") Logger log`, where the logger receives the specified name.
+
+[NOTE]
+====
+`@Inject` is not required if you already annotated your `Logger` with `@LoggerName("...")`.
+====
+
 Once injected, you can use the `log` object to invoke logging methods.
 
 .An example of two different types of logger injection:
@@ -169,9 +177,11 @@ class SimpleBean {
 <1> The fully qualified class name (FQCN) of the declaring class is used as a logger name, for example, `org.jboss.logging.Logger.getLogger(SimpleBean.class)` will be used.
 <2> In this case, the name _foo_ is used as a logger name, for example, `org.jboss.logging.Logger.getLogger("foo")` will be used.
 
-NOTE: The logger instances are cached internally.
+[NOTE]
+====
+The logger instances are cached internally.
 Therefore, when a logger is injected, for example, into a `@RequestScoped` bean, it is shared for all bean instances to avoid possible performance penalties associated with logger instantiation.
-
+====
 
 == Use log levels
 
@@ -232,6 +242,17 @@ To adjust runtime logging, modify the `application.properties` file.
 ----
 quarkus.log.level=INFO
 quarkus.log.category."org.hibernate".level=DEBUG
+----
+
+The equivalent in YAML (assuming the https://quarkus.io/guides/config-yaml[Quarkus YAML extension] is included) would be:
+[source, yaml]
+----
+quarkus:
+  log:
+    level: INFO
+    category:
+      org.hibernate: # The org.hibernate as a single key here is important
+        level: DEBUG
 ----
 
 When you set the log level to below `DEBUG`, you must also adjust the minimum log level.
@@ -342,6 +363,8 @@ Although the root logger's handlers are usually configured directly via `quarkus
 
 == Logging format
 
+=== Human-readable text
+
 {project-name} uses a pattern-based logging formatter that generates human-readable text logs by default, but you can also configure the format for each log handler by using a dedicated property.
 
 For the console handler, the property is `quarkus.log.console.format`.
@@ -378,14 +401,8 @@ The logging format string supports the following symbols:
 |%x|Nested Diagnostics context values|Renders all the values from Nested Diagnostics Context in format `{value1.value2}`.
 |===
 
-
-[id="alt-console-format"]
-=== Alternative console logging formats
-
-Changing the console log format is useful, for example, when the console output of the Quarkus application is captured by a service that processes and stores the log information for later analysis.
-
 [id="json-logging"]
-==== JSON logging format
+=== JSON logging format
 
 The `quarkus-logging-json` extension might be employed to add support for the JSON logging format and its related configuration.
 
@@ -416,11 +433,25 @@ This can be achieved using different profiles, as shown in the following configu
 +
 [source, properties]
 ----
-%dev.quarkus.log.console.json=false
-%test.quarkus.log.console.json=false
+%dev.quarkus.log.console.json.enabled=false
+%test.quarkus.log.console.json.enabled=false
 ----
 
-===== Configuration
++
+. Choose the JSON logging format by setting the config property:
+[source, properties]
+----
+quarkus.log.console.json.log-format
+----
+This case will set the format for the console. The config values are:
+
+* *default*: Will generate structured logging based on the `key,values` present in the log record. MDC and NDC data will be also included nested in `mdc` and `ndc` fields.
+* *ecs*: https://www.elastic.co/docs/reference/ecs/ecs-field-reference[Elastic Common Fields]. Some default fields names are modified and some otheres are added to better comply with ECS. Namely: `@timestamp`,`log.logger`, `log.level`, `process.pid`, `process.name`, `process.thread.name`, `process.thread.id`, `host.hostname`, `event.sequence`, `error.message`, `error.stack_trace`, `ecs.version`, `data_stream.type`, `service.name`, `service.version` and `service.environment`.
+* *gcp*: https://cloud.google.com/logging/docs/structured-logging#structured_logging_special_fields[Google Cloud]. Follows the `Default` format and when the xref:opentelemetry-tracing.adoc[OpenTelemetry] is used, tracing data present in the `mdc` field is flattened and copied to `spanId`,  `traceSampled` and `trace`, but this last one with a prefix. GCP requires the `trace` to follow this semantic: `"projects/<my-trace-project>/traces/12345"`. Where `<my-trace-project>` has the same value as the `quarkus.application.name` config property.
++
+
+
+==== Configuration
 
 Configure the JSON logging extension using supported properties to customize its behavior.
 
@@ -476,7 +507,7 @@ Log file rotation ensures efficient log management by preserving a specified num
 +
 [source, properties]
 ----
-quarkus.log.file.enable=true
+quarkus.log.file.enabled=true
 quarkus.log.file.path=application.log
 quarkus.log.file.format=%d{yyyy-MM-dd HH:mm:ss} %-5p [%c] (%t) %s%e%n
 ----
@@ -485,7 +516,7 @@ quarkus.log.file.format=%d{yyyy-MM-dd HH:mm:ss} %-5p [%c] (%t) %s%e%n
 +
 [source, properties]
 ----
-quarkus.log.handler.file.my-file-handler.enable=true
+quarkus.log.handler.file.my-file-handler.enabled=true
 quarkus.log.handler.file.my-file-handler.path=application.log
 quarkus.log.handler.file.my-file-handler.format=%d{yyyy-MM-dd HH:mm:ss} [com.example] %s%e%n
 
@@ -508,7 +539,7 @@ When enabled, it sends all log events to a syslog server, typically the local sy
 +
 [source, properties]
 ----
-quarkus.log.syslog.enable=true
+quarkus.log.syslog.enabled=true
 quarkus.log.syslog.app-name=my-application
 quarkus.log.syslog.format=%d{yyyy-MM-dd HH:mm:ss} %-5p [%c] (%t) %s%e%n
 ----
@@ -517,7 +548,7 @@ quarkus.log.syslog.format=%d{yyyy-MM-dd HH:mm:ss} %-5p [%c] (%t) %s%e%n
 +
 [source, properties]
 ----
-quarkus.log.handler.syslog.my-syslog-handler.enable=true
+quarkus.log.handler.syslog.my-syslog-handler.enabled=true
 quarkus.log.handler.syslog.my-syslog-handler.app-name=my-application
 quarkus.log.handler.syslog.my-syslog-handler.format=%d{yyyy-MM-dd HH:mm:ss} [com.example] %s%e%n
 
@@ -530,20 +561,20 @@ For details about its configuration, see the xref:#quarkus-core_section_quarkus-
 
 === Socket log handler
 
-This handler will send the logs to a socket.
-It is disabled by default, so you must first enable it.
-When enabled, it sends all log events to a socket, for instance to a Logstash server.
-
-This will typically be used in conjunction with the `quarkus-logging-json` extension so send logs in ECS format to an Elasticsearch instance.
-An example configuration can be found in the xref:centralized-log-management.adoc[Centralized log management] guide.
+This handler sends logs to a socket.
+Socket log handler is disabled by default; enable it to use it.
+When enabled, it sends all log events to a socket, such as a Logstash server.
 
 * A global configuration example:
 +
 [source, properties]
 ----
-quarkus.log.socket.enable=true
+quarkus.log.socket.enabled=true
 quarkus.log.socket.endpoint=localhost:4560
 ----
+
+Typically, this handler is used with the `quarkus-logging-json` extension to send logs in ECS format to an Elasticsearch instance.
+For an example configuration, see the xref:centralized-log-management.adoc[Centralized log management] guide.
 
 
 == Add a logging filter to your log handler
@@ -610,14 +641,17 @@ quarkus.console.color=false
 quarkus.log.category."io.quarkus".level=INFO
 ----
 
-NOTE: If you add these properties in the command line, ensure `"` is escaped.
+[NOTE]
+====
+If you add these properties in the command line, ensure `"` is escaped.
 For example, `-Dquarkus.log.category.\"io.quarkus\".level=DEBUG`.
+====
 
 [[category-example]]
 .File TRACE logging configuration
 [source, properties]
 ----
-quarkus.log.file.enable=true
+quarkus.log.file.enabled=true
 # Send output to a trace.log file under the /tmp directory
 quarkus.log.file.path=/tmp/trace.log
 quarkus.log.file.level=TRACE
@@ -640,7 +674,7 @@ quarkus.log.console.format=%d{HH:mm:ss} %-5p [%c{2.}] (%t) %s%e%n
 # Configure a named handler that logs to console
 quarkus.log.handler.console."STRUCTURED_LOGGING".format=%e%n
 # Configure a named handler that logs to file
-quarkus.log.handler.file."STRUCTURED_LOGGING_FILE".enable=true
+quarkus.log.handler.file."STRUCTURED_LOGGING_FILE".enabled=true
 quarkus.log.handler.file."STRUCTURED_LOGGING_FILE".format=%e%n
 # Configure the category and link the two named handlers to it
 quarkus.log.category."io.quarkus.category".level=INFO
@@ -652,7 +686,7 @@ quarkus.log.category."io.quarkus.category".handlers=STRUCTURED_LOGGING,STRUCTURE
 [source, properties]
 ----
 # configure a named file handler that sends the output to 'quarkus.log'
-quarkus.log.handler.file.CONSOLE_MIRROR.enable=true
+quarkus.log.handler.file.CONSOLE_MIRROR.enabled=true
 quarkus.log.handler.file.CONSOLE_MIRROR.path=quarkus.log
 # attach the handler to the root logger
 quarkus.log.handlers=CONSOLE_MIRROR
@@ -667,7 +701,7 @@ To send logs to a centralized tool such as Graylog, Logstash, or Fluentd, see th
 
 
 === OpenTelemetry logging
-Logging entries from all appenders can be sent using OpenTelemetry Logging.
+You can enable sending log entries from all appenders to OpenTelemetry Logging.
 
 For details, see the Quarkus xref:opentelemetry-logging.adoc[OpenTelemetry Logging] guide.
 
@@ -677,7 +711,7 @@ Enable proper logging for `@QuarkusTest` by setting the `java.util.logging.manag
 
 The system property must be set early on to be effective, so it is recommended to configure it in the build system.
 
-.Setting the `java.util.logging.manager` system property in the Maven Surefire plugin configuration
+.Setting the `java.util.logging.manager` system property in the Maven Surefire plugin configuration:
 [source, xml]
 ----
 <build>
@@ -822,7 +856,7 @@ To add data to the MDC and extract it in your log output:
 
 . Use the `MDC` class to set the data.
 .. Add `import org.jboss.logmanager.MDC;`
-.. Set  `MDC.put(...)` as shown in the example below:
+.. Set `MDC.put(...)` as shown in the example below:
 +
 [source,java]
 .An example with JBoss Logging and `io.quarkus.logging.Log`

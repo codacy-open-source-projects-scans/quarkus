@@ -1,6 +1,7 @@
 package io.quarkus.smallrye.reactivemessaging.pulsar.deployment;
 
-import static io.quarkus.smallrye.reactivemessaging.deployment.SmallRyeReactiveMessagingProcessor.getChannelPropertyKey;
+import static io.quarkus.smallrye.reactivemessaging.runtime.ReactiveMessagingConfiguration.getChannelIncomingPropertyName;
+import static io.quarkus.smallrye.reactivemessaging.runtime.ReactiveMessagingConfiguration.getChannelOutgoingPropertyName;
 
 import java.util.List;
 import java.util.Map;
@@ -43,10 +44,11 @@ public class PulsarSchemaDiscoveryProcessor {
             BuildProducer<SyntheticBeanBuildItem> syntheticBean,
             RecorderContext recorderContext,
             SchemaProviderRecorder recorder) {
-        if (buildTimeConfig.schemaAutodetectionEnabled) {
+        if (buildTimeConfig.schemaAutodetectionEnabled()) {
             DefaultSchemaDiscoveryState discoveryState = new DefaultSchemaDiscoveryState(combinedIndex.getIndex());
             discoverDefaultSerdeConfig(discoveryState, channelsManagedByConnectors, defaultConfigProducer,
-                    buildTimeConfig.schemaGenerationEnabled ? new SyntheticBeanBuilder(syntheticBean, recorder, recorderContext)
+                    buildTimeConfig.schemaGenerationEnabled()
+                            ? new SyntheticBeanBuilder(syntheticBean, recorder, recorderContext)
                             : null);
         }
     }
@@ -101,16 +103,12 @@ public class PulsarSchemaDiscoveryProcessor {
         }
     }
 
-    private static String outgoingSchemaKey(String channelName) {
-        return getChannelPropertyKey(channelName, "schema", false);
-    }
-
     private void processPulsarTransactions(DefaultSchemaDiscoveryState discovery,
             BuildProducer<RunTimeConfigurationDefaultBuildItem> config,
             String channelName,
             Type injectionPointType) {
         if (injectionPointType != null && isPulsarEmitter(injectionPointType)) {
-            String enableTransactionKey = getChannelPropertyKey(channelName, "enableTransaction", false);
+            String enableTransactionKey = getChannelOutgoingPropertyName(channelName, "enableTransaction");
             log.infof("Transactional producer detected for channel '%s', setting following default config values: "
                     + "'" + enableTransactionKey + "=true'", channelName);
             produceRuntimeConfigurationDefaultBuildItem(discovery, config, enableTransactionKey, "true");
@@ -128,18 +126,15 @@ public class PulsarSchemaDiscoveryProcessor {
                     objectMapperSchemaFor(SyntheticBeanBuilder.objectMapperSchemaId(value), value, syntheticBean);
                 } else {
                     String schema = schemaFor(discovery, value, syntheticBean);
-                    produceRuntimeConfigurationDefaultBuildItem(discovery, config, incomingSchemaKey(channelName), schema);
+                    produceRuntimeConfigurationDefaultBuildItem(discovery, config,
+                            getChannelIncomingPropertyName(channelName, "schema"), schema);
                 }
             }
             if (Boolean.TRUE.equals(isBatch)) {
                 produceRuntimeConfigurationDefaultBuildItem(discovery, config,
-                        getChannelPropertyKey(channelName, "batchReceive", true), "true");
+                        getChannelIncomingPropertyName(channelName, "batchReceive"), "true");
             }
         });
-    }
-
-    private static String incomingSchemaKey(String channelName) {
-        return getChannelPropertyKey(channelName, "schema", true);
     }
 
     private Type getInjectionPointType(AnnotationInstance annotation) {
@@ -299,7 +294,8 @@ public class PulsarSchemaDiscoveryProcessor {
             return null;
         }
 
-        if (isEmitter(injectionPointType) || isMutinyEmitter(injectionPointType) || isPulsarEmitter(injectionPointType)) {
+        if (isEmitter(injectionPointType) || isMutinyEmitter(injectionPointType)
+                || isContextualEmitter(injectionPointType) || isPulsarEmitter(injectionPointType)) {
             return injectionPointType.asParameterizedType().arguments().get(0);
         } else {
             return null;
@@ -316,7 +312,8 @@ public class PulsarSchemaDiscoveryProcessor {
                     objectMapperSchemaFor(SyntheticBeanBuilder.objectMapperSchemaId(value), value, syntheticBean);
                 } else {
                     String schema = schemaFor(discovery, value, syntheticBean);
-                    produceRuntimeConfigurationDefaultBuildItem(discovery, config, outgoingSchemaKey(channelName), schema);
+                    produceRuntimeConfigurationDefaultBuildItem(discovery, config,
+                            getChannelOutgoingPropertyName(channelName, "schema"), schema);
                 }
             }
         });
@@ -462,6 +459,13 @@ public class PulsarSchemaDiscoveryProcessor {
     private static boolean isMutinyEmitter(Type type) {
         // raw type MutinyEmitter is wrong, must be MutinyEmitter<Something>
         return DotNames.MUTINY_EMITTER.equals(type.name())
+                && type.kind() == Type.Kind.PARAMETERIZED_TYPE
+                && type.asParameterizedType().arguments().size() == 1;
+    }
+
+    private static boolean isContextualEmitter(Type type) {
+        // raw type MutinyEmitter is wrong, must be MutinyEmitter<Something>
+        return DotNames.CONTEXTUAL_EMITTER.equals(type.name())
                 && type.kind() == Type.Kind.PARAMETERIZED_TYPE
                 && type.asParameterizedType().arguments().size() == 1;
     }

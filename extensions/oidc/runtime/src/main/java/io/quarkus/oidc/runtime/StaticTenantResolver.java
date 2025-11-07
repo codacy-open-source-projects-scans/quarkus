@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 
@@ -19,6 +20,8 @@ import io.quarkus.oidc.TenantResolver;
 import io.quarkus.oidc.common.runtime.OidcCommonUtils;
 import io.quarkus.vertx.http.runtime.security.ImmutablePathMatcher;
 import io.smallrye.mutiny.Uni;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 
 final class StaticTenantResolver {
@@ -81,7 +84,7 @@ final class StaticTenantResolver {
     }
 
     private static final class DefaultStaticTenantResolver implements TenantResolver {
-
+        private static final String PATH_SEPARATOR = "/";
         private final TenantConfigBean tenantConfigBean;
 
         private DefaultStaticTenantResolver(TenantConfigBean tenantConfigBean) {
@@ -90,13 +93,12 @@ final class StaticTenantResolver {
 
         @Override
         public String resolve(RoutingContext context) {
-            String[] pathSegments = context.request().path().split("/");
-            if (pathSegments.length > 0) {
-                String lastPathSegment = pathSegments[pathSegments.length - 1];
-                if (tenantConfigBean.getStaticTenant(lastPathSegment) != null) {
+            String[] pathSegments = context.request().path().split(PATH_SEPARATOR);
+            for (String segment : pathSegments) {
+                if (tenantConfigBean.getStaticTenant(segment) != null) {
                     LOG.debugf(
-                            "Tenant id '%s' is selected on the '%s' request path", lastPathSegment, context.normalizedPath());
-                    return lastPathSegment;
+                            "Tenant id '%s' is selected on the '%s' request path", segment, context.normalizedPath());
+                    return segment;
                 }
             }
             return null;
@@ -226,15 +228,64 @@ final class StaticTenantResolver {
 
                     final String iss = tokenJson.getString(Claims.iss.name());
                     if (tenantContext.getOidcMetadata().getIssuer().equals(iss)) {
-                        OidcUtils.storeExtractedBearerToken(context, token);
 
                         final String tenantId = tenantContext.oidcConfig().tenantId().get();
+
+                        if (!requiredClaimsMatch(tenantContext.oidcConfig().token().requiredClaims(), tokenJson)) {
+                            LOG.debugf(
+                                    "OIDC tenant '%s' issuer matches the token issuer '%s' but does not match the token required claims",
+                                    tenantId, iss);
+                            return null;
+                        }
+
+                        OidcUtils.storeExtractedBearerToken(context, token);
                         LOG.debugf("Resolved the '%s' OIDC tenant based on the matching issuer '%s'", tenantId, iss);
                         return tenantId;
                     }
                 }
             }
             return null;
+        }
+
+        private static boolean requiredClaimsMatch(Map<String, Set<String>> requiredClaims, JsonObject tokenJson) {
+            for (Map.Entry<String, Set<String>> entry : requiredClaims.entrySet()) {
+                Set<String> requiredClaimSet = entry.getValue();
+                String claimName = entry.getKey();
+                if (requiredClaimSet.size() == 1) {
+                    String actualClaimValueAsStr;
+                    try {
+                        actualClaimValueAsStr = tokenJson.getString(claimName);
+                    } catch (Exception ex) {
+                        actualClaimValueAsStr = null;
+                    }
+                    if (actualClaimValueAsStr != null && requiredClaimSet.contains(actualClaimValueAsStr)) {
+                        continue;
+                    }
+                }
+                final JsonArray actualClaimValues;
+                try {
+                    actualClaimValues = tokenJson.getJsonArray(claimName);
+                } catch (Exception e) {
+                    return false;
+                }
+                if (actualClaimValues == null) {
+                    return false;
+                }
+                outer: for (String requiredClaimValue : requiredClaimSet) {
+                    for (int i = 0; i < actualClaimValues.size(); i++) {
+                        try {
+                            String actualClaimValue = actualClaimValues.getString(i);
+                            if (requiredClaimValue.equals(actualClaimValue)) {
+                                continue outer;
+                            }
+                        } catch (Exception ignored) {
+                            // try next actual claim value
+                        }
+                    }
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static boolean isTenantWithoutIssuer(TenantConfigContext tenantContext) {

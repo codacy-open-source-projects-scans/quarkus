@@ -31,7 +31,6 @@ import io.quarkus.resteasy.runtime.AuthenticationCompletionExceptionMapper;
 import io.quarkus.resteasy.runtime.AuthenticationFailedExceptionMapper;
 import io.quarkus.resteasy.runtime.AuthenticationRedirectExceptionMapper;
 import io.quarkus.resteasy.runtime.NonJaxRsClassMappings;
-import io.quarkus.resteasy.runtime.ResteasyVertxConfig;
 import io.quarkus.resteasy.runtime.standalone.ResteasyStandaloneRecorder;
 import io.quarkus.resteasy.server.common.deployment.ResteasyDeploymentBuildItem;
 import io.quarkus.security.AuthenticationCompletionException;
@@ -42,8 +41,9 @@ import io.quarkus.vertx.http.deployment.FilterBuildItem;
 import io.quarkus.vertx.http.deployment.HttpRootPathBuildItem;
 import io.quarkus.vertx.http.deployment.RequireVirtualHttpBuildItem;
 import io.quarkus.vertx.http.deployment.RouteBuildItem;
-import io.quarkus.vertx.http.runtime.HttpBuildTimeConfig;
 import io.quarkus.vertx.http.runtime.RouteConstants;
+import io.quarkus.vertx.http.runtime.VertxHttpBuildTimeConfig;
+import io.quarkus.vertx.http.runtime.security.SecurityHandlerPriorities;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
 
@@ -92,13 +92,11 @@ public class ResteasyStandaloneBuildStep {
             BuildProducer<FilterBuildItem> filterBuildItemBuildProducer,
             CoreVertxBuildItem vertx,
             CombinedIndexBuildItem combinedIndexBuildItem,
-            HttpBuildTimeConfig vertxConfig,
             ResteasyStandaloneBuildItem standalone,
             Optional<RequireVirtualHttpBuildItem> requireVirtual,
             Optional<NonJaxRsClassBuildItem> nonJaxRsClassBuildItem,
             ExecutorBuildItem executorBuildItem,
-            ResteasyVertxConfig resteasyVertxConfig,
-            HttpBuildTimeConfig httpBuildTimeConfig) throws Exception {
+            VertxHttpBuildTimeConfig httpBuildTimeConfig) throws Exception {
 
         if (standalone == null) {
             return;
@@ -111,13 +109,13 @@ public class ResteasyStandaloneBuildStep {
         if (nonJaxRsClassBuildItem.isPresent()) {
             nonJaxRsClassNameToMethodPaths = nonJaxRsClassBuildItem.get().nonJaxRsPaths;
         }
-        Handler<RoutingContext> handler = recorder.vertxRequestHandler(vertx.getVertx(),
-                executorBuildItem.getExecutorProxy(), nonJaxRsClassNameToMethodPaths, resteasyVertxConfig, httpBuildTimeConfig);
+        Handler<RoutingContext> handler = recorder.vertxRequestHandler(vertx.getVertx(), executorBuildItem.getExecutorProxy(),
+                nonJaxRsClassNameToMethodPaths);
 
         final boolean noCustomAuthCompletionExMapper;
         final boolean noCustomAuthFailureExMapper;
         final boolean noCustomAuthRedirectExMapper;
-        if (vertxConfig.auth.proactive) {
+        if (httpBuildTimeConfig.auth().proactive()) {
             noCustomAuthCompletionExMapper = notFoundCustomExMapper(AuthenticationCompletionException.class.getName(),
                     AuthenticationCompletionExceptionMapper.class.getName(), combinedIndexBuildItem.getIndex());
             noCustomAuthFailureExMapper = notFoundCustomExMapper(AuthenticationFailedException.class.getName(),
@@ -134,8 +132,8 @@ public class ResteasyStandaloneBuildStep {
         // we add the failure handler right before QuarkusErrorHandler
         // so that user can define failure handlers that precede exception mappers
         final Handler<RoutingContext> failureHandler = recorder.vertxFailureHandler(vertx.getVertx(),
-                executorBuildItem.getExecutorProxy(), resteasyVertxConfig, noCustomAuthCompletionExMapper,
-                noCustomAuthFailureExMapper, noCustomAuthRedirectExMapper, vertxConfig.auth.proactive);
+                executorBuildItem.getExecutorProxy(), noCustomAuthCompletionExMapper, noCustomAuthFailureExMapper,
+                noCustomAuthRedirectExMapper);
         filterBuildItemBuildProducer.produce(FilterBuildItem.ofAuthenticationFailureHandler(failureHandler));
 
         // Exact match for resources matched to the root path
@@ -180,6 +178,6 @@ public class ResteasyStandaloneBuildStep {
     @Record(value = ExecutionTime.STATIC_INIT)
     public FilterBuildItem addDefaultAuthFailureHandler(ResteasyStandaloneRecorder recorder) {
         // replace default auth failure handler added by vertx-http so that our exception mappers can customize response
-        return new FilterBuildItem(recorder.defaultAuthFailureHandler(), FilterBuildItem.AUTHENTICATION - 1);
+        return new FilterBuildItem(recorder.defaultAuthFailureHandler(), SecurityHandlerPriorities.AUTHENTICATION - 1);
     }
 }

@@ -19,6 +19,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -94,7 +95,7 @@ class EventImpl<T> implements Event<T> {
 
         Executor executor = options.getExecutor();
         if (executor == null) {
-            executor = Arc.container().getExecutorService();
+            executor = Arc.requireContainer().getExecutorService();
         }
 
         if (notifier.isEmpty()) {
@@ -106,7 +107,7 @@ class EventImpl<T> implements Event<T> {
             public U get() {
                 // Note that async observers are notified serially - no need to synchronize the collection
                 ObserverExceptionHandler exceptionHandler = new CollectingExceptionHandler(new ArrayList<>(),
-                        Arc.container().instance(AsyncObserverExceptionHandler.class).get());
+                        Arc.requireContainer().instance(AsyncObserverExceptionHandler.class).get());
                 notifier.notify(event, exceptionHandler, true);
                 handleExceptions(exceptionHandler);
                 return event;
@@ -122,7 +123,13 @@ class EventImpl<T> implements Event<T> {
         if (notifier != null && notifier.runtimeType.equals(runtimeType)) {
             return notifier;
         }
-        return this.lastNotifier = notifiers.computeIfAbsent(runtimeType, this::createNotifier);
+        return this.lastNotifier = notifiers.computeIfAbsent(runtimeType,
+                new Function<>() {
+                    @Override
+                    public Notifier<? super T> apply(Class<?> clazz) {
+                        return createNotifier(clazz);
+                    }
+                });
     }
 
     @Override
@@ -159,12 +166,13 @@ class EventImpl<T> implements Event<T> {
 
     private Notifier<? super T> createNotifier(Class<?> runtimeType) {
         Type eventType = getEventType(runtimeType);
-        return createNotifier(runtimeType, eventType, qualifiers, ArcContainerImpl.unwrap(Arc.container()), injectionPoint);
+        return createNotifier(runtimeType, eventType, qualifiers, ArcContainerImpl.unwrap(Arc.requireContainer()),
+                injectionPoint);
     }
 
     static <T> Notifier<T> createNotifier(Class<?> runtimeType, Type eventType, Set<Annotation> qualifiers,
             ArcContainerImpl container, InjectionPoint injectionPoint) {
-        return createNotifier(runtimeType, eventType, qualifiers, container, !Arc.container().strictCompatibility(),
+        return createNotifier(runtimeType, eventType, qualifiers, container, !Arc.requireContainer().strictCompatibility(),
                 injectionPoint);
     }
 
@@ -260,7 +268,14 @@ class EventImpl<T> implements Event<T> {
             this.runtimeType = runtimeType;
             this.observerMethods = observerMethods;
             this.eventMetadata = eventMetadata;
-            this.hasTxObservers = observerMethods.stream().anyMatch(this::isTxObserver);
+            boolean hasTxObservers = false;
+            for (var method : observerMethods) {
+                if (isTxObserver(method)) {
+                    hasTxObservers = true;
+                    break;
+                }
+            }
+            this.hasTxObservers = hasTxObservers;
             this.activateRequestContext = activateRequestContext;
         }
 
@@ -272,12 +287,12 @@ class EventImpl<T> implements Event<T> {
         void notify(T event, ObserverExceptionHandler exceptionHandler, boolean async) {
             if (!isEmpty()) {
 
-                Predicate<ObserverMethod<? super T>> predicate = async ? ObserverMethod::isAsync
-                        : Predicate.not(ObserverMethod::isAsync);
+                Predicate<ObserverMethod<?>> predicate = async ? ObserverMethodIsAsync.INSTANCE
+                        : ObserverMethodIsNotAsync.INSTANCE;
 
                 if (!async && hasTxObservers) {
                     // Note that tx observers are never async
-                    InstanceHandle<TransactionManager> transactionManagerInstance = Arc.container()
+                    InstanceHandle<TransactionManager> transactionManagerInstance = Arc.requireContainer()
                             .instance(TransactionManager.class);
 
                     try {
@@ -303,13 +318,13 @@ class EventImpl<T> implements Event<T> {
                                 // See for instance discussions on https://github.com/eclipse-ee4j/cdi/issues/467
                                 txManager.getTransaction().registerSynchronization(sync);
                                 // registration succeeded, notify all non-tx observers synchronously
-                                predicate = predicate.and(this::isNotTxObserver);
+                                predicate = predicate.and(ObserverMethodIsNotTxObserver.INSTANCE);
                             } catch (Exception e) {
                                 if (e.getCause() instanceof RollbackException
                                         || e.getCause() instanceof IllegalStateException
                                         || e.getCause() instanceof SystemException) {
                                     // registration failed, AFTER_SUCCESS OMs are accordingly to CDI spec left out
-                                    predicate = predicate.and(this::isNotAfterSuccess);
+                                    predicate = predicate.and(ObserverMethodIsNotAfterSuccessTxObserver.INSTANCE);
                                 }
                             }
                         }
@@ -324,7 +339,7 @@ class EventImpl<T> implements Event<T> {
                 // Non-tx observers notifications
                 // req. context is activated if not in strict mode and not for lifecycle events such as init/shutdown
                 if (activateRequestContext) {
-                    ManagedContext requestContext = Arc.container().requestContext();
+                    ManagedContext requestContext = Arc.requireContainer().requestContext();
                     if (requestContext.isActive()) {
                         notifyObservers(event, exceptionHandler, predicate);
                     } else {
@@ -343,9 +358,9 @@ class EventImpl<T> implements Event<T> {
 
         @SuppressWarnings({ "rawtypes", "unchecked" })
         private void notifyObservers(T event, ObserverExceptionHandler exceptionHandler,
-                Predicate<ObserverMethod<? super T>> predicate) {
+                Predicate<ObserverMethod<?>> predicate) {
             EventContext eventContext = new EventContextImpl<>(event, eventMetadata);
-            for (ObserverMethod<? super T> observerMethod : observerMethods) {
+            for (ObserverMethod<?> observerMethod : observerMethods) {
                 if (predicate.test(observerMethod)) {
                     try {
                         observerMethod.notify(eventContext);
@@ -360,16 +375,8 @@ class EventImpl<T> implements Event<T> {
             return observerMethods.isEmpty();
         }
 
-        private boolean isTxObserver(ObserverMethod<?> observer) {
+        private static boolean isTxObserver(ObserverMethod<?> observer) {
             return !observer.getTransactionPhase().equals(TransactionPhase.IN_PROGRESS);
-        }
-
-        private boolean isNotAfterSuccess(ObserverMethod<?> observer) {
-            return !observer.getTransactionPhase().equals(TransactionPhase.AFTER_SUCCESS);
-        }
-
-        private boolean isNotTxObserver(ObserverMethod<?> observer) {
-            return !isTxObserver(observer);
         }
 
     }
@@ -401,6 +408,48 @@ class EventImpl<T> implements Event<T> {
         }
     }
 
+    private static class ObserverMethodIsAsync implements Predicate<ObserverMethod<?>> {
+
+        private static final Predicate<ObserverMethod<?>> INSTANCE = new ObserverMethodIsAsync();
+
+        @Override
+        public boolean test(ObserverMethod<?> observerMethod) {
+            return observerMethod.isAsync();
+        }
+    }
+
+    private static class ObserverMethodIsNotAsync implements Predicate<ObserverMethod<?>> {
+
+        private static final Predicate<ObserverMethod<?>> INSTANCE = new ObserverMethodIsNotAsync();
+
+        @Override
+        public boolean test(ObserverMethod<?> observerMethod) {
+            return !observerMethod.isAsync();
+        }
+    }
+
+    private static class ObserverMethodIsNotTxObserver implements Predicate<ObserverMethod<?>> {
+
+        private static final Predicate<ObserverMethod<?>> INSTANCE = new ObserverMethodIsNotTxObserver();
+
+        @Override
+        public boolean test(ObserverMethod<?> observerMethod) {
+            return !EventImpl.Notifier.isTxObserver(observerMethod);
+        }
+
+    }
+
+    private static class ObserverMethodIsNotAfterSuccessTxObserver implements Predicate<ObserverMethod<?>> {
+
+        private static final Predicate<ObserverMethod<?>> INSTANCE = new ObserverMethodIsNotAfterSuccessTxObserver();
+
+        @Override
+        public boolean test(ObserverMethod<?> observerMethod) {
+            return !observerMethod.getTransactionPhase().equals(TransactionPhase.AFTER_SUCCESS);
+        }
+
+    }
+
     @SuppressWarnings("rawtypes")
     static class DeferredEventNotification<T> implements Runnable {
 
@@ -430,7 +479,7 @@ class EventImpl<T> implements Event<T> {
         @Override
         public void run() {
             try {
-                ManagedContext reqContext = Arc.container().requestContext();
+                ManagedContext reqContext = Arc.requireContainer().requestContext();
                 if (reqContext.isActive()) {
                     observerMethod.notify(eventContext);
                 } else {

@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -34,12 +35,12 @@ import io.quarkus.bootstrap.prebuild.CodeGenException;
 import io.quarkus.bootstrap.prebuild.CodeGenFailureException;
 import io.quarkus.deployment.CodeGenContext;
 import io.quarkus.deployment.CodeGenProvider;
-import io.quarkus.deployment.util.ProcessUtil;
 import io.quarkus.maven.dependency.ResolvedDependency;
 import io.quarkus.paths.PathFilter;
 import io.quarkus.runtime.util.HashUtil;
-import io.quarkus.utilities.JavaBinFinder;
-import io.quarkus.utilities.OS;
+import io.smallrye.common.cpu.CPU;
+import io.smallrye.common.os.OS;
+import io.smallrye.common.process.ProcessBuilder;
 
 /**
  * Code generation for gRPC. Generates java classes from proto files placed in either src/main/proto or src/test/proto
@@ -66,8 +67,11 @@ public class GrpcCodeGen implements CodeGenProvider {
 
     private static final String USE_ARG_FILE = "quarkus.generate-code.grpc.use-arg-file";
 
+    private static final String GENERATE_KOTLIN = "quarkus.generate-code.grpc.kotlin.generate";
+
     private Executables executables;
     private String input;
+    private boolean hasQuarkusKotlinDependency;
 
     @Override
     public String providerId() {
@@ -95,6 +99,7 @@ public class GrpcCodeGen implements CodeGenProvider {
     @Override
     public void init(ApplicationModel model, Map<String, String> properties) {
         this.input = properties.get("quarkus.grpc.codegen.proto-directory");
+        this.hasQuarkusKotlinDependency = containsQuarkusKotlin(model.getDependencies());
     }
 
     @Override
@@ -162,6 +167,10 @@ public class GrpcCodeGen implements CodeGenProvider {
                         "--grpc_out=" + outDir,
                         "--java_out=" + outDir));
 
+                if (shouldGenerateKotlin(context.config())) {
+                    command.add("--kotlin_out=" + outDir);
+                }
+
                 if (shouldGenerateDescriptorSet(context.config())) {
                     command.add(String.format("--descriptor_set_out=%s", getDescriptorSetOutputFile(context)));
                 }
@@ -171,7 +180,7 @@ public class GrpcCodeGen implements CodeGenProvider {
                 // Estimate command length to avoid command line too long error
                 int commandLength = command.stream().mapToInt(String::length).sum();
                 // 8191 is the maximum command line length for Windows
-                if (useArgFile || (commandLength > 8190 && OS.determineOS() == OS.WINDOWS)) {
+                if (useArgFile || (commandLength > 8190 && OS.current() == OS.WINDOWS)) {
                     File argFile = File.createTempFile("grpc-protoc-params", ".txt");
                     argFile.deleteOnExit();
 
@@ -181,23 +190,21 @@ public class GrpcCodeGen implements CodeGenProvider {
                         }
                     }
 
-                    command = new ArrayList<>(Arrays.asList(command.get(0), "@" + argFile.getAbsolutePath()));
+                    command = new ArrayList<>(List.of(command.get(0), "@" + argFile.getAbsolutePath()));
                 }
                 log.debugf("Executing command: %s", String.join(" ", command));
-                ProcessBuilder processBuilder = new ProcessBuilder(command);
-
-                final Process process = ProcessUtil.launchProcess(processBuilder, context.shouldRedirectIO());
-                int resultCode = process.waitFor();
-                if (resultCode != 0) {
-                    throw new CodeGenException("Failed to generate Java classes from proto files: " + protoFiles +
-                            " to " + outDir.toAbsolutePath() + " with command " + String.join(" ", command));
+                try {
+                    ProcessBuilder.exec(command.get(0), command.subList(1, command.size()));
+                } catch (Exception e) {
+                    throw new CodeGenException("Failed to generate Java classes from proto files: %s to %s with command %s"
+                            .formatted(protoFiles, outDir.toAbsolutePath(), String.join(" ", command)), e);
                 }
                 postprocessing(context, outDir);
                 log.info("Successfully finished generating and post-processing sources from proto files");
 
                 return true;
             }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             throw new CodeGenException(
                     "Failed to generate java files from proto file in " + inputDir.toAbsolutePath(), e);
         }
@@ -294,6 +301,11 @@ public class GrpcCodeGen implements CodeGenProvider {
     private boolean isGeneratingFromAppDependenciesEnabled(Config config) {
         return config.getOptionalValue(SCAN_DEPENDENCIES_FOR_PROTO, String.class)
                 .filter(value -> !"none".equals(value)).isPresent();
+    }
+
+    private boolean shouldGenerateKotlin(Config config) {
+        return config.getOptionalValue(GENERATE_KOTLIN, Boolean.class).orElse(
+                hasQuarkusKotlinDependency);
     }
 
     private boolean shouldGenerateDescriptorSet(Config config) {
@@ -398,7 +410,7 @@ public class GrpcCodeGen implements CodeGenProvider {
     }
 
     private String escapeWhitespace(String path) {
-        if (OS.determineOS() == OS.LINUX) {
+        if (OS.current() == OS.LINUX) {
             return path.replace(" ", "\\ ");
         } else {
             return path;
@@ -476,18 +488,35 @@ public class GrpcCodeGen implements CodeGenProvider {
     }
 
     private String osClassifier() throws CodeGenException {
-        String architecture = OS.getArchitecture();
-        switch (OS.determineOS()) {
-            case LINUX:
-                return "linux-" + architecture;
-            case WINDOWS:
-                return "windows-" + architecture;
-            case MAC:
-                return "osx-" + architecture;
-            default:
-                throw new CodeGenException(
-                        "Unsupported OS, please use maven plugin instead to generate Java classes from proto files");
-        }
+        String architecture = getArchitecture();
+        return switch (OS.current()) {
+            case LINUX -> "linux-" + architecture;
+            case WINDOWS -> "windows-" + architecture;
+            case MAC -> "osx-" + architecture;
+            default -> throw new CodeGenException(
+                    "Unsupported OS, please use maven plugin instead to generate Java classes from proto files");
+        };
+    }
+
+    /**
+     * {@return the bespoke architecture string, or {@code null} if unknown}
+     */
+    private static String getArchitecture() {
+        return switch (CPU.host()) {
+            case x64 -> "x86_64";
+            case x86 -> "x86_32";
+            case arm -> "arm_32";
+            case aarch64 -> "aarch_64";
+            case mips -> "mips_32";
+            case mipsel -> "mipsel_32";
+            case mips64 -> "mips_64";
+            case mips64el -> "mipsel_64";
+            case ppc32 -> "ppc_32";
+            case ppc32le -> "ppcle_32";
+            case ppc -> "ppc_64";
+            case ppcle -> "ppcle_64";
+            default -> null;
+        };
     }
 
     private static Path prepareQuarkusGrpcExecutable(ApplicationModel appModel, Path buildDir) throws CodeGenException {
@@ -496,7 +525,7 @@ public class GrpcCodeGen implements CodeGenProvider {
             throw new CodeGenException("Failed to find Quarkus gRPC protoc plugin among dependencies");
         }
 
-        if (OS.determineOS() != OS.WINDOWS) {
+        if (OS.current() != OS.WINDOWS) {
             return writeScript(buildDir, pluginPath, "#!/bin/sh\n", ".sh");
         } else {
             return writeScript(buildDir, pluginPath, "@echo off\r\n", ".cmd");
@@ -521,9 +550,19 @@ public class GrpcCodeGen implements CodeGenProvider {
     }
 
     private static void writePluginExeCmd(Path pluginPath, BufferedWriter writer) throws IOException {
-        writer.write("\"" + JavaBinFinder.findBin() + "\" -cp \"" +
+        writer.write("\"" + io.smallrye.common.process.ProcessUtil.pathOfJava().toString() + "\" -cp \"" +
                 pluginPath.toAbsolutePath() + "\" " + quarkusProtocPluginMain);
         writer.newLine();
+    }
+
+    private static boolean containsQuarkusKotlin(Collection<ResolvedDependency> dependencies) {
+        return dependencies.stream().anyMatch(new Predicate<ResolvedDependency>() {
+            @Override
+            public boolean test(ResolvedDependency rd) {
+                return rd.getGroupId().equalsIgnoreCase("io.quarkus")
+                        && rd.getArtifactId().equalsIgnoreCase("quarkus-kotlin");
+            }
+        });
     }
 
     private static class Executables {

@@ -12,7 +12,7 @@ import io.quarkus.arc.Arc;
 /**
  * A replacement for ManagedBeanRegistryImpl that:
  * <ul>
- * <li>forces the use of QuarkusManagedBeanRegistry,
+ * <li>forces the use of {@link QuarkusArcBeanContainer},
  * which works with Arc and respects configured scopes when instantiating CDI beans.</li>
  * <li>is not stoppable and leaves the release of beans to {@link QuarkusArcBeanContainer},
  * so that the bean container and its beans can be reused between static init and runtime init,
@@ -47,7 +47,7 @@ public class QuarkusManagedBeanRegistry implements ManagedBeanRegistry {
     @Override
     public <T> ManagedBean<T> getBean(Class<T> beanClass, BeanInstanceProducer fallbackBeanInstanceProducer) {
         return new ContainedBeanManagedBeanAdapter<>(beanClass,
-                beanContainer.getBean(beanClass, QuarkusBeanContainerLifecycleOptions.INSTANCE,
+                beanContainer.getBean(beanClass, QuarkusBeanContainerLifecycleOptions.DEFAULT,
                         fallbackBeanInstanceProducer));
     }
 
@@ -55,7 +55,7 @@ public class QuarkusManagedBeanRegistry implements ManagedBeanRegistry {
     public <T> ManagedBean<T> getBean(String beanName, Class<T> beanContract,
             BeanInstanceProducer fallbackBeanInstanceProducer) {
         return new ContainedBeanManagedBeanAdapter<>(beanContract,
-                beanContainer.getBean(beanName, beanContract, QuarkusBeanContainerLifecycleOptions.INSTANCE,
+                beanContainer.getBean(beanName, beanContract, QuarkusBeanContainerLifecycleOptions.DEFAULT,
                         fallbackBeanInstanceProducer));
     }
 
@@ -76,28 +76,6 @@ public class QuarkusManagedBeanRegistry implements ManagedBeanRegistry {
         @Override
         public B getBeanInstance() {
             return containedBean.getBeanInstance();
-        }
-    }
-
-    private static final class QuarkusBeanContainerLifecycleOptions implements BeanContainer.LifecycleOptions {
-        private static final QuarkusBeanContainerLifecycleOptions INSTANCE = new QuarkusBeanContainerLifecycleOptions();
-
-        private QuarkusBeanContainerLifecycleOptions() {
-        }
-
-        @Override
-        public boolean useJpaCompliantCreation() {
-            // Arc doesn't support all the BeanManager methods required to implement JPA-compliant bean creation.
-            // Anyway, JPA-compliant bean creation means we completely disregard the scope of beans
-            // (e.g. @Dependent, @ApplicationScoped), which doesn't seem wise.
-            // So we're probably better off this way.
-            return false;
-        }
-
-        @Override
-        public boolean canUseCachedReferences() {
-            // Let Arc do the caching based on scopes
-            return false;
         }
     }
 

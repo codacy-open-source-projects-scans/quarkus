@@ -12,7 +12,6 @@ import java.util.function.Supplier;
 
 import org.eclipse.microprofile.context.ManagedExecutor;
 import org.eclipse.microprofile.context.ThreadContext;
-import org.eclipse.microprofile.context.spi.ContextManager.Builder;
 import org.eclipse.microprofile.context.spi.ContextManagerExtension;
 import org.eclipse.microprofile.context.spi.ContextManagerProvider;
 import org.eclipse.microprofile.context.spi.ThreadContextProvider;
@@ -23,6 +22,7 @@ import io.quarkus.runtime.annotations.Recorder;
 import io.smallrye.context.SmallRyeContextManager;
 import io.smallrye.context.SmallRyeManagedExecutor;
 import io.smallrye.context.SmallRyeThreadContext;
+import io.smallrye.context.impl.DefaultValues;
 
 /**
  * The runtime value service used to create values related to the MP-JWT services
@@ -141,6 +141,7 @@ public class SmallRyeContextPropagationRecorder {
         noContextBuilder.withThreadContextProviders(new ThreadContextProvider[0]);
         noContextBuilder.withContextManagerExtensions(new ContextManagerExtension[0]);
         noContextBuilder.withDefaultExecutorService(NOPE_EXECUTOR_SERVICE);
+        noContextBuilder.withDefaultValues(DefaultValues.empty());
         ContextManagerProvider.instance().registerContextManager(noContextBuilder.build(), null /* not used */);
     }
 

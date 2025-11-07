@@ -60,6 +60,16 @@ public class RuntimeRegistrationTest {
             public KeyStore getTrustStore() {
                 return ts;
             }
+
+            @Override
+            public boolean isTrustAll() {
+                return false;
+            }
+
+            @Override
+            public String getName() {
+                return "test";
+            }
         });
 
         TlsConfiguration conf = registry.get("named").orElseThrow();

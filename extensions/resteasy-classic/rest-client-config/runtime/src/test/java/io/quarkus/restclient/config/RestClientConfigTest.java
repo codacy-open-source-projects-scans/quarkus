@@ -2,12 +2,12 @@ package io.quarkus.restclient.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigInteger;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.microprofile.rest.client.ext.QueryParamStyle;
 import org.junit.jupiter.api.Test;
@@ -17,6 +17,7 @@ import io.quarkus.restclient.config.key.SharedOneConfigKeyRestClient;
 import io.quarkus.restclient.config.key.SharedThreeConfigKeyRestClient;
 import io.quarkus.restclient.config.key.SharedTwoConfigKeyRestClient;
 import io.quarkus.runtime.configuration.ConfigUtils;
+import io.smallrye.config.PropertiesConfigSource;
 import io.smallrye.config.SmallRyeConfig;
 import io.smallrye.config.SmallRyeConfigBuilder;
 import io.smallrye.config.SmallRyeConfigBuilderCustomizer;
@@ -70,6 +71,7 @@ class RestClientConfigTest {
         assertEquals(1, restClientsConfig.clients().size());
         assertTrue(restClientsConfig.clients().containsKey(ConfigKeyRestClient.class.getName()));
         verifyConfig(restClientsConfig.getClient(ConfigKeyRestClient.class));
+        assertTrue(restClientsConfig.getClient(ConfigKeyRestClient.class).disableDefaultMapper());
     }
 
     @Test
@@ -126,6 +128,7 @@ class RestClientConfigTest {
                         }.configBuilder(builder);
                     }
                 })
+                .withSources(new PropertiesConfigSource(Map.of("microprofile.rest.client.disable.default.mapper", "true"), ""))
                 .build();
 
         RestClientsConfig restClientsConfig = config.getConfigMapping(RestClientsConfig.class);
@@ -148,6 +151,7 @@ class RestClientConfigTest {
         assertTrue(clientConfig.proxyAddress().isPresent());
         assertTrue(clientConfig.queryParamStyle().isPresent());
         assertThat(clientConfig.queryParamStyle().get()).isEqualTo(QueryParamStyle.COMMA_SEPARATED);
+        assertThat(clientConfig.disableDefaultMapper()).isTrue();
     }
 
     @Test
@@ -312,16 +316,26 @@ class RestClientConfigTest {
     }
 
     @Test
-    void buildTimeConfig() {
+    void defaultPackage() {
+        RegisteredRestClient registeredRestClient = new RegisteredRestClient("FullNameRestClient", "FullNameRestClient", null);
+        // application.properties in test/resources
         SmallRyeConfig config = ConfigUtils.emptyConfigBuilder()
-                .withMapping(RestClientsBuildTimeConfig.class)
+                .withMapping(RestClientsConfig.class)
+                .withCustomizers(new SmallRyeConfigBuilderCustomizer() {
+                    @Override
+                    public void configBuilder(final SmallRyeConfigBuilder builder) {
+                        new AbstractRestClientConfigBuilder() {
+                            @Override
+                            public List<RegisteredRestClient> getRestClients() {
+                                return List.of(registeredRestClient);
+                            }
+                        }.configBuilder(builder);
+                    }
+                })
                 .build();
-        assertNotNull(config);
 
-        RestClientsBuildTimeConfig buildTimeConfig = config.getConfigMapping(RestClientsBuildTimeConfig.class)
-                .get(List.of(new RegisteredRestClient(ConfigKeyRestClient.class, "key")));
-
-        assertFalse(buildTimeConfig.clients().get(ConfigKeyRestClient.class.getName()).removesTrailingSlash());
+        RestClientsConfig restClientsConfig = config.getConfigMapping(RestClientsConfig.class);
+        assertEquals(1, restClientsConfig.clients().size());
     }
 
     private void verifyConfig(RestClientConfig config) {
@@ -343,9 +357,9 @@ class RestClientConfigTest {
         assertTrue(config.hostnameVerifier().isPresent());
         assertThat(config.hostnameVerifier().get()).isEqualTo("io.quarkus.restclient.configuration.MyHostnameVerifier");
         assertTrue(config.connectionTTL().isPresent());
-        assertThat(config.connectionTTL().get()).isEqualTo(30000);
+        assertThat(config.connectionTTL().getAsInt()).isEqualTo(30000);
         assertTrue(config.connectionPoolSize().isPresent());
-        assertThat(config.connectionPoolSize().get()).isEqualTo(10);
+        assertThat(config.connectionPoolSize().getAsInt()).isEqualTo(10);
         assertTrue(config.maxChunkSize().isPresent());
         assertThat(config.maxChunkSize().get().asBigInteger()).isEqualTo(BigInteger.valueOf(1024));
     }

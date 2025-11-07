@@ -11,12 +11,12 @@ import java.util.Objects;
 import java.util.Optional;
 
 import org.eclipse.microprofile.config.ConfigProvider;
-import org.eclipse.microprofile.config.ConfigValue;
 import org.eclipse.microprofile.config.spi.ConfigSource;
 import org.jboss.logging.Logger;
 
 import io.quarkus.runtime.ShutdownContext;
 import io.quarkus.runtime.annotations.Recorder;
+import io.smallrye.config.ConfigValue;
 import io.smallrye.config.SmallRyeConfig;
 
 @Recorder
@@ -95,6 +95,10 @@ public class ConfigRecorder {
         }
     }
 
+    public void deprecatedProperties(Map<String, String> deprecatedProperties) {
+        ConfigDiagnostic.deprecatedProperties(deprecatedProperties);
+    }
+
     public void unknownConfigFiles() throws Exception {
         ConfigDiagnostic.unknownConfigFiles(ConfigDiagnostic.configFilesFromLocations());
     }
@@ -104,6 +108,11 @@ public class ConfigRecorder {
         // While this may seem to duplicate code in IsolatedDevModeMain,
         // it actually does not because it operates on a different instance
         // of QuarkusConfigFactory from a different classloader.
+
+        if (shutdownContext == null) {
+            throw new RuntimeException(
+                    "Internal error: shutdownContext is null. This probably happened because Quarkus failed to start properly in an earlier step, or because tests were run on a Quarkus instance that had already been shut down.");
+        }
         shutdownContext.addLastShutdownTask(QuarkusConfigFactory::releaseTCCLConfig);
     }
 }

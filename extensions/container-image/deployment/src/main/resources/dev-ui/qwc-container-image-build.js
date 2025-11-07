@@ -31,9 +31,14 @@ export class QwcContainerImageBuild extends LitElement {
     }
 
     static styles = css`
+      :host {
+        padding-left: 5px;
+        padding-right: 5px;
+        display: flex;
+        flex-direction: column;
+       }
       .report {
         margin-top: 1em;
-        width: 80%;
       }
     `;
 
@@ -46,7 +51,7 @@ export class QwcContainerImageBuild extends LitElement {
         
         this.builders = [];
         if(builderTypes){
-            this.builders = builderTypes.list;
+            this.builders = builderTypes;
         }
 
         this.types = [];
@@ -121,13 +126,9 @@ export class QwcContainerImageBuild extends LitElement {
         this.build_error = false;
         this.result = "";
         this.jsonRpc.build({'type': this.selected_type, 'builder': this.selected_builder})
-            .onNext(jsonRpcResponse => {
+            .then(jsonRpcResponse => {
                 const msg = jsonRpcResponse.result;
-                if (msg === "started") {
-                    this.build_complete = false;
-                    this.build_in_progress = true;
-                    this.build_error = false;
-                } else if (msg.includes("created.")) {
+                if (msg.includes("created.")) {
                     this.result = msg;
                     this.build_complete = true;
                     this.build_in_progress = false;

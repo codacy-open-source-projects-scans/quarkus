@@ -198,6 +198,19 @@ public class ForwardedServerRequestWrapper extends HttpServerRequestWrapper impl
     }
 
     @Override
+    public HostAndPort authority(boolean real) {
+        if (real) {
+            return delegate.authority();
+        }
+        return this.authority();
+    }
+
+    @Override
+    public boolean isValidAuthority() {
+        return forwardedParser.authority() != null;
+    }
+
+    @Override
     public SocketAddress localAddress() {
         return delegate.localAddress();
     }

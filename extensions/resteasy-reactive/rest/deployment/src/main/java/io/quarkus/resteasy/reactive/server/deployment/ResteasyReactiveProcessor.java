@@ -61,6 +61,7 @@ import org.jboss.jandex.AnnotationTarget;
 import org.jboss.jandex.AnnotationTransformation;
 import org.jboss.jandex.AnnotationValue;
 import org.jboss.jandex.ClassInfo;
+import org.jboss.jandex.Declaration;
 import org.jboss.jandex.DotName;
 import org.jboss.jandex.FieldInfo;
 import org.jboss.jandex.IndexView;
@@ -131,6 +132,7 @@ import io.quarkus.arc.deployment.BeanContainerBuildItem;
 import io.quarkus.arc.deployment.BeanDiscoveryFinishedBuildItem;
 import io.quarkus.arc.deployment.GeneratedBeanBuildItem;
 import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
+import io.quarkus.arc.processor.KotlinUtils;
 import io.quarkus.arc.runtime.BeanContainer;
 import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.Capability;
@@ -162,6 +164,7 @@ import io.quarkus.netty.deployment.MinNettyAllocatorMaxOrderBuildItem;
 import io.quarkus.resteasy.reactive.common.deployment.AggregatedParameterContainersBuildItem;
 import io.quarkus.resteasy.reactive.common.deployment.ApplicationResultBuildItem;
 import io.quarkus.resteasy.reactive.common.deployment.FactoryUtils;
+import io.quarkus.resteasy.reactive.common.deployment.JaxRsSecurityConfig;
 import io.quarkus.resteasy.reactive.common.deployment.ParameterContainersBuildItem;
 import io.quarkus.resteasy.reactive.common.deployment.QuarkusFactoryCreator;
 import io.quarkus.resteasy.reactive.common.deployment.QuarkusResteasyReactiveDotNames;
@@ -169,7 +172,6 @@ import io.quarkus.resteasy.reactive.common.deployment.ResourceInterceptorsBuildI
 import io.quarkus.resteasy.reactive.common.deployment.ResourceScanningResultBuildItem;
 import io.quarkus.resteasy.reactive.common.deployment.SerializersUtil;
 import io.quarkus.resteasy.reactive.common.deployment.ServerDefaultProducesHandlerBuildItem;
-import io.quarkus.resteasy.reactive.common.runtime.JaxRsSecurityConfig;
 import io.quarkus.resteasy.reactive.common.runtime.ResteasyReactiveConfig;
 import io.quarkus.resteasy.reactive.server.EndpointDisabled;
 import io.quarkus.resteasy.reactive.server.runtime.QuarkusServerFileBodyHandler;
@@ -177,7 +179,6 @@ import io.quarkus.resteasy.reactive.server.runtime.QuarkusServerPathBodyHandler;
 import io.quarkus.resteasy.reactive.server.runtime.ResteasyReactiveInitialiser;
 import io.quarkus.resteasy.reactive.server.runtime.ResteasyReactiveRecorder;
 import io.quarkus.resteasy.reactive.server.runtime.ResteasyReactiveRuntimeRecorder;
-import io.quarkus.resteasy.reactive.server.runtime.ResteasyReactiveServerRuntimeConfig;
 import io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor;
 import io.quarkus.resteasy.reactive.server.runtime.exceptionmappers.AuthenticationCompletionExceptionMapper;
 import io.quarkus.resteasy.reactive.server.runtime.exceptionmappers.AuthenticationFailedExceptionMapper;
@@ -185,7 +186,9 @@ import io.quarkus.resteasy.reactive.server.runtime.exceptionmappers.Authenticati
 import io.quarkus.resteasy.reactive.server.runtime.exceptionmappers.ForbiddenExceptionMapper;
 import io.quarkus.resteasy.reactive.server.runtime.exceptionmappers.UnauthorizedExceptionMapper;
 import io.quarkus.resteasy.reactive.server.runtime.security.EagerSecurityContext;
-import io.quarkus.resteasy.reactive.server.runtime.security.EagerSecurityHandler;
+import io.quarkus.resteasy.reactive.server.runtime.security.EagerSecurityHandler.AuthZPolicyCustomizer;
+import io.quarkus.resteasy.reactive.server.runtime.security.EagerSecurityHandler.HttpPermissionsAndSecurityChecksCustomizer;
+import io.quarkus.resteasy.reactive.server.runtime.security.EagerSecurityHandler.HttpPermissionsOnlyCustomizer;
 import io.quarkus.resteasy.reactive.server.runtime.security.EagerSecurityInterceptorHandler;
 import io.quarkus.resteasy.reactive.server.runtime.security.SecurityContextOverrideHandler;
 import io.quarkus.resteasy.reactive.server.spi.AllowNotRestParametersBuildItem;
@@ -197,10 +200,12 @@ import io.quarkus.resteasy.reactive.server.spi.MethodScannerBuildItem;
 import io.quarkus.resteasy.reactive.server.spi.NonBlockingReturnTypeBuildItem;
 import io.quarkus.resteasy.reactive.server.spi.PreExceptionMapperHandlerBuildItem;
 import io.quarkus.resteasy.reactive.server.spi.ResumeOn404BuildItem;
+import io.quarkus.resteasy.reactive.server.spi.TargetJavaVersionBuildItem;
 import io.quarkus.resteasy.reactive.spi.CustomExceptionMapperBuildItem;
 import io.quarkus.resteasy.reactive.spi.DynamicFeatureBuildItem;
 import io.quarkus.resteasy.reactive.spi.EndpointValidationPredicatesBuildItem;
 import io.quarkus.resteasy.reactive.spi.ExceptionMapperBuildItem;
+import io.quarkus.resteasy.reactive.spi.GeneratedJaxRsResourceBuildItem;
 import io.quarkus.resteasy.reactive.spi.JaxrsFeatureBuildItem;
 import io.quarkus.resteasy.reactive.spi.MessageBodyReaderBuildItem;
 import io.quarkus.resteasy.reactive.spi.MessageBodyReaderOverrideBuildItem;
@@ -219,9 +224,10 @@ import io.quarkus.vertx.http.deployment.EagerSecurityInterceptorMethodsBuildItem
 import io.quarkus.vertx.http.deployment.FilterBuildItem;
 import io.quarkus.vertx.http.deployment.HttpSecurityUtils;
 import io.quarkus.vertx.http.deployment.RouteBuildItem;
-import io.quarkus.vertx.http.runtime.HttpBuildTimeConfig;
 import io.quarkus.vertx.http.runtime.RouteConstants;
+import io.quarkus.vertx.http.runtime.VertxHttpBuildTimeConfig;
 import io.quarkus.vertx.http.runtime.security.JaxRsPathMatchingHttpSecurityPolicy;
+import io.quarkus.vertx.http.runtime.security.SecurityHandlerPriorities;
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
@@ -471,7 +477,9 @@ public class ResteasyReactiveProcessor {
             ResourceInterceptorsBuildItem resourceInterceptorsBuildItem,
             Capabilities capabilities,
             Optional<AllowNotRestParametersBuildItem> allowNotRestParametersBuildItem,
-            List<EndpointValidationPredicatesBuildItem> validationPredicatesBuildItems) {
+            List<EndpointValidationPredicatesBuildItem> validationPredicatesBuildItems,
+            List<GeneratedJaxRsResourceBuildItem> generatedJaxRsResourcesBuildItems,
+            Optional<TargetJavaVersionBuildItem> maybeTargetJavaVersionBuildItem) {
 
         if (!resourceScanningResultBuildItem.isPresent()) {
             // no detected @Path, bail out
@@ -509,14 +517,22 @@ public class ResteasyReactiveProcessor {
 
             List<ResteasyReactiveResourceMethodEntriesBuildItem.Entry> resourceMethodEntries = new ArrayList<>();
 
+            // Generated JAX-RS resources are application classes
+            Set<String> applicationGeneratedJaxRsResources = generatedJaxRsResourcesBuildItems.stream()
+                    .map(r -> r.binaryName())
+                    .collect(Collectors.toSet());
+
             Predicate<String> applicationClassPredicate = s -> {
                 for (ApplicationClassPredicateBuildItem i : applicationClassPredicateBuildItems) {
                     if (i.test(s)) {
                         return true;
                     }
                 }
-                return false;
+                return applicationGeneratedJaxRsResources.contains(s);
             };
+
+            final boolean filtersAccessResourceMethod = filtersAccessResourceMethod(
+                    resourceInterceptorsBuildItem.getResourceInterceptors());
 
             BiConsumer<String, BiFunction<String, ClassVisitor, ClassVisitor>> transformationConsumer = (name,
                     function) -> bytecodeTransformerBuildItemBuildProducer
@@ -531,7 +547,8 @@ public class ResteasyReactiveProcessor {
                     .addContextTypes(additionalContextTypes(contextTypeBuildItems))
                     .setFactoryCreator(new QuarkusFactoryCreator(recorder, beanContainerBuildItem.getValue()))
                     .setEndpointInvokerFactory(
-                            new QuarkusInvokerFactory(generatedClassBuildItemBuildProducer, recorder))
+                            new QuarkusInvokerFactory(applicationClassPredicate, generatedClassBuildItemBuildProducer,
+                                    recorder))
                     .setGeneratedClassBuildItemBuildProducer(generatedClassBuildItemBuildProducer)
                     .setExistingConverters(existingConverters)
                     .setScannedResourcePaths(scannedResourcePaths)
@@ -554,7 +571,8 @@ public class ResteasyReactiveProcessor {
                                         initConverters.getMethodParam(0));
                             }))
                     .setConverterSupplierIndexerExtension(new GeneratedConverterIndexerExtension(
-                            (name) -> new GeneratedClassGizmoAdaptor(generatedClassBuildItemBuildProducer, true)))
+                            (name) -> new GeneratedClassGizmoAdaptor(generatedClassBuildItemBuildProducer,
+                                    applicationClassPredicate.test(name))))
                     .setHasRuntimeConverters(!paramConverterProviders.getParamConverterProviders().isEmpty())
                     .setClassLevelExceptionMappers(
                             classLevelExceptionMappers.isPresent() ? classLevelExceptionMappers.get().getMappers()
@@ -609,12 +627,12 @@ public class ResteasyReactiveProcessor {
                                 }
                             }
 
-                            if (paramsRequireReflection ||
+                            if (filtersAccessResourceMethod ||
+                                    paramsRequireReflection ||
                                     MULTI.toString().equals(entry.getResourceMethod().getSimpleReturnType()) ||
                                     REST_MULTI.toString().equals(entry.getResourceMethod().getSimpleReturnType()) ||
                                     PUBLISHER.toString().equals(entry.getResourceMethod().getSimpleReturnType()) ||
                                     LEGACY_PUBLISHER.toString().equals(entry.getResourceMethod().getSimpleReturnType()) ||
-                                    filtersAccessResourceMethod(resourceInterceptorsBuildItem.getResourceInterceptors()) ||
                                     entry.additionalRegisterClassForReflectionCheck()) {
                                 minimallyRegisterResourceClassForReflection(entry, reflectiveClassBuildItemBuildProducer);
                             }
@@ -645,27 +663,8 @@ public class ResteasyReactiveProcessor {
                     .setApplicationClassPredicate(applicationClassPredicate)
                     .setValidateEndpoint(validationPredicatesBuildItems.stream().map(item -> item.getPredicate())
                             .collect(Collectors.toUnmodifiableList()))
-                    .setTargetJavaVersion(new TargetJavaVersion() {
-
-                        private final Status result;
-
-                        {
-                            CompiledJavaVersionBuildItem.JavaVersion.Status status = compiledJavaVersionBuildItem
-                                    .getJavaVersion().isJava19OrHigher();
-                            if (status == CompiledJavaVersionBuildItem.JavaVersion.Status.FALSE) {
-                                result = Status.FALSE;
-                            } else if (status == CompiledJavaVersionBuildItem.JavaVersion.Status.TRUE) {
-                                result = Status.TRUE;
-                            } else {
-                                result = Status.UNKNOWN;
-                            }
-                        }
-
-                        @Override
-                        public Status isJava19OrHigher() {
-                            return result;
-                        }
-                    })
+                    .setTargetJavaVersion(
+                            determineTargetJavaVersion(compiledJavaVersionBuildItem, maybeTargetJavaVersionBuildItem))
                     .setIsDisabledCreator(new Function<>() {
                         @Override
                         public Supplier<Boolean> apply(ClassInfo classInfo) {
@@ -679,7 +678,8 @@ public class ResteasyReactiveProcessor {
                             boolean disableIfMissing = disableIfMissingValue != null && disableIfMissingValue.asBoolean();
                             return recorder.disableIfPropertyMatches(propertyName, propertyValue, disableIfMissing);
                         }
-                    });
+                    })
+                    .alreadyHandledRequestScopedResources(result.getRequestScopedResources());
 
             serverEndpointIndexerBuilder.skipNotRestParameters(allowNotRestParametersBuildItem.isPresent());
 
@@ -723,14 +723,59 @@ public class ResteasyReactiveProcessor {
 
             checkForDuplicateEndpoint(config, allServerMethods);
 
+            Function<MethodInfo, DotName> methodToReturnName = new Function<MethodInfo, DotName>() {
+                @Override
+                public DotName apply(MethodInfo method) {
+                    var type = method.returnType();
+                    if (type.name().equals(DotName.OBJECT_NAME) && KotlinUtils.isKotlinSuspendMethod(method)) {
+                        type = KotlinUtils.getKotlinSuspendMethodResult(method);
+                    }
+                    DotName typeName = type.name();
+                    if (type.kind() == Type.Kind.CLASS) {
+                        return typeName;
+                    } else if (type.kind() == Type.Kind.PARAMETERIZED_TYPE) {
+                        if (DotNames.CLASS_NAME.equals(typeName)) {
+                            // spec allows for Class<SubResource> to be returned that the container should instantiate
+                            return type.asParameterizedType().arguments().get(0).name();
+                        } else {
+                            return typeName;
+                        }
+                    }
+                    return null;
+                }
+            };
+
+            // Provides a predicate for filtering classes/methods that have annotations from one of the client
+            // packages. This only reduces the false positives as a "base" interface could be derived and
+            // client-related annotation applies. Although it seems unlikely that an endpoint without any
+            // client annotations violates the specification for server resources methods; this type of false
+            // positive would only mean needless processing as there would be no exception thrown.
+            Predicate<AnnotationInstance> knownClientAnnotation = new Predicate<AnnotationInstance>() {
+                public boolean test(AnnotationInstance ann) {
+                    return ann.name().packagePrefix().startsWith("io.quarkus.rest.client") ||
+                            ann.name().packagePrefix().startsWith("org.eclipse.microprofile.rest.client") ||
+                            ann.name().packagePrefix().startsWith("org.jboss.resteasy.reactive.client");
+                }
+            };
+
+            Map<DotName, Set<DotName>> returnsBySubResources = new HashMap<>();
             //now index possible sub resources. These are all classes that have method annotations
             //that are not annotated @Path
-            Deque<ClassInfo> toScan = new ArrayDeque<>();
             for (DotName methodAnnotation : result.getHttpAnnotationToMethod().keySet()) {
                 for (AnnotationInstance instance : index.getAnnotations(methodAnnotation)) {
                     MethodInfo method = instance.target().asMethod();
                     ClassInfo classInfo = method.declaringClass();
-                    toScan.add(classInfo);
+
+                    // Reject known client interfaces (See predicate above)
+                    if (classInfo.asClass().declaredAnnotations().stream().anyMatch(knownClientAnnotation)
+                            || method.annotations().stream().anyMatch(knownClientAnnotation)
+                            || method.parameters().stream().flatMap(p -> p.annotations().stream())
+                                    .anyMatch(knownClientAnnotation)) {
+                        continue;
+                    }
+
+                    returnsBySubResources.computeIfAbsent(classInfo.name(), ignored -> new HashSet<>())
+                            .add(methodToReturnName.apply(method));
                 }
             }
             //sub resources can also have just a path annotation
@@ -739,46 +784,120 @@ public class ResteasyReactiveProcessor {
                 if (instance.target().kind() == AnnotationTarget.Kind.METHOD) {
                     MethodInfo method = instance.target().asMethod();
                     ClassInfo classInfo = method.declaringClass();
-                    toScan.add(classInfo);
-                }
-            }
-            Map<DotName, ClassInfo> possibleSubResources = new HashMap<>();
-            Set<String> resourceClassNames = null;
-            while (!toScan.isEmpty()) {
-                ClassInfo classInfo = toScan.poll();
-                if (scannedResources.containsKey(classInfo.name()) ||
-                        pathInterfaces.containsKey(classInfo.name()) ||
-                        possibleSubResources.containsKey(classInfo.name())) {
-                    continue;
-                }
-                possibleSubResources.put(classInfo.name(), classInfo);
 
-                if (classInfo.isInterface()) {
-                    int resourceClassImplCount = 0;
-                    if (resourceClassNames == null) {
-                        resourceClassNames = resourceClasses.stream().map(ResourceClass::getClassName)
-                                .collect(Collectors.toSet());
-                    }
-                    for (ClassInfo impl : index.getAllKnownImplementors(classInfo.name())) {
-                        if (resourceClassNames.contains(impl.name().toString())) {
-                            resourceClassImplCount++;
-                        }
-                    }
-                    if (resourceClassImplCount > 1) {
-                        // this is the case were an interface doesn't denote a subresource, but it's simply used
-                        // to share method and annotations between Resource classes
+                    // Reject known client interfaces (See predicate above)
+                    if (classInfo.asClass().declaredAnnotations().stream().anyMatch(knownClientAnnotation)
+                            || method.annotations().stream().anyMatch(knownClientAnnotation)
+                            || method.parameters().stream().flatMap(p -> p.annotations().stream())
+                                    .anyMatch(knownClientAnnotation)) {
                         continue;
                     }
+
+                    returnsBySubResources.computeIfAbsent(classInfo.name(), ignored -> new HashSet<>())
+                            .add(methodToReturnName.apply(method));
+                }
+            }
+
+            // build up index of sub resources and their child classes
+            // to later make it easier to figure out, if a given class a child of any possible sub resource.
+            Map<DotName, Set<DotName>> subClassesBySubResources = new HashMap<>();
+            for (DotName dotName : returnsBySubResources.keySet()) {
+                Set<DotName> all = new HashSet<>();
+                all.add(dotName);
+                index.getAllKnownSubclasses(dotName).forEach(c2 -> all.add(c2.name()));
+                index.getAllKnownSubinterfaces(dotName).forEach(c2 -> all.add(c2.name()));
+                index.getAllKnownImplementors(dotName).forEach(c2 -> all.add(c2.name()));
+
+                subClassesBySubResources.put(dotName, all);
+            }
+
+            // Iterate starting from the root resource classes
+            Set<DotName> resourceClassNames = new HashSet<>();
+            for (ResourceClass resourceClass : resourceClasses) {
+                resourceClassNames.add(DotName.createSimple(resourceClass.getClassName()));
+            }
+            Deque<DotName> workQueue = new ArrayDeque<>(resourceClassNames);
+
+            Map<DotName, Set<DotName>> childs = new HashMap<>();
+            Set<DotName> seen = new HashSet<>();
+            // Set of classes that where determined to maybe be reachable and have to be indexed
+            List<ClassInfo> toScan = new ArrayList<>();
+            while (!workQueue.isEmpty()) {
+                DotName poll = workQueue.poll();
+                if (!seen.add(poll)) {
+                    continue;
+                }
+
+                Set<DotName> foundParentSubResources = new HashSet<>();
+                if (resourceClassNames.contains(poll)) {
+                    foundParentSubResources.add(poll);
+                }
+                subClassesBySubResources.forEach((subResource, childClasses) -> {
+                    if (childClasses.contains(poll)) {
+                        foundParentSubResources.add(subResource);
+                    }
+                });
+
+                if (!foundParentSubResources.isEmpty()) {
+                    toScan.add(index.getClassByName(poll));
+                }
+
+                if (!foundParentSubResources.contains(poll)) {
+                    // might be an extending interface, which itself is not a subresource locator
+                    // It will get indexed, but it does not contain any further links to other subresources
+                    continue;
+                }
+
+                Set<DotName> methodReturnTypes = new HashSet<>();
+                for (DotName dotName : foundParentSubResources) {
+                    if (returnsBySubResources.containsKey(dotName)) {
+                        methodReturnTypes.addAll(returnsBySubResources.get(dotName));
+                    }
+                }
+
+                for (DotName methodReturnType : methodReturnTypes) {
+                    Set<DotName> decls = childs.computeIfAbsent(methodReturnType, dotName -> {
+                        if (dotName == null) {
+                            return Collections.emptySet();
+                        }
+
+                        Set<DotName> all = new HashSet<>();
+                        if (DotNames.OBJECT_NAME.equals(dotName)) {
+                            all.addAll(returnsBySubResources.keySet());
+                            for (DotName name : returnsBySubResources.keySet()) {
+                                //we need to also look for all subclasses and interfaces
+                                //they may have type variables that need to be handled
+                                index.getAllKnownSubclasses(name).forEach(c2 -> all.add(c2.name()));
+                                index.getAllKnownSubinterfaces(name).forEach(c2 -> all.add(c2.name()));
+                                index.getAllKnownImplementors(name).forEach(c2 -> all.add(c2.name()));
+                            }
+                        } else {
+                            // index the returntype, might already be a sub resource locator
+                            all.add(dotName);
+
+                            //we need to also look for all subclasses and interfaces
+                            //they may have type variables that need to be handled
+                            index.getAllKnownSubclasses(dotName).forEach(c2 -> all.add(c2.name()));
+                            index.getAllKnownSubinterfaces(dotName).forEach(c2 -> all.add(c2.name()));
+                            index.getAllKnownImplementors(dotName).forEach(c2 -> all.add(c2.name()));
+                        }
+
+                        return all;
+                    });
+                    workQueue.addAll(decls);
+                }
+            }
+
+            for (ClassInfo classInfo : toScan) {
+                if (scannedResources.containsKey(classInfo.name()) ||
+                        pathInterfaces.containsKey(classInfo.name())) {
+                    continue;
                 }
 
                 Optional<ResourceClass> endpoints = serverEndpointIndexer.createEndpoints(classInfo, false);
                 if (endpoints.isPresent()) {
                     subResourceClasses.add(endpoints.get());
                 }
-                //we need to also look for all subclasses and interfaces
-                //they may have type variables that need to be handled
-                toScan.addAll(index.getKnownDirectImplementors(classInfo.name()));
-                toScan.addAll(index.getKnownDirectSubclasses(classInfo.name()));
             }
 
             setupEndpointsResultProducer.produce(new SetupEndpointsResultBuildItem(resourceClasses, subResourceClasses,
@@ -790,6 +909,35 @@ public class ResteasyReactiveProcessor {
         }
 
         handleDateFormatReflection(reflectiveClassBuildItemBuildProducer, index);
+    }
+
+    private static TargetJavaVersion determineTargetJavaVersion(CompiledJavaVersionBuildItem compiledJavaVersionBuildItem,
+            Optional<TargetJavaVersionBuildItem> maybeTargetJavaVersionBuildItem) {
+        if (maybeTargetJavaVersionBuildItem.isPresent()) {
+            return maybeTargetJavaVersionBuildItem.get().getTargetJavaVersion();
+        } else {
+            return new TargetJavaVersion() {
+
+                private final Status result;
+
+                {
+                    CompiledJavaVersionBuildItem.JavaVersion.Status status = compiledJavaVersionBuildItem
+                            .getJavaVersion().isJava19OrHigher();
+                    if (status == CompiledJavaVersionBuildItem.JavaVersion.Status.FALSE) {
+                        result = Status.FALSE;
+                    } else if (status == CompiledJavaVersionBuildItem.JavaVersion.Status.TRUE) {
+                        result = Status.TRUE;
+                    } else {
+                        result = Status.UNKNOWN;
+                    }
+                }
+
+                @Override
+                public Status isJava19OrHigher() {
+                    return result;
+                }
+            };
+        }
     }
 
     // TODO: this is really just a hackish way of allowing the use of @Mock so we might need something better
@@ -893,83 +1041,84 @@ public class ResteasyReactiveProcessor {
         Set<DotName> nonRecordParameterContainerClassNames = aggregatedParameterContainersBuildItem.getNonRecordClassNames();
 
         annotationsTransformer.produce(new io.quarkus.arc.deployment.AnnotationsTransformerBuildItem(
-                new io.quarkus.arc.processor.AnnotationsTransformer() {
+                AnnotationTransformation.builder().whenDeclaration(
+                        new Predicate<>() {
+                            @Override
+                            public boolean test(Declaration declaration) {
+                                return declaration.kind() == AnnotationTarget.Kind.CLASS
+                                        || declaration.kind() == AnnotationTarget.Kind.FIELD;
+                            }
+                        }).transform(new Consumer<>() {
+                            @Override
+                            public void accept(AnnotationTransformation.TransformationContext context) {
+                                if (context.declaration().kind() == AnnotationTarget.Kind.CLASS) {
+                                    ClassInfo clazz = context.declaration().asClass();
+                                    // check if the class is one of resources/sub-resources
+                                    if (allResources.contains(clazz.name())
+                                            && clazz.declaredAnnotation(ResteasyReactiveDotNames.TYPED) == null) {
+                                        context.add(createTypedAnnotationInstance(clazz, beanArchiveIndexBuildItem));
+                                        return;
+                                    }
+                                    // check if the class is one of providers, either explicitly declaring the annotation
+                                    // or discovered as resource interceptor or filter
+                                    if ((clazz.declaredAnnotation(ResteasyReactiveDotNames.PROVIDER) != null
+                                            || filtersAndInterceptors.contains(clazz.name().toString()))
+                                            && clazz.declaredAnnotation(ResteasyReactiveDotNames.TYPED) == null) {
+                                        // Add @Typed(MyResource.class)
+                                        context.add(createTypedAnnotationInstance(clazz, beanArchiveIndexBuildItem));
+                                        return;
+                                    }
+                                    // check if the class is a parameter container
+                                    if (nonRecordParameterContainerClassNames.contains(clazz.name())
+                                            && clazz.declaredAnnotation(ResteasyReactiveDotNames.TYPED) == null) {
+                                        // Add @Typed(MyBean.class)
+                                        context.add(createTypedAnnotationInstance(clazz, beanArchiveIndexBuildItem));
+                                        return;
+                                    }
+                                } else if (context.declaration().kind() == AnnotationTarget.Kind.FIELD) {
+                                    FieldInfo field = context.declaration().asField();
+                                    ClassInfo declaringClass = field.declaringClass();
+                                    // remove @BeanParam annotations from record fields
+                                    if (declaringClass.isRecord()
+                                            && field.declaredAnnotation(ResteasyReactiveDotNames.BEAN_PARAM) != null) {
+                                        context.remove(a -> a.name().equals(ResteasyReactiveDotNames.BEAN_PARAM));
+                                        return;
+                                    }
+                                    // also remove @BeanParam annotations targeting records
+                                    if (field.declaredAnnotation(ResteasyReactiveDotNames.BEAN_PARAM) != null
+                                            && isRecord(resourceScanningResultBuildItem.getResult().getIndex(),
+                                                    field.type().asClassType().name())) {
+                                        context.remove(a -> a.name().equals(ResteasyReactiveDotNames.BEAN_PARAM));
+                                        return;
+                                    }
 
-                    @Override
-                    public boolean appliesTo(AnnotationTarget.Kind kind) {
-                        return kind == AnnotationTarget.Kind.CLASS || kind == AnnotationTarget.Kind.FIELD;
-                    }
-
-                    @Override
-                    public void transform(TransformationContext context) {
-                        if (context.getTarget().kind() == AnnotationTarget.Kind.CLASS) {
-                            ClassInfo clazz = context.getTarget().asClass();
-                            // check if the class is one of resources/sub-resources
-                            if (allResources.contains(clazz.name())
-                                    && clazz.declaredAnnotation(ResteasyReactiveDotNames.TYPED) == null) {
-                                context.transform().add(createTypedAnnotationInstance(clazz, beanArchiveIndexBuildItem)).done();
-                                return;
-                            }
-                            // check if the class is one of providers, either explicitly declaring the annotation
-                            // or discovered as resource interceptor or filter
-                            if ((clazz.declaredAnnotation(ResteasyReactiveDotNames.PROVIDER) != null
-                                    || filtersAndInterceptors.contains(clazz.name().toString()))
-                                    && clazz.declaredAnnotation(ResteasyReactiveDotNames.TYPED) == null) {
-                                // Add @Typed(MyResource.class)
-                                context.transform().add(createTypedAnnotationInstance(clazz, beanArchiveIndexBuildItem)).done();
-                                return;
-                            }
-                            // check if the class is a parameter container
-                            if (nonRecordParameterContainerClassNames.contains(clazz.name())
-                                    && clazz.declaredAnnotation(ResteasyReactiveDotNames.TYPED) == null) {
-                                // Add @Typed(MyBean.class)
-                                context.transform().add(createTypedAnnotationInstance(clazz, beanArchiveIndexBuildItem)).done();
-                                return;
-                            }
-                        } else if (context.getTarget().kind() == AnnotationTarget.Kind.FIELD) {
-                            FieldInfo field = context.getTarget().asField();
-                            ClassInfo declaringClass = field.declaringClass();
-                            // remove @BeanParam annotations from record fields
-                            if (declaringClass.isRecord()
-                                    && field.declaredAnnotation(ResteasyReactiveDotNames.BEAN_PARAM) != null) {
-                                context.transform().remove(a -> a.name().equals(ResteasyReactiveDotNames.BEAN_PARAM)).done();
-                                return;
-                            }
-                            // also remove @BeanParam annotations targeting records
-                            if (field.declaredAnnotation(ResteasyReactiveDotNames.BEAN_PARAM) != null
-                                    && isRecord(resourceScanningResultBuildItem.getResult().getIndex(),
-                                            field.type().asClassType().name())) {
-                                context.transform().remove(a -> a.name().equals(ResteasyReactiveDotNames.BEAN_PARAM)).done();
-                                return;
+                                }
                             }
 
-                        }
-                    }
-
-                    private boolean isRecord(IndexView index, DotName name) {
-                        ClassInfo classInfo = index.getClassByName(name);
-                        return classInfo.isRecord();
-                    }
-                }));
+                            private boolean isRecord(IndexView index, DotName name) {
+                                ClassInfo classInfo = index.getClassByName(name);
+                                return classInfo.isRecord();
+                            }
+                        })));
     }
 
     private AnnotationInstance createTypedAnnotationInstance(ClassInfo clazz,
             BeanArchiveIndexBuildItem beanArchiveIndexBuildItem) {
-        Set<DotName> interfaceNames = new HashSet<>();
+        Set<DotName> allBeanTypes = new HashSet<>();
+        allBeanTypes.add(clazz.name());
+
         ClassInfo currentClazz = clazz;
-        while (!ResteasyReactiveDotNames.OBJECT.equals(currentClazz.name())) {
-            currentClazz.interfaceNames().forEach(iface -> interfaceNames.add(iface));
-            // inspect super class
+        while (!ResteasyReactiveDotNames.OBJECT.equals(currentClazz.name()) && currentClazz != null) {
+            if (currentClazz.isAbstract()) {
+                allBeanTypes.add(currentClazz.name());
+            }
+            allBeanTypes.addAll(getAllParentInterfaces(currentClazz.interfaceNames(), beanArchiveIndexBuildItem));
             currentClazz = beanArchiveIndexBuildItem.getIndex().getClassByName(currentClazz.superName());
         }
-        Set<DotName> allInterfaces = new HashSet<>();
-        recursiveInterfaceSearch(interfaceNames, allInterfaces, beanArchiveIndexBuildItem);
-        AnnotationValue[] annotationValues = new AnnotationValue[allInterfaces.size() + 1];
-        // always add the bean impl class
-        annotationValues[0] = AnnotationValue.createClassValue("value",
-                Type.create(clazz.name(), Type.Kind.CLASS));
-        Iterator<DotName> iterator = allInterfaces.iterator();
-        for (int i = 1; i < annotationValues.length; i++) {
+
+        AnnotationValue[] annotationValues = new AnnotationValue[allBeanTypes.size()];
+        Iterator<DotName> iterator = allBeanTypes.iterator();
+        for (int i = 0; i < annotationValues.length; i++) {
             annotationValues[i] = AnnotationValue.createClassValue("value",
                     Type.create(iterator.next(), Type.Kind.CLASS));
         }
@@ -978,9 +1127,9 @@ public class ResteasyReactiveProcessor {
                         annotationValues) });
     }
 
-    private void recursiveInterfaceSearch(Set<DotName> interfacesToProcess, Set<DotName> allDiscoveredInterfaces,
+    private Set<DotName> getAllParentInterfaces(Collection<DotName> interfacesToProcess,
             BeanArchiveIndexBuildItem beanArchiveIndexBuildItem) {
-        allDiscoveredInterfaces.addAll(interfacesToProcess);
+        Set<DotName> allDiscoveredInterfaces = new HashSet<DotName>(interfacesToProcess);
         Set<DotName> additionalInterfacesToProcess = new HashSet<>();
         for (DotName name : interfacesToProcess) {
             ClassInfo clazz = beanArchiveIndexBuildItem.getIndex().getClassByName(name);
@@ -991,8 +1140,10 @@ public class ResteasyReactiveProcessor {
         }
         if (!additionalInterfacesToProcess.isEmpty()) {
             // recursively process newly found interfaces
-            recursiveInterfaceSearch(additionalInterfacesToProcess, allDiscoveredInterfaces, beanArchiveIndexBuildItem);
+            allDiscoveredInterfaces.addAll(getAllParentInterfaces(additionalInterfacesToProcess, beanArchiveIndexBuildItem));
         }
+
+        return allDiscoveredInterfaces;
     }
 
     private Collection<DotName> additionalContextTypes(List<ContextTypeBuildItem> contextTypeBuildItems) {
@@ -1251,7 +1402,7 @@ public class ResteasyReactiveProcessor {
             ResteasyReactiveRecorder recorder,
             RecorderContext recorderContext,
             ShutdownContextBuildItem shutdownContext,
-            HttpBuildTimeConfig vertxConfig,
+            VertxHttpBuildTimeConfig httpBuildTimeConfig,
             SetupEndpointsResultBuildItem setupEndpointsResult,
             ServerSerialisersBuildItem serverSerialisersBuildItem,
             List<PreExceptionMapperHandlerBuildItem> preExceptionMapperHandlerBuildItems,
@@ -1391,7 +1542,7 @@ public class ResteasyReactiveProcessor {
         }
 
         RuntimeValue<Deployment> deployment = recorder.createDeployment(deploymentPath, deploymentInfo,
-                beanContainerBuildItem.getValue(), shutdownContext, vertxConfig,
+                beanContainerBuildItem.getValue(), shutdownContext, httpBuildTimeConfig,
                 requestContextFactoryBuildItem.map(RequestContextFactoryBuildItem::getFactory).orElse(null),
                 initClassFactory, launchModeBuildItem.getLaunchMode(), servletPresent);
 
@@ -1405,7 +1556,7 @@ public class ResteasyReactiveProcessor {
             final boolean noCustomAuthCompletionExMapper;
             final boolean noCustomAuthFailureExMapper;
             final boolean noCustomAuthRedirectExMapper;
-            if (vertxConfig.auth.proactive) {
+            if (httpBuildTimeConfig.auth().proactive()) {
                 noCustomAuthCompletionExMapper = notFoundCustomExMapper(AuthenticationCompletionException.class.getName(),
                         AuthenticationCompletionExceptionMapper.class.getName(), exceptionMapping);
                 noCustomAuthFailureExMapper = notFoundCustomExMapper(AuthenticationFailedException.class.getName(),
@@ -1420,7 +1571,7 @@ public class ResteasyReactiveProcessor {
             }
 
             Handler<RoutingContext> failureHandler = recorder.failureHandler(restInitialHandler, noCustomAuthCompletionExMapper,
-                    noCustomAuthFailureExMapper, noCustomAuthRedirectExMapper, vertxConfig.auth.proactive);
+                    noCustomAuthFailureExMapper, noCustomAuthRedirectExMapper, httpBuildTimeConfig.auth().proactive());
 
             // we add failure handler right before QuarkusErrorHandler
             // so that user can define failure handlers that precede exception mappers
@@ -1483,7 +1634,7 @@ public class ResteasyReactiveProcessor {
         // replace default auth failure handler added by vertx-http so that our exception mappers can customize response
         return new FilterBuildItem(
                 recorder.defaultAuthFailureHandler(deployment.getDeployment(), observabilityIntegrationBuildItem.isPresent()),
-                FilterBuildItem.AUTHENTICATION - 1);
+                SecurityHandlerPriorities.AUTHENTICATION - 1);
     }
 
     private void checkForDuplicateEndpoint(ResteasyReactiveConfig config, Map<String, List<EndpointConfig>> allMethods) {
@@ -1568,13 +1719,12 @@ public class ResteasyReactiveProcessor {
     @Record(ExecutionTime.RUNTIME_INIT)
     public void runtimeConfiguration(ResteasyReactiveRuntimeRecorder recorder,
             Optional<ResteasyReactiveDeploymentBuildItem> deployment,
-            ResteasyReactiveServerRuntimeConfig resteasyReactiveServerRuntimeConf,
             BuildProducer<HandlerConfigurationProviderBuildItem> producer) {
         if (deployment.isEmpty()) {
             return;
         }
         producer.produce(new HandlerConfigurationProviderBuildItem(RuntimeConfiguration.class,
-                recorder.runtimeConfiguration(deployment.get().getDeployment(), resteasyReactiveServerRuntimeConf)));
+                recorder.runtimeConfiguration(deployment.get().getDeployment())));
     }
 
     @BuildStep
@@ -1664,7 +1814,8 @@ public class ResteasyReactiveProcessor {
         var requiresSecurityCheck = interceptedMethods.get(method);
         final HandlerChainCustomizer eagerSecCustomizer;
         if (requiresSecurityCheck && !applyAuthorizationPolicy) {
-            eagerSecCustomizer = EagerSecurityHandler.Customizer.newInstance(false);
+            // standard security annotation and possibly authorization using configuration
+            eagerSecCustomizer = new HttpPermissionsAndSecurityChecksCustomizer();
         } else {
             eagerSecCustomizer = newEagerSecurityHandlerCustomizerInstance(originalMethod, endpointImpl,
                     withDefaultSecurityCheck, applyAuthorizationPolicy, permsAllowedMetaAnnotationItem);
@@ -1676,13 +1827,16 @@ public class ResteasyReactiveProcessor {
             boolean withDefaultSecurityCheck, boolean applyAuthorizationPolicy,
             PermissionsAllowedMetaAnnotationBuildItem permsAllowedMetaAnnotationItem) {
         if (applyAuthorizationPolicy) {
-            return EagerSecurityHandler.Customizer.newInstanceWithAuthorizationPolicy();
+            // @AuthorizationPolicy and possibly authorization using configuration
+            return new AuthZPolicyCustomizer();
         }
         if (withDefaultSecurityCheck
                 || consumesStandardSecurityAnnotations(method, endpointImpl, permsAllowedMetaAnnotationItem)) {
-            return EagerSecurityHandler.Customizer.newInstance(false);
+            // standard security annotation and possibly authorization using configuration
+            return new HttpPermissionsAndSecurityChecksCustomizer();
         }
-        return EagerSecurityHandler.Customizer.newInstance(true);
+        // authorization using configuration that applies to JAX-RS only
+        return new HttpPermissionsOnlyCustomizer();
     }
 
     /**

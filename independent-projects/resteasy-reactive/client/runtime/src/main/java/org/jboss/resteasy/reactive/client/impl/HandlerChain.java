@@ -36,11 +36,13 @@ class HandlerChain {
 
     private ClientRestHandler preClientSendHandler = null;
 
-    public HandlerChain(boolean captureStacktrace, int maxChunkSize, boolean followRedirects, LoggingScope loggingScope,
+    public HandlerChain(boolean captureStacktrace, int maxChunkSize, int inputStreamChunkSize, boolean followRedirects,
+            LoggingScope loggingScope,
             Map<Class<?>, MultipartResponseData> multipartData, ClientLogger clientLogger) {
         this.clientCaptureCurrentContextRestHandler = new ClientCaptureCurrentContextRestHandler(captureStacktrace);
         this.clientSwitchToRequestContextRestHandler = new ClientSwitchToRequestContextRestHandler();
-        this.clientSendHandler = new ClientSendRequestHandler(maxChunkSize, followRedirects, loggingScope, clientLogger,
+        this.clientSendHandler = new ClientSendRequestHandler(maxChunkSize, inputStreamChunkSize, followRedirects, loggingScope,
+                clientLogger,
                 multipartData);
         this.clientSetResponseEntityRestHandler = new ClientSetResponseEntityRestHandler();
         this.clientResponseCompleteRestHandler = new ClientResponseCompleteRestHandler();
@@ -85,16 +87,17 @@ class HandlerChain {
         if (preClientSendHandler != null) {
             result.add(preClientSendHandler);
         }
+        result.add(clientCaptureCurrentContextRestHandler);
         for (int i = 0; i < requestFilters.size(); i++) {
             result.add(new ClientRequestFilterRestHandler(requestFilters.get(i)));
         }
-        result.add(clientCaptureCurrentContextRestHandler);
         result.add(clientSwitchToRequestContextRestHandler);
         result.add(clientSendHandler);
         result.add(clientSetResponseEntityRestHandler);
         result.add(new PreResponseFilterHandler());
         for (int i = 0; i < responseFilters.size(); i++) {
-            result.add(new ClientResponseFilterRestHandler(responseFilters.get(i)));
+            ClientResponseFilter filter = responseFilters.get(i);
+            result.add(new ClientResponseFilterRestHandler(filter, filter instanceof PreservesThreadClientResponseFilter));
         }
         result.add(clientResponseCompleteRestHandler);
         return result.toArray(EMPTY_REST_HANDLERS);
@@ -107,7 +110,7 @@ class HandlerChain {
         }
         List<ClientRestHandler> result = new ArrayList<>(1 + responseFilters.size());
         for (int i = 0; i < responseFilters.size(); i++) {
-            result.add(new ClientResponseFilterRestHandler(responseFilters.get(i)));
+            result.add(new ClientResponseFilterRestHandler(responseFilters.get(i), true));
         }
         result.add(clientErrorHandler);
         return result.toArray(EMPTY_REST_HANDLERS);

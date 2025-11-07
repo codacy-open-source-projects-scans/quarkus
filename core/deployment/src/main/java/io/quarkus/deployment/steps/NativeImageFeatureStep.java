@@ -50,11 +50,6 @@ public class NativeImageFeatureStep {
             "initializeAtRunTime", void.class, Class[].class);
     private static final MethodDescriptor INITIALIZE_PACKAGES_AT_RUN_TIME = ofMethod(RuntimeClassInitialization.class,
             "initializeAtRunTime", void.class, String[].class);
-    public static final String RUNTIME_CLASS_INITIALIZATION_SUPPORT = "org.graalvm.nativeimage.impl.RuntimeClassInitializationSupport";
-    private static final MethodDescriptor RERUN_INITIALIZATION = ofMethod(
-            RUNTIME_CLASS_INITIALIZATION_SUPPORT,
-            "rerunInitialization", void.class, Class.class, String.class);
-
     static final String BEFORE_ANALYSIS_ACCESS = Feature.BeforeAnalysisAccess.class.getName();
 
     @BuildStep
@@ -94,15 +89,7 @@ public class NativeImageFeatureStep {
                 overallCatch.marshalAsArray(String.class, overallCatch.load(""))); // empty string means initialize everything
 
         // Set the user.language and user.country system properties to the default locale
-        // The deprecated option takes precedence for users who are already using it.
-        if (nativeConfig.userLanguage().isPresent()) {
-            overallCatch.invokeStaticMethod(REGISTER_RUNTIME_SYSTEM_PROPERTIES,
-                    overallCatch.load("user.language"), overallCatch.load(nativeConfig.userLanguage().get()));
-            if (nativeConfig.userCountry().isPresent()) {
-                overallCatch.invokeStaticMethod(REGISTER_RUNTIME_SYSTEM_PROPERTIES,
-                        overallCatch.load("user.country"), overallCatch.load(nativeConfig.userCountry().get()));
-            }
-        } else if (localesBuildTimeConfig.defaultLocale().isPresent()) {
+        if (localesBuildTimeConfig.defaultLocale().isPresent()) {
             overallCatch.invokeStaticMethod(REGISTER_RUNTIME_SYSTEM_PROPERTIES,
                     overallCatch.load("user.language"),
                     overallCatch.load(localesBuildTimeConfig.defaultLocale().get().getLanguage()));
@@ -125,7 +112,7 @@ public class NativeImageFeatureStep {
             }
         }
 
-        if (!runtimeInitializedClassBuildItems.isEmpty()) {
+        if (!runtimeInitializedClassBuildItems.isEmpty() || !runtimeReinitializedClassBuildItems.isEmpty()) {
             //  Class[] runtimeInitializedClasses()
             MethodCreator runtimeInitializedClasses = file
                     .getMethodCreator("runtimeInitializedClasses", Class[].class)
@@ -136,12 +123,22 @@ public class NativeImageFeatureStep {
                     ofMethod(Class.class, "getClassLoader", ClassLoader.class),
                     thisClass);
             ResultHandle classesArray = runtimeInitializedClasses.newArray(Class.class,
-                    runtimeInitializedClasses.load(runtimeInitializedClassBuildItems.size()));
+                    runtimeInitializedClasses
+                            .load(runtimeInitializedClassBuildItems.size() + runtimeReinitializedClassBuildItems.size()));
             for (int i = 0; i < runtimeInitializedClassBuildItems.size(); i++) {
                 TryBlock tc = runtimeInitializedClasses.tryBlock();
                 ResultHandle clazz = tc.invokeStaticMethod(
                         ofMethod(Class.class, "forName", Class.class, String.class, boolean.class, ClassLoader.class),
                         tc.load(runtimeInitializedClassBuildItems.get(i).getClassName()), tc.load(false), cl);
+                tc.writeArrayValue(classesArray, i, clazz);
+                CatchBlockCreator cc = tc.addCatch(Throwable.class);
+                cc.invokeVirtualMethod(ofMethod(Throwable.class, "printStackTrace", void.class), cc.getCaughtException());
+            }
+            for (int i = 0; i < runtimeReinitializedClassBuildItems.size(); i++) {
+                TryBlock tc = runtimeInitializedClasses.tryBlock();
+                ResultHandle clazz = tc.invokeStaticMethod(
+                        ofMethod(Class.class, "forName", Class.class, String.class, boolean.class, ClassLoader.class),
+                        tc.load(runtimeReinitializedClassBuildItems.get(i).getClassName()), tc.load(false), cl);
                 tc.writeArrayValue(classesArray, i, clazz);
                 CatchBlockCreator cc = tc.addCatch(Throwable.class);
                 cc.invokeVirtualMethod(ofMethod(Throwable.class, "printStackTrace", void.class), cc.getCaughtException());
@@ -171,34 +168,6 @@ public class NativeImageFeatureStep {
 
             ResultHandle packages = overallCatch.invokeStaticMethod(runtimeInitializedPackages.getMethodDescriptor());
             overallCatch.invokeStaticMethod(INITIALIZE_PACKAGES_AT_RUN_TIME, packages);
-        }
-
-        // hack in reinitialization of process info classes
-        if (!runtimeReinitializedClassBuildItems.isEmpty()) {
-            MethodCreator runtimeReinitializedClasses = file
-                    .getMethodCreator("runtimeReinitializedClasses", void.class)
-                    .setModifiers(Modifier.PRIVATE | Modifier.STATIC);
-
-            ResultHandle thisClass = runtimeReinitializedClasses.loadClassFromTCCL(GRAAL_FEATURE);
-            ResultHandle cl = runtimeReinitializedClasses.invokeVirtualMethod(
-                    ofMethod(Class.class, "getClassLoader", ClassLoader.class),
-                    thisClass);
-            ResultHandle quarkus = runtimeReinitializedClasses.load("Quarkus");
-            ResultHandle imageSingleton = runtimeReinitializedClasses.invokeStaticMethod(IMAGE_SINGLETONS_LOOKUP,
-                    runtimeReinitializedClasses.loadClassFromTCCL(RUNTIME_CLASS_INITIALIZATION_SUPPORT));
-            for (RuntimeReinitializedClassBuildItem runtimeReinitializedClass : runtimeReinitializedClassBuildItems) {
-                TryBlock tc = runtimeReinitializedClasses.tryBlock();
-                ResultHandle clazz = tc.invokeStaticMethod(
-                        ofMethod(Class.class, "forName", Class.class, String.class, boolean.class, ClassLoader.class),
-                        tc.load(runtimeReinitializedClass.getClassName()), tc.load(false), cl);
-                tc.invokeInterfaceMethod(RERUN_INITIALIZATION, imageSingleton, clazz, quarkus);
-
-                CatchBlockCreator cc = tc.addCatch(Throwable.class);
-                cc.invokeVirtualMethod(ofMethod(Throwable.class, "printStackTrace", void.class), cc.getCaughtException());
-            }
-            runtimeReinitializedClasses.returnVoid();
-
-            overallCatch.invokeStaticMethod(runtimeReinitializedClasses.getMethodDescriptor());
         }
 
         // Ensure registration of fields being accessed through unsafe is done last to ensure that the class

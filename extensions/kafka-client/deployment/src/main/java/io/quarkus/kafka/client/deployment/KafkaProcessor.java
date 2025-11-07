@@ -20,7 +20,7 @@ import org.apache.kafka.clients.consumer.RoundRobinAssignor;
 import org.apache.kafka.clients.consumer.StickyAssignor;
 import org.apache.kafka.clients.producer.Partitioner;
 import org.apache.kafka.clients.producer.ProducerInterceptor;
-import org.apache.kafka.clients.producer.internals.DefaultPartitioner;
+import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.security.auth.AuthenticateCallbackHandler;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.security.authenticator.AbstractLogin;
@@ -61,7 +61,7 @@ import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.Capability;
 import io.quarkus.deployment.Feature;
 import io.quarkus.deployment.IsDevelopment;
-import io.quarkus.deployment.IsNormal;
+import io.quarkus.deployment.IsProduction;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.Consume;
@@ -80,6 +80,7 @@ import io.quarkus.deployment.builditem.RunTimeConfigurationDefaultBuildItem;
 import io.quarkus.deployment.builditem.RuntimeConfigSetupCompleteBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageConfigBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageProxyDefinitionBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBundleBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageSecurityProviderBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassConditionBuildItem;
@@ -92,8 +93,8 @@ import io.quarkus.kafka.client.runtime.KafkaBindingConverter;
 import io.quarkus.kafka.client.runtime.KafkaRecorder;
 import io.quarkus.kafka.client.runtime.KafkaRuntimeConfigProducer;
 import io.quarkus.kafka.client.runtime.SnappyRecorder;
-import io.quarkus.kafka.client.runtime.devui.KafkaTopicClient;
-import io.quarkus.kafka.client.runtime.devui.KafkaUiUtils;
+import io.quarkus.kafka.client.runtime.dev.ui.KafkaTopicClient;
+import io.quarkus.kafka.client.runtime.dev.ui.KafkaUiUtils;
 import io.quarkus.kafka.client.runtime.graal.SnappyFeature;
 import io.quarkus.kafka.client.serialization.BufferDeserializer;
 import io.quarkus.kafka.client.serialization.BufferSerializer;
@@ -169,6 +170,7 @@ public class KafkaProcessor {
         log.produce(new LogCategoryBuildItem("org.apache.kafka.clients", Level.WARNING));
         log.produce(new LogCategoryBuildItem("org.apache.kafka.common.utils", Level.WARNING));
         log.produce(new LogCategoryBuildItem("org.apache.kafka.common.metrics", Level.WARNING));
+        log.produce(new LogCategoryBuildItem("org.apache.kafka.common.config", Level.WARNING));
         log.produce(new LogCategoryBuildItem("org.apache.kafka.common.telemetry", Level.WARNING));
     }
 
@@ -248,6 +250,7 @@ public class KafkaProcessor {
         collectImplementors(toRegister, indexBuildItem, ConsumerPartitionAssignor.class);
         collectImplementors(toRegister, indexBuildItem, ConsumerInterceptor.class);
         collectImplementors(toRegister, indexBuildItem, ProducerInterceptor.class);
+        collectImplementors(toRegister, indexBuildItem, MetricsReporter.class);
 
         reflectiveClass.produce(ReflectiveClassBuildItem.builder(OAuthBearerSaslClient.class,
                 OAuthBearerSaslClient.OAuthBearerSaslClientFactory.class,
@@ -294,7 +297,6 @@ public class KafkaProcessor {
 
         // built in partitioner and partition assignors
         reflectiveClass.produce(ReflectiveClassBuildItem.builder(
-                DefaultPartitioner.class,
                 RangeAssignor.class,
                 RoundRobinAssignor.class,
                 StickyAssignor.class)
@@ -325,13 +327,13 @@ public class KafkaProcessor {
     void loadSnappyIfEnabled(LaunchModeBuildItem launch, SnappyRecorder recorder, KafkaBuildTimeConfig config) {
         boolean loadFromSharedClassLoader = false;
         if (launch.isTest()) {
-            loadFromSharedClassLoader = config.snappyLoadFromSharedClassLoader;
+            loadFromSharedClassLoader = config.snappyLoadFromSharedClassLoader();
         }
         recorder.loadSnappy(loadFromSharedClassLoader);
     }
 
     @Consume(RuntimeConfigSetupCompleteBuildItem.class)
-    @BuildStep(onlyIf = IsNormal.class)
+    @BuildStep(onlyIf = IsProduction.class)
     @Record(ExecutionTime.RUNTIME_INIT)
     void checkBoostrapServers(KafkaRecorder recorder, Capabilities capabilities) {
         if (capabilities.isPresent(Capability.KUBERNETES_SERVICE_BINDING)) {
@@ -403,6 +405,7 @@ public class KafkaProcessor {
     @BuildStep
     public void withSasl(CombinedIndexBuildItem index,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
+            BuildProducer<NativeImageResourceBundleBuildItem> resources,
             BuildProducer<ReflectiveClassConditionBuildItem> reflectiveClassCondition,
             BuildProducer<ExtensionSslNativeSupportBuildItem> sslNativeSupport) {
 
@@ -429,6 +432,8 @@ public class KafkaProcessor {
         }
         // Kafka oauth login internally iterates over all ServiceLoader available LoginModule's
         registerJDKLoginModules(reflectiveClass);
+        // Accessed through org.apache.kafka.common.security.plain.PlainLoginModule.initialize
+        resources.produce(new NativeImageResourceBundleBuildItem("sun.security.util.resources.security"));
         for (ClassInfo authenticateCallbackHandler : index.getIndex().getAllKnownImplementors(AUTHENTICATE_CALLBACK_HANDLER)) {
             reflectiveClass.produce(ReflectiveClassBuildItem.builder(authenticateCallbackHandler.name().toString())
                     .reason(getClass().getName() + " sasl support " + AUTHENTICATE_CALLBACK_HANDLER
@@ -482,7 +487,7 @@ public class KafkaProcessor {
     @BuildStep
     HealthBuildItem addHealthCheck(KafkaBuildTimeConfig buildTimeConfig) {
         return new HealthBuildItem("io.quarkus.kafka.client.health.KafkaHealthCheck",
-                buildTimeConfig.healthEnabled);
+                buildTimeConfig.healthEnabled());
     }
 
     @BuildStep
@@ -503,7 +508,7 @@ public class KafkaProcessor {
                         "org.apache.kafka.common.security.oauthbearer.internals.expiring.ExpiringCredentialRefreshingLogin")
                 // VerificationKeyResolver is value on static map in OAuthBearerValidatorCallbackHandler
                 .addRuntimeInitializedClass("org.apache.kafka.common.security.oauthbearer.OAuthBearerValidatorCallbackHandler")
-                .addRuntimeReinitializedClass("org.apache.kafka.shaded.com.google.protobuf.UnsafeUtil");
+                .addRuntimeInitializedClass("org.apache.kafka.shaded.com.google.protobuf.UnsafeUtil");
         return builder.build();
     }
 
@@ -546,7 +551,7 @@ public class KafkaProcessor {
 
         @Override
         public boolean getAsBoolean() {
-            return QuarkusClassLoader.isClassPresentAtRuntime("org.xerial.snappy.OSInfo") && config.snappyEnabled;
+            return QuarkusClassLoader.isClassPresentAtRuntime("org.xerial.snappy.OSInfo") && config.snappyEnabled();
         }
     }
 

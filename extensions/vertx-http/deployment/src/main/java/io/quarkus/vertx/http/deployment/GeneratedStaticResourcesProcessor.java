@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -13,8 +14,9 @@ import java.util.stream.Collectors;
 
 import io.quarkus.bootstrap.classloading.ClassPathElement;
 import io.quarkus.bootstrap.classloading.QuarkusClassLoader;
+import io.quarkus.builder.BuildException;
 import io.quarkus.deployment.IsDevelopment;
-import io.quarkus.deployment.IsNormal;
+import io.quarkus.deployment.IsProduction;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
@@ -67,23 +69,36 @@ public class GeneratedStaticResourcesProcessor {
                 }
             }
             // We can't use the vert.x StaticHandler for tests as it doesn't support 'quarkus' protocol
-            if (launchModeBuildItem.getLaunchMode() == LaunchMode.NORMAL) {
+            if (launchModeBuildItem.getLaunchMode().isProduction()) {
                 additionalStaticResourcesProducer.produce(
                         new AdditionalStaticResourceBuildItem(generatedStaticResource.getEndpoint(), false));
                 nativeImageResourcesProducer.produce(new NativeImageResourceBuildItem(generatedStaticResourceLocation));
+                int lastSep = generatedStaticResourceLocation.lastIndexOf('/');
+                if (lastSep > 0) {
+                    String parent = generatedStaticResourceLocation.substring(0, lastSep);
+                    // if the resource is somehow an index page, we need the parent directory to also be added as a native resource so that we can resolve both `/path/index.html` and `/path/` (needed by Vert.x static handler).
+                    nativeImageResourcesProducer.produce(new NativeImageResourceBuildItem(parent));
+                }
             }
         }
     }
 
-    @BuildStep(onlyIfNot = IsNormal.class)
+    @BuildStep(onlyIfNot = IsProduction.class)
     @Record(ExecutionTime.RUNTIME_INIT)
     public void process(List<GeneratedStaticResourceBuildItem> generatedStaticResources,
             LaunchModeBuildItem launchModeBuildItem,
             BuildProducer<RouteBuildItem> routes, GeneratedStaticResourcesRecorder generatedStaticResourcesRecorder,
-            BuildProducer<NotFoundPageDisplayableEndpointBuildItem> notFoundPageProducer) {
+            BuildProducer<NotFoundPageDisplayableEndpointBuildItem> notFoundPageProducer) throws BuildException {
         if (generatedStaticResources.isEmpty()) {
             return;
         }
+
+        List<String> duplicates = collectDuplicates(generatedStaticResources);
+        if (!duplicates.isEmpty()) {
+            throw new BuildException(
+                    "Duplicate endpoints detected, the endpoint for static resources must be unique: " + duplicates);
+        }
+
         Map<String, String> generatedFilesResources = generatedStaticResources.stream()
                 .peek(path -> notFoundPageProducer.produce(new NotFoundPageDisplayableEndpointBuildItem(path.getEndpoint())))
                 .filter(GeneratedStaticResourceBuildItem::isFile)
@@ -161,5 +176,13 @@ public class GeneratedStaticResourcesProcessor {
                 }
             }
         }
+    }
+
+    private static List<String> collectDuplicates(List<GeneratedStaticResourceBuildItem> generatedStaticResources) {
+        Set<String> uniques = new HashSet<>();
+        return generatedStaticResources.stream()
+                .map(GeneratedStaticResourceBuildItem::getEndpoint)
+                .filter(e -> !uniques.add(e))
+                .toList();
     }
 }

@@ -1,24 +1,33 @@
 package io.quarkus.oidc.runtime;
 
+import static io.quarkus.oidc.common.runtime.OidcConstants.ACR;
+import static io.quarkus.oidc.runtime.StepUpAuthenticationPolicy.throwAuthenticationFailedException;
+import static java.util.Objects.requireNonNull;
+
 import java.io.Closeable;
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.security.PrivateKey;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
+import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 
 import org.eclipse.microprofile.jwt.Claims;
 import org.jboss.logging.Logger;
 import org.jose4j.jwa.AlgorithmConstraints;
 import org.jose4j.jws.JsonWebSignature;
+import org.jose4j.jwt.JwtClaims;
 import org.jose4j.jwt.MalformedClaimException;
 import org.jose4j.jwt.consumer.ErrorCodeValidator;
+import org.jose4j.jwt.consumer.ErrorCodeValidatorAdapter;
 import org.jose4j.jwt.consumer.ErrorCodes;
 import org.jose4j.jwt.consumer.InvalidJwtException;
 import org.jose4j.jwt.consumer.JwtConsumer;
@@ -31,7 +40,6 @@ import org.jose4j.keys.resolvers.VerificationKeyResolver;
 import org.jose4j.lang.InvalidAlgorithmException;
 import org.jose4j.lang.UnresolvableKeyException;
 
-import io.quarkus.logging.Log;
 import io.quarkus.oidc.AuthorizationCodeTokens;
 import io.quarkus.oidc.OIDCException;
 import io.quarkus.oidc.OidcConfigurationMetadata;
@@ -42,7 +50,6 @@ import io.quarkus.oidc.UserInfo;
 import io.quarkus.oidc.common.runtime.AbstractJsonObject;
 import io.quarkus.oidc.common.runtime.OidcCommonUtils;
 import io.quarkus.oidc.common.runtime.OidcConstants;
-import io.quarkus.oidc.runtime.OidcProviderClient.UserInfoResponse;
 import io.quarkus.security.AuthenticationFailedException;
 import io.quarkus.security.credential.TokenCredential;
 import io.smallrye.jwt.algorithm.SignatureAlgorithm;
@@ -63,32 +70,30 @@ public class OidcProvider implements Closeable {
             SignatureAlgorithm.PS384.getAlgorithm(),
             SignatureAlgorithm.PS512.getAlgorithm(),
             SignatureAlgorithm.EDDSA.getAlgorithm() };
-    private static final AlgorithmConstraints ASYMMETRIC_ALGORITHM_CONSTRAINTS = new AlgorithmConstraints(
-            AlgorithmConstraints.ConstraintType.PERMIT, ASYMMETRIC_SUPPORTED_ALGORITHMS);
     private static final AlgorithmConstraints SYMMETRIC_ALGORITHM_CONSTRAINTS = new AlgorithmConstraints(
             AlgorithmConstraints.ConstraintType.PERMIT, SignatureAlgorithm.HS256.getAlgorithm());
-    private static final String APPLICATION_JWT_CONTENT_TYPE = "application/jwt";
+    static final AlgorithmConstraints ASYMMETRIC_ALGORITHM_CONSTRAINTS = new AlgorithmConstraints(
+            AlgorithmConstraints.ConstraintType.PERMIT, ASYMMETRIC_SUPPORTED_ALGORITHMS);
     static final String ANY_ISSUER = "any";
 
     private final List<Validator> customValidators;
-    final OidcProviderClient client;
+    final OidcProviderClientImpl client;
     final RefreshableVerificationKeyResolver asymmetricKeyResolver;
     final DynamicVerificationKeyResolver keyResolverProvider;
     final OidcTenantConfig oidcConfig;
     final TokenCustomizer tokenCustomizer;
     final String issuer;
     final String[] audience;
-    final Map<String, String> requiredClaims;
-    final Key tokenDecryptionKey;
+    final Map<String, Set<String>> requiredClaims;
     final AlgorithmConstraints requiredAlgorithmConstraints;
 
-    public OidcProvider(OidcProviderClient client, OidcTenantConfig oidcConfig, JsonWebKeySet jwks, Key tokenDecryptionKey) {
-        this(client, oidcConfig, jwks, TenantFeatureFinder.find(oidcConfig), tokenDecryptionKey,
+    public OidcProvider(OidcProviderClientImpl client, OidcTenantConfig oidcConfig, JsonWebKeySet jwks) {
+        this(client, oidcConfig, jwks, TenantFeatureFinder.find(oidcConfig),
                 TenantFeatureFinder.find(oidcConfig, Validator.class));
     }
 
-    public OidcProvider(OidcProviderClient client, OidcTenantConfig oidcConfig, JsonWebKeySet jwks,
-            TokenCustomizer tokenCustomizer, Key tokenDecryptionKey, List<Validator> customValidators) {
+    public OidcProvider(OidcProviderClientImpl client, OidcTenantConfig oidcConfig, JsonWebKeySet jwks,
+            TokenCustomizer tokenCustomizer, List<Validator> customValidators) {
         this.client = client;
         this.oidcConfig = oidcConfig;
         this.tokenCustomizer = tokenCustomizer;
@@ -108,12 +113,14 @@ public class OidcProvider implements Closeable {
         this.issuer = checkIssuerProp();
         this.audience = checkAudienceProp();
         this.requiredClaims = checkRequiredClaimsProp();
-        this.tokenDecryptionKey = tokenDecryptionKey;
         this.requiredAlgorithmConstraints = checkSignatureAlgorithm();
         this.customValidators = customValidators == null ? List.of() : customValidators;
+        if (client != null) {
+            this.client.setOidcProvider(this);
+        }
     }
 
-    public OidcProvider(String publicKeyEnc, OidcTenantConfig oidcConfig, Key tokenDecryptionKey) {
+    public OidcProvider(String publicKeyEnc, OidcTenantConfig oidcConfig) {
         this.client = null;
         this.oidcConfig = oidcConfig;
         this.tokenCustomizer = TenantFeatureFinder.find(oidcConfig);
@@ -128,7 +135,6 @@ public class OidcProvider implements Closeable {
         this.issuer = checkIssuerProp();
         this.audience = checkAudienceProp();
         this.requiredClaims = checkRequiredClaimsProp();
-        this.tokenDecryptionKey = tokenDecryptionKey;
         this.requiredAlgorithmConstraints = checkSignatureAlgorithm();
         this.customValidators = TenantFeatureFinder.find(oidcConfig, Validator.class);
     }
@@ -158,8 +164,9 @@ public class OidcProvider implements Closeable {
         return audienceProp != null ? audienceProp.toArray(new String[] {}) : null;
     }
 
-    private Map<String, String> checkRequiredClaimsProp() {
-        return oidcConfig != null ? oidcConfig.token().requiredClaims() : null;
+    private Map<String, Set<String>> checkRequiredClaimsProp() {
+        return oidcConfig != null && !oidcConfig.token().requiredClaims().isEmpty() ? oidcConfig.token().requiredClaims()
+                : null;
     }
 
     public TokenVerificationResult verifySelfSignedJwtToken(String token, Key generatedInternalSignatureKey)
@@ -214,11 +221,23 @@ public class OidcProvider implements Closeable {
         }
 
         if (nonce != null) {
-            builder.registerValidator(new CustomClaimsValidator(Map.of(OidcConstants.NONCE, nonce)));
+            builder.registerValidator(new CustomClaimsValidator(Map.of(OidcConstants.NONCE, Set.of(nonce))));
         }
 
-        for (Validator customValidator : customValidators) {
-            builder.registerValidator(customValidator);
+        final List<CatchingErrorCodeValidator> validators;
+        if (!customValidators.isEmpty() || requiredClaims != null) {
+            validators = new ArrayList<>();
+            for (Validator customValidator : customValidators) {
+                validators.add(new CatchingErrorCodeValidator(customValidator));
+            }
+            if (requiredClaims != null) {
+                validators.add(new CatchingErrorCodeValidator(new CustomClaimsValidator(requiredClaims)));
+            }
+            for (var validator : validators) {
+                builder.registerValidator(validator);
+            }
+        } else {
+            validators = null;
         }
 
         if (issuedAtRequired) {
@@ -238,9 +257,6 @@ public class OidcProvider implements Closeable {
             builder.setExpectedAudience(oidcConfig.clientId().get());
         } else {
             builder.setSkipDefaultAudienceValidation();
-        }
-        if (requiredClaims != null && !requiredClaims.isEmpty()) {
-            builder.registerValidator(new CustomClaimsValidator(requiredClaims));
         }
 
         if (oidcConfig.token().lifespanGrace().isPresent()) {
@@ -269,6 +285,14 @@ public class OidcProvider implements Closeable {
                 LOG.debugf("Token verification has failed: %s", detail);
             }
             throw ex;
+        }
+        if (validators != null) {
+            // this is workaround for we want to give custom validators option to fail authentication over 'acr' values
+            for (CatchingErrorCodeValidator validator : validators) {
+                if (validator.authenticationFailure != null) {
+                    throw validator.authenticationFailure;
+                }
+            }
         }
         TokenVerificationResult result = new TokenVerificationResult(OidcCommonUtils.decodeJwtContent(token), null);
 
@@ -348,7 +372,8 @@ public class OidcProvider implements Closeable {
                 });
     }
 
-    public Uni<TokenIntrospection> introspectToken(String token, boolean fallbackFromJwkMatch) {
+    public Uni<TokenIntrospection> introspectToken(String token, boolean idToken, Long expiresIn,
+            boolean fallbackFromJwkMatch) {
         if (client.getMetadata().getIntrospectionUri() == null) {
             String errorMessage = String.format("Token issued to client %s "
                     + (fallbackFromJwkMatch ? "does not have a matching verification key and it " : "")
@@ -356,45 +381,75 @@ public class OidcProvider implements Closeable {
                     + "please check if your OpenId Connect Provider supports the token introspection",
                     oidcConfig.clientId().get());
 
-            throw new AuthenticationFailedException(errorMessage);
+            throw new AuthenticationFailedException(errorMessage, tokenMap(token, idToken));
         }
-        return client.introspectToken(token).onItemOrFailure()
+        return client.introspectAccessToken(token).onItemOrFailure()
                 .transform(new BiFunction<TokenIntrospection, Throwable, TokenIntrospection>() {
 
                     @Override
                     public TokenIntrospection apply(TokenIntrospection introspectionResult, Throwable t) {
                         if (t != null) {
-                            throw new AuthenticationFailedException(t);
+                            throw new AuthenticationFailedException(t, tokenMap(token, idToken));
+                        }
+                        Long introspectionExpiresIn = introspectionResult.getLong(OidcConstants.INTROSPECTION_TOKEN_EXP);
+                        if (introspectionExpiresIn == null && expiresIn != null) {
+                            // expires_in is relative to the current time
+                            introspectionExpiresIn = now() + expiresIn;
                         }
                         if (!introspectionResult.isActive()) {
-                            verifyTokenExpiry(introspectionResult.getLong(OidcConstants.INTROSPECTION_TOKEN_EXP));
+                            verifyTokenExpiry(token, idToken, introspectionExpiresIn);
                             throw new AuthenticationFailedException(
-                                    String.format("Token issued to client %s is not active", oidcConfig.clientId().get()));
+                                    String.format("Token issued to client %s is not active", oidcConfig.clientId().get()),
+                                    tokenMap(token, idToken));
                         }
-                        verifyTokenExpiry(introspectionResult.getLong(OidcConstants.INTROSPECTION_TOKEN_EXP));
+                        verifyTokenExpiry(token, idToken, introspectionExpiresIn);
                         try {
                             verifyTokenAge(introspectionResult.getLong(OidcConstants.INTROSPECTION_TOKEN_IAT));
                         } catch (InvalidJwtException ex) {
-                            throw new AuthenticationFailedException(ex);
+                            throw new AuthenticationFailedException(ex, tokenMap(token, idToken));
                         }
 
-                        if (requiredClaims != null && !requiredClaims.isEmpty()) {
-                            for (Map.Entry<String, String> requiredClaim : requiredClaims.entrySet()) {
-                                String introspectionClaimValue = null;
+                        if (requiredClaims != null) {
+                            for (Map.Entry<String, Set<String>> requiredClaim : requiredClaims.entrySet()) {
+                                final String requiredClaimName = requiredClaim.getKey();
+                                if (!introspectionResult.contains(requiredClaimName)) {
+                                    LOG.debugf("Introspection claim %s is missing", requiredClaimName);
+                                    throw new AuthenticationFailedException(tokenMap(token, idToken));
+                                }
+                                final Set<String> requiredClaimValues = requiredClaim.getValue();
+                                if (requiredClaimValues.size() == 1) {
+                                    String introspectionClaimValue = null;
+                                    try {
+                                        introspectionClaimValue = introspectionResult.getString(requiredClaimName);
+                                    } catch (ClassCastException ex) {
+                                        LOG.debugf("Introspection claim %s is not String", requiredClaimName);
+                                    }
+                                    String requiredClaimValue = requiredClaimValues.iterator().next();
+                                    if (requiredClaimValue.equals(introspectionClaimValue)) {
+                                        continue;
+                                    }
+                                }
+                                final JsonArray actualClaimValueArray;
                                 try {
-                                    introspectionClaimValue = introspectionResult.getString(requiredClaim.getKey());
-                                } catch (ClassCastException ex) {
-                                    LOG.debugf("Introspection claim %s is not String", requiredClaim.getKey());
-                                    throw new AuthenticationFailedException();
+                                    actualClaimValueArray = requireNonNull(introspectionResult.getArray(requiredClaimName));
+                                } catch (Exception ignored) {
+                                    LOG.debugf("Introspection claim %s is neither string or array", requiredClaimName);
+                                    throw new AuthenticationFailedException(tokenMap(token, idToken));
                                 }
-                                if (introspectionClaimValue == null) {
-                                    LOG.debugf("Introspection claim %s is missing", requiredClaim.getKey());
-                                    throw new AuthenticationFailedException();
-                                }
-                                if (!introspectionClaimValue.equals(requiredClaim.getValue())) {
+                                requiredClaimValuesLoop: for (String requiredClaimValue : requiredClaimValues) {
+                                    for (int i = 0; i < actualClaimValueArray.size(); i++) {
+                                        try {
+                                            String actualClaimValue = actualClaimValueArray.getString(i);
+                                            if (requiredClaimValue.equals(actualClaimValue)) {
+                                                continue requiredClaimValuesLoop;
+                                            }
+                                        } catch (Exception ignored) {
+                                            // try next actual claim value
+                                        }
+                                    }
                                     LOG.debugf("Value of the introspection claim %s does not match required value of %s",
-                                            requiredClaim.getKey(), requiredClaim.getValue());
-                                    throw new AuthenticationFailedException();
+                                            requiredClaimName, requiredClaimValue);
+                                    throw new AuthenticationFailedException(tokenMap(token, idToken));
                                 }
                             }
                         }
@@ -402,18 +457,18 @@ public class OidcProvider implements Closeable {
                         return introspectionResult;
                     }
 
-                    private void verifyTokenExpiry(Long exp) {
-                        if (isTokenExpired(exp)) {
-                            String error = String.format("Token issued to client %s has expired",
-                                    oidcConfig.clientId().get());
-                            LOG.debugf(error);
-                            throw new AuthenticationFailedException(
-                                    new InvalidJwtException(error,
-                                            List.of(new ErrorCodeValidator.Error(ErrorCodes.EXPIRED, error)), null));
-                        }
-                    }
-
                 });
+    }
+
+    private void verifyTokenExpiry(String token, boolean idToken, Long exp) {
+        if (isTokenExpired(exp)) {
+            String error = String.format("Token issued to client %s has expired", oidcConfig.clientId().get());
+            LOG.debugf(error);
+            throw new AuthenticationFailedException(
+                    new InvalidJwtException(error,
+                            List.of(new ErrorCodeValidator.Error(ErrorCodes.EXPIRED, error)), null),
+                    tokenMap(token, idToken));
+        }
     }
 
     private boolean isTokenExpired(Long exp) {
@@ -421,65 +476,17 @@ public class OidcProvider implements Closeable {
     }
 
     private int getLifespanGrace() {
-        return client.getOidcConfig().token().lifespanGrace().isPresent()
-                ? client.getOidcConfig().token().lifespanGrace().getAsInt()
+        return oidcConfig.token().lifespanGrace().isPresent()
+                ? oidcConfig.token().lifespanGrace().getAsInt()
                 : 0;
     }
 
-    private static final long now() {
+    private static long now() {
         return System.currentTimeMillis();
     }
 
     public Uni<UserInfo> getUserInfo(String accessToken) {
-        return client.getUserInfo(accessToken).onItem()
-                .transformToUni(new Function<UserInfoResponse, Uni<? extends UserInfo>>() {
-
-                    @Override
-                    public Uni<UserInfo> apply(UserInfoResponse response) {
-                        if (isApplicationJwtContentType(response.contentType())) {
-                            if (oidcConfig.jwks().resolveEarly()) {
-                                try {
-                                    LOG.debugf("Verifying the signed UserInfo with the local JWK keys: %s", response.data());
-                                    return Uni.createFrom().item(
-                                            new UserInfo(
-                                                    verifyJwtToken(response.data(), true, false, null).localVerificationResult
-                                                            .encode()));
-                                } catch (Throwable t) {
-                                    if (t.getCause() instanceof UnresolvableKeyException) {
-                                        LOG.debug(
-                                                "No matching JWK key is found, refreshing and repeating the signed UserInfo verification");
-                                        return refreshJwksAndVerifyJwtToken(response.data(), true, false, null)
-                                                .onItem().transform(v -> new UserInfo(v.localVerificationResult.encode()));
-                                    } else {
-                                        LOG.debugf("Signed UserInfo verification has failed: %s", t.getMessage());
-                                        return Uni.createFrom().failure(t);
-                                    }
-                                }
-                            } else {
-                                return getKeyResolverAndVerifyJwtToken(new TokenCredential(response.data(), "userinfo"), true,
-                                        false, null, true)
-                                        .onItem().transform(v -> new UserInfo(v.localVerificationResult.encode()));
-                            }
-                        } else {
-                            return Uni.createFrom().item(new UserInfo(response.data()));
-                        }
-                    }
-                });
-    }
-
-    static boolean isApplicationJwtContentType(String ct) {
-        if (ct == null) {
-            return false;
-        }
-        ct = ct.trim();
-        if (!ct.startsWith(APPLICATION_JWT_CONTENT_TYPE)) {
-            return false;
-        }
-        if (ct.length() == APPLICATION_JWT_CONTENT_TYPE.length()) {
-            return true;
-        }
-        String remainder = ct.substring(APPLICATION_JWT_CONTENT_TYPE.length()).trim();
-        return remainder.indexOf(';') == 0;
+        return client.getUserInfo(accessToken);
     }
 
     public Uni<AuthorizationCodeTokens> getCodeFlowTokens(String code, String redirectUri, String codeVerifier) {
@@ -557,7 +564,7 @@ public class OidcProvider implements Closeable {
                 try {
                     key = jwks.getKeyWithoutKeyIdAndThumbprint(jws.getKeyType());
                 } catch (InvalidAlgorithmException ex) {
-                    Log.debug("Token 'alg'(algorithm) header value is invalid", ex);
+                    LOG.debug("Token 'alg'(algorithm) header value is invalid", ex);
                 }
             }
 
@@ -662,7 +669,7 @@ public class OidcProvider implements Closeable {
         }
 
         private Key initKey(Key generatedInternalSignatureKey) {
-            String clientSecret = OidcCommonUtils.getClientOrJwtSecret(oidcConfig.credentials);
+            String clientSecret = OidcCommonUtils.getClientOrJwtSecret(oidcConfig.credentials());
             if (clientSecret != null) {
                 LOG.debug("Verifying internal ID token with a configured client secret");
                 return KeyUtils.createSecretKeyFromSecret(clientSecret);
@@ -680,33 +687,85 @@ public class OidcProvider implements Closeable {
         return client == null ? null : client.getMetadata();
     }
 
-    private static class CustomClaimsValidator implements Validator {
+    private static final class CustomClaimsValidator implements Validator {
 
-        private final Map<String, String> customClaims;
+        private final Map<String, Set<String>> customClaims;
 
-        public CustomClaimsValidator(Map<String, String> customClaims) {
+        private CustomClaimsValidator(Map<String, Set<String>> customClaims) {
             this.customClaims = customClaims;
         }
 
         @Override
         public String validate(JwtContext jwtContext) throws MalformedClaimException {
             var claims = jwtContext.getJwtClaims();
-            for (var targetClaim : customClaims.entrySet()) {
-                var claimName = targetClaim.getKey();
-                if (!claims.hasClaim(claimName)) {
-                    return "claim " + claimName + " is missing";
+            for (var requiredClaim : customClaims.entrySet()) {
+                String validationFailureMessage = validate(requiredClaim.getKey(), requiredClaim.getValue(), claims);
+                if (validationFailureMessage != null) {
+                    if (ACR.equals(requiredClaim.getKey())) {
+                        throwAuthenticationFailedException(validationFailureMessage, requiredClaim.getValue());
+                    }
+                    return validationFailureMessage;
                 }
-                if (!claims.isClaimValueString(claimName)) {
-                    throw new MalformedClaimException("expected claim " + claimName + " to be a string");
+            }
+            return null;
+        }
+
+        private static String validate(String requiredClaimName, Set<String> requiredClaimValues, JwtClaims claims)
+                throws MalformedClaimException {
+            if (!claims.hasClaim(requiredClaimName)) {
+                return "claim " + requiredClaimName + " is missing";
+            }
+            if (claims.isClaimValueString(requiredClaimName)) {
+                if (requiredClaimValues.size() == 1) {
+                    String actualClaimValue = claims.getStringClaimValue(requiredClaimName);
+                    String requiredClaimValue = requiredClaimValues.iterator().next();
+                    if (!requiredClaimValue.equals(actualClaimValue)) {
+                        return "claim " + requiredClaimName + " does not match expected value of " + requiredClaimValues;
+                    }
+                } else {
+                    throw new MalformedClaimException("expected claim " + requiredClaimName + " must be a list of strings");
                 }
-                var claimValue = claims.getStringClaimValue(claimName);
-                var targetValue = targetClaim.getValue();
-                if (!claimValue.equals(targetValue)) {
-                    return "claim " + claimName + "does not match expected value of " + targetValue;
+            } else {
+                if (claims.isClaimValueStringList(requiredClaimName)) {
+                    List<String> actualClaimValues = claims.getStringListClaimValue(requiredClaimName);
+                    for (String requiredClaimValue : requiredClaimValues) {
+                        if (!actualClaimValues.contains(requiredClaimValue)) {
+                            return "claim " + requiredClaimName + " does not match expected value of " + requiredClaimValues;
+                        }
+                    }
+                } else {
+                    throw new MalformedClaimException(
+                            "expected claim " + requiredClaimName + " must be a list of strings or a string");
                 }
             }
             return null;
         }
     }
 
+    private static Map<String, Object> tokenMap(String token, boolean idToken) {
+        return Map.of(idToken ? OidcConstants.ID_TOKEN_VALUE : OidcConstants.ACCESS_TOKEN_VALUE, token);
+    }
+
+    private static final class CatchingErrorCodeValidator extends ErrorCodeValidatorAdapter {
+
+        private AuthenticationFailedException authenticationFailure;
+
+        private CatchingErrorCodeValidator(Validator validator) {
+            super(validator);
+        }
+
+        @Override
+        public Error validate(JwtContext jwtContext) throws MalformedClaimException {
+            try {
+                return super.validate(jwtContext);
+            } catch (AuthenticationFailedException e) {
+                if (e.getAttribute(OidcConstants.ACR_VALUES) != null) {
+                    authenticationFailure = e;
+                    return null;
+                } else {
+                    throw e;
+                }
+            }
+        }
+    }
 }

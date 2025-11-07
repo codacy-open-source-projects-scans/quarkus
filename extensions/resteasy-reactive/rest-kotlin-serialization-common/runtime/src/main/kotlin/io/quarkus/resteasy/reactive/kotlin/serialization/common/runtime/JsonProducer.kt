@@ -23,24 +23,24 @@ class JsonProducer {
     @DefaultBean
     fun defaultJson(
         configuration: KotlinSerializationConfig,
-        @All customizers: java.util.List<JsonBuilderCustomizer>
+        @All customizers: java.util.List<JsonBuilderCustomizer>,
     ) = Json {
-        allowSpecialFloatingPointValues = configuration.json.allowSpecialFloatingPointValues
-        allowStructuredMapKeys = configuration.json.allowStructuredMapKeys
-        classDiscriminator = configuration.json.classDiscriminator
-        coerceInputValues = configuration.json.coerceInputValues
-        encodeDefaults = configuration.json.encodeDefaults
-        explicitNulls = configuration.json.explicitNulls
-        ignoreUnknownKeys = configuration.json.ignoreUnknownKeys
-        isLenient = configuration.json.isLenient
-        prettyPrint = configuration.json.prettyPrint
-        prettyPrintIndent = configuration.json.prettyPrintIndent
-        useAlternativeNames = configuration.json.useAlternativeNames
-        useArrayPolymorphism = configuration.json.useArrayPolymorphism
-        decodeEnumsCaseInsensitive = configuration.json.decodeEnumsCaseInsensitive
-        allowTrailingComma = configuration.json.allowTrailingComma
+        allowSpecialFloatingPointValues = configuration.json().allowSpecialFloatingPointValues()
+        allowStructuredMapKeys = configuration.json().allowStructuredMapKeys()
+        classDiscriminator = configuration.json().classDiscriminator()
+        coerceInputValues = configuration.json().coerceInputValues()
+        encodeDefaults = configuration.json().encodeDefaults()
+        explicitNulls = configuration.json().explicitNulls()
+        ignoreUnknownKeys = configuration.json().ignoreUnknownKeys()
+        isLenient = configuration.json().isLenient()
+        prettyPrint = configuration.json().prettyPrint()
+        prettyPrintIndent = configuration.json().prettyPrintIndent()
+        useAlternativeNames = configuration.json().useAlternativeNames()
+        useArrayPolymorphism = configuration.json().useArrayPolymorphism()
+        decodeEnumsCaseInsensitive = configuration.json().decodeEnumsCaseInsensitive()
+        allowTrailingComma = configuration.json().allowTrailingComma()
 
-        configuration.json.namingStrategy.ifPresent { strategy ->
+        configuration.json().namingStrategy().ifPresent { strategy ->
             loadStrategy(this, strategy, this@JsonProducer)
         }
         val sortedCustomizers = sortCustomizersInDescendingPriorityOrder(customizers)
@@ -53,7 +53,7 @@ class JsonProducer {
     private fun loadStrategy(
         jsonBuilder: JsonBuilder,
         strategy: String,
-        jsonProducer: JsonProducer
+        jsonProducer: JsonProducer,
     ) {
         val strategyProperty: KMutableProperty1<JsonBuilder, JsonNamingStrategy> =
             (JsonBuilder::class.memberProperties.find { member -> member.name == "namingStrategy" }
@@ -69,7 +69,7 @@ class JsonProducer {
                 jsonProducer.extractBuiltIn(strategy)
             } else {
                 jsonProducer.loadStrategyClass(strategy)
-            }
+            },
         )
     }
 
@@ -88,7 +88,7 @@ class JsonProducer {
         } catch (e: ReflectiveOperationException) {
             throw IllegalArgumentException(
                 "Error loading naming strategy:  ${strategy.substringAfter('.')}",
-                e
+                e,
             )
         }
     }

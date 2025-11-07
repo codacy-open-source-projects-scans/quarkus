@@ -86,6 +86,11 @@ public abstract class WebSocketEndpointBase implements WebSocketEndpoint {
     }
 
     @Override
+    public Future<Void> onPingMessage(Buffer message) {
+        return execute(message, onPingMessageExecutionModel(), this::doOnPingMessage, false);
+    }
+
+    @Override
     public Future<Void> onPongMessage(Buffer message) {
         return execute(message, onPongMessageExecutionModel(), this::doOnPongMessage, false);
     }
@@ -140,7 +145,6 @@ public abstract class WebSocketEndpointBase implements WebSocketEndpoint {
                 public void run() {
                     Context context = Vertx.currentContext();
                     contextSupport.start();
-                    securitySupport.start();
                     action.apply(message).subscribe().with(
                             v -> {
                                 context.runOnContext(contextSupportEnd);
@@ -158,7 +162,6 @@ public abstract class WebSocketEndpointBase implements WebSocketEndpoint {
                 public Void call() {
                     Context context = Vertx.currentContext();
                     contextSupport.start();
-                    securitySupport.start();
                     action.apply(message).subscribe().with(
                             v -> {
                                 context.runOnContext(contextSupportEnd);
@@ -174,7 +177,6 @@ public abstract class WebSocketEndpointBase implements WebSocketEndpoint {
         } else {
             // Event loop
             contextSupport.start();
-            securitySupport.start();
             action.apply(message).subscribe().with(
                     v -> {
                         contextSupport.end(terminateSession);
@@ -207,7 +209,6 @@ public abstract class WebSocketEndpointBase implements WebSocketEndpoint {
                         public void run() {
                             Context context = Vertx.currentContext();
                             contextSupport.start();
-                            securitySupport.start();
                             action.apply(throwable).subscribe().with(
                                     v -> {
                                         context.runOnContext(contextSupportEnd);
@@ -225,7 +226,6 @@ public abstract class WebSocketEndpointBase implements WebSocketEndpoint {
                         public Void call() {
                             Context context = Vertx.currentContext();
                             contextSupport.start();
-                            securitySupport.start();
                             action.apply(throwable).subscribe().with(
                                     v -> {
                                         context.runOnContext(contextSupportEnd);
@@ -244,7 +244,6 @@ public abstract class WebSocketEndpointBase implements WebSocketEndpoint {
                         public void handle(Void event) {
                             Context context = Vertx.currentContext();
                             contextSupport.start();
-                            securitySupport.start();
                             action.apply(throwable).subscribe().with(
                                     v -> {
                                         context.runOnContext(contextSupportEnd);
@@ -279,6 +278,10 @@ public abstract class WebSocketEndpointBase implements WebSocketEndpoint {
     }
 
     protected Uni<Void> doOnBinaryMessage(Object message) {
+        return Uni.createFrom().voidItem();
+    }
+
+    protected Uni<Void> doOnPingMessage(Buffer message) {
         return Uni.createFrom().voidItem();
     }
 

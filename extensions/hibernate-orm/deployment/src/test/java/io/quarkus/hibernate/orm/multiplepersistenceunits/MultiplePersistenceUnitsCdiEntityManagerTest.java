@@ -7,10 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import jakarta.enterprise.context.ContextNotActiveException;
 import jakarta.enterprise.context.control.ActivateRequestContext;
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TransactionRequiredException;
 import jakarta.transaction.Transactional;
 
+import org.hibernate.SessionFactory;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
@@ -40,6 +43,36 @@ public class MultiplePersistenceUnitsCdiEntityManagerTest {
     @Inject
     @PersistenceUnit("inventory")
     EntityManager inventoryEntityManager;
+
+    // The following sessionFactories are not used in tests but needs to be correctly created, if not the test will fail
+    @Inject
+    SessionFactory defaultSessionFactory;
+
+    @Inject
+    @Named("users")
+    SessionFactory usersFactory;
+
+    @Inject
+    @Named("inventory")
+    SessionFactory inventoryFactory;
+
+    @Inject
+    @PersistenceUnit("<default>")
+    EntityManager defaultEntityManagerWithQualifier;
+
+    @Inject
+    @PersistenceUnit("<default>")
+    SessionFactory defaultSessionFactoryWithQualifier;
+
+    @Inject
+    @Named("<default>")
+    @PersistenceUnit("<default>")
+    EntityManager defaultEntityManagerWithBothQualifiers;
+
+    @Inject
+    @Named("<default>")
+    @PersistenceUnit("<default>")
+    SessionFactory defaultSessionFactoryWithBothQualifiers;
 
     @Test
     @Transactional
@@ -151,6 +184,22 @@ public class MultiplePersistenceUnitsCdiEntityManagerTest {
     public void testUserInInventoryEntityManager() {
         User user = new User("gsmet");
         assertThatThrownBy(() -> inventoryEntityManager.persist(user)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Unable to locate persister");
+                .hasMessageContaining("Unknown entity type");
+    }
+
+    @Test
+    public void defaultQualifiedEntityManagerAndSessionFactoryAreInjected() {
+        Assertions.assertNotNull(defaultEntityManagerWithQualifier,
+                "@PersistenceUnit(\"<default>\") EntityManager should be injected and non-null");
+        Assertions.assertNotNull(defaultSessionFactoryWithQualifier,
+                "@PersistenceUnit(\"<default>\") SessionFactory should be injected and non-null");
+    }
+
+    @Test
+    public void defaultEntityManagerAndSessionFactoryWithBothQualifiersAreInjected() {
+        Assertions.assertNotNull(defaultEntityManagerWithBothQualifiers,
+                "EntityManager should be injectable with both @Named and @PersistenceUnit qualifiers for <default>");
+        Assertions.assertNotNull(defaultSessionFactoryWithBothQualifiers,
+                "SessionFactory should be injectable with both @Named and @PersistenceUnit qualifiers for <default>");
     }
 }

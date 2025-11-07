@@ -17,7 +17,9 @@ public class OpaqueTokenVerificationWithUserInfoValidationTest {
     static final QuarkusUnitTest test = new QuarkusUnitTest()
             .withApplicationRoot((jar) -> jar
                     .addAsResource(new StringAsset(
-                            "quarkus.oidc.token.verify-access-token-with-user-info=true\n"
+                            "# Disable Dev Services, we use a test resource manager\n" +
+                                    "quarkus.keycloak.devservices.enabled=false\n" +
+                                    "quarkus.oidc.token.verify-access-token-with-user-info=true\n"
                                     + "quarkus.oidc.authentication.user-info-required=false\n"),
                             "application.properties"))
             .assertException(t -> {
@@ -34,7 +36,8 @@ public class OpaqueTokenVerificationWithUserInfoValidationTest {
                 // assert UserInfo is required
                 assertTrue(
                         te.getMessage()
-                                .contains("UserInfo is not required but 'verifyAccessTokenWithUserInfo' is enabled"),
+                                .contains(
+                                        "UserInfo is not required but 'quarkus.oidc.token.verify-access-token-with-user-info' is enabled"),
                         te.getMessage());
             });
 

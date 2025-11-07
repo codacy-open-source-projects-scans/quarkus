@@ -47,6 +47,7 @@ import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.SynthesisFinishedBuildItem;
 import io.quarkus.arc.deployment.SyntheticBeanBuildItem;
+import io.quarkus.arc.processor.DotNames;
 import io.quarkus.builder.item.SimpleBuildItem;
 import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.Capability;
@@ -163,7 +164,9 @@ public class ResteasyReactiveJacksonProcessor {
                 // just because it's a bean.
                 // Whether it is used in RESTEasy Reactive is determined elsewhere
                 .addBeanClass(FullyFeaturedServerJacksonMessageBodyWriter.class)
-                .setUnremovable().build();
+                .setDefaultScope(DotNames.APPLICATION_SCOPED)
+                .setUnremovable()
+                .build();
     }
 
     @BuildStep
@@ -255,8 +258,12 @@ public class ResteasyReactiveJacksonProcessor {
         }
         Collection<ClassInfo> resourceClasses = resourceScanningResultBuildItem.get().getResult().getScannedResources()
                 .values();
+
+        List<ClassInfo> allResourceClasses = new ArrayList<>(resourceClasses);
+        allResourceClasses.addAll(resourceScanningResultBuildItem.get().getResult().getPossibleSubResources().values());
+
         Set<JacksonFeatureBuildItem.Feature> jacksonFeatures = new HashSet<>();
-        for (ClassInfo resourceClass : resourceClasses) {
+        for (ClassInfo resourceClass : allResourceClasses) {
             if (resourceClass.annotationsMap().containsKey(JSON_VIEW)) {
                 jacksonFeatures.add(JacksonFeatureBuildItem.Feature.JSON_VIEW);
                 for (AnnotationInstance instance : resourceClass.annotationsMap().get(JSON_VIEW)) {
@@ -685,7 +692,7 @@ public class ResteasyReactiveJacksonProcessor {
         } else if (target.kind() == AnnotationTarget.Kind.METHOD) {
             return getMethodId(target.asMethod());
         } else if (target.kind() == AnnotationTarget.Kind.METHOD_PARAMETER) {
-            return getMethodId(target.asMethodParameter().method());
+            return "request-body;" + getMethodId(target.asMethodParameter().method());
         }
 
         throw new UnsupportedOperationException(String.format("The `%s` annotation can only "

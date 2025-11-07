@@ -27,8 +27,11 @@ import java.util.function.Consumer;
 
 import org.jboss.logging.Logger;
 
+import com.google.common.annotations.VisibleForTesting;
+
+import io.quarkus.bootstrap.app.CuratedApplication;
+import io.quarkus.bootstrap.app.StartupAction;
 import io.quarkus.commons.classloading.ClassLoaderHelper;
-import io.quarkus.paths.ManifestAttributes;
 import io.quarkus.paths.PathVisit;
 
 /**
@@ -45,6 +48,9 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
     private static final byte STATUS_CLOSED = -1;
 
     protected static final String META_INF_SERVICES = "META-INF/services/";
+
+    private final CuratedApplication curatedApplication;
+    private StartupAction startupAction;
 
     static {
         registerAsParallelCapable();
@@ -136,7 +142,6 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
     private final List<ClassPathElement> bannedElements;
     private final List<ClassPathElement> parentFirstElements;
     private final ConcurrentMap<ClassPathElement, ProtectionDomain> protectionDomains = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, Package> definedPackages = new ConcurrentHashMap<>();
     private final ClassLoader parent;
     /**
      * If this is true it will attempt to load from the parent first
@@ -194,6 +199,7 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
         this.aggregateParentResources = builder.aggregateParentResources;
         this.classLoaderEventListeners = builder.classLoaderEventListeners.isEmpty() ? Collections.emptyList()
                 : builder.classLoaderEventListeners;
+        this.curatedApplication = builder.curatedApplication;
         setDefaultAssertionStatus(builder.assertionsEnabled);
 
         if (lifecycleLog.isDebugEnabled()) {
@@ -216,7 +222,8 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
     }
 
     private boolean parentFirst(String name, ClassPathResourceIndex classPathResourceIndex) {
-        return parentFirst || classPathResourceIndex.isParentFirst(name);
+        return parentFirst || name.startsWith("io/quarkus/devservices/crossclassloader")
+                || classPathResourceIndex.isParentFirst(name);
     }
 
     public void reset(Map<String, byte[]> generatedResources, Map<String, byte[]> transformedClasses) {
@@ -527,6 +534,7 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
         if (isInJdkPackage(name)) {
             return parent.loadClass(name);
         }
+
         //even if the thread is interrupted we still want to be able to load classes
         //if the interrupt bit is set then we clear it and restore it at the end
         boolean interrupted = Thread.interrupted();
@@ -580,28 +588,33 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
         }
     }
 
-    private void definePackage(String name, ClassPathElement classPathElement) {
-        final String pkgName = getPackageNameFromClassName(name);
-        //we can't use getPackage here
-        //if can return a package from the parent
-        if ((pkgName != null) && definedPackages.get(pkgName) == null) {
-            synchronized (getClassLoadingLock(pkgName)) {
-                if (definedPackages.get(pkgName) == null) {
-                    ManifestAttributes manifest = classPathElement.getManifestAttributes();
-                    if (manifest != null) {
-                        definedPackages.put(pkgName, definePackage(pkgName, manifest.getSpecificationTitle(),
-                                manifest.getSpecificationVersion(),
-                                manifest.getSpecificationVendor(),
-                                manifest.getImplementationTitle(),
-                                manifest.getImplementationVersion(),
-                                manifest.getImplementationVendor(), null));
-                        return;
-                    }
-
-                    // this could certainly be improved to use the actual manifest
-                    definedPackages.put(pkgName, definePackage(pkgName, null, null, null, null, null, null, null));
-                }
+    @VisibleForTesting
+    void definePackage(String name, ClassPathElement classPathElement) {
+        var pkgName = getPackageNameFromClassName(name);
+        if (pkgName == null) {
+            return;
+        }
+        if (getDefinedPackage(pkgName) != null) {
+            return;
+        }
+        try {
+            var manifest = classPathElement.getManifestAttributes();
+            if (manifest != null) {
+                definePackage(pkgName, manifest.getSpecificationTitle(),
+                        manifest.getSpecificationVersion(),
+                        manifest.getSpecificationVendor(),
+                        manifest.getImplementationTitle(),
+                        manifest.getImplementationVersion(),
+                        manifest.getImplementationVendor(), null);
+            } else {
+                definePackage(pkgName, null, null, null, null, null, null, null);
             }
+        } catch (IllegalArgumentException e) {
+            // retry, thrown by definePackage(), if a package for the same name is already defines by this class loader.
+            if (getDefinedPackage(pkgName) != null) {
+                return;
+            }
+            throw e;
         }
     }
 
@@ -803,9 +816,21 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
         }
     }
 
+    public CuratedApplication getCuratedApplication() {
+        return curatedApplication;
+    }
+
     @Override
     public String toString() {
         return "QuarkusClassLoader:" + name + "@" + Integer.toHexString(hashCode());
+    }
+
+    public StartupAction getStartupAction() {
+        return startupAction;
+    }
+
+    public void setStartupAction(StartupAction startupAction) {
+        this.startupAction = startupAction;
     }
 
     public static class Builder {
@@ -816,6 +841,7 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
         final List<ClassPathElement> parentFirstElements = new ArrayList<>();
         final List<ClassPathElement> lesserPriorityElements = new ArrayList<>();
         final boolean parentFirst;
+        CuratedApplication curatedApplication;
         MemoryClassPathElement resettableElement;
         private Map<String, byte[]> transformedClasses = Collections.emptyMap();
         boolean aggregateParentResources;
@@ -939,6 +965,11 @@ public class QuarkusClassLoader extends ClassLoader implements Closeable {
 
         public Builder addClassLoaderEventListeners(List<ClassLoaderEventListener> classLoadListeners) {
             this.classLoaderEventListeners.addAll(classLoadListeners);
+            return this;
+        }
+
+        public Builder setCuratedApplication(CuratedApplication curatedApplication) {
+            this.curatedApplication = curatedApplication;
             return this;
         }
 

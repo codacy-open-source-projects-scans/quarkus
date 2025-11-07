@@ -1,5 +1,6 @@
 package io.quarkus.gradle.tasks;
 
+import static io.smallrye.config.ConfigMappings.ConfigClass.configClass;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableMap;
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,6 +27,8 @@ import io.quarkus.deployment.configuration.ConfigCompatibility;
 import io.quarkus.deployment.pkg.NativeConfig;
 import io.quarkus.deployment.pkg.PackageConfig;
 import io.quarkus.runtime.configuration.ConfigUtils;
+import io.smallrye.config.ConfigValue;
+import io.smallrye.config.DefaultValuesConfigSource;
 import io.smallrye.config.Expressions;
 import io.smallrye.config.PropertiesConfigSource;
 import io.smallrye.config.SmallRyeConfig;
@@ -42,6 +46,7 @@ import io.smallrye.config.source.yaml.YamlConfigSourceLoader;
 public final class EffectiveConfig {
     private final SmallRyeConfig config;
     private final Map<String, String> values;
+    private final Map<String, String> quarkusValues;
 
     private EffectiveConfig(Builder builder) {
         // Effective "ordinals" for the config sources:
@@ -60,6 +65,15 @@ public final class EffectiveConfig {
         // 100 -> microprofile.properties in classpath (provided by default sources)
         // 0 -> fallback config source for error workaround (see below)
 
+        PropertiesConfigSource platformPropertiesConfigSource;
+        if (builder.platformProperties.isEmpty()) {
+            // we don't have the model yet so we don't have the Platform properties around
+            platformPropertiesConfigSource = new PropertiesConfigSource(
+                    Map.of("platform.quarkus.native.builder-image", "<<ignored>>"), "platformProperties", 0);
+        } else {
+            platformPropertiesConfigSource = new PropertiesConfigSource(builder.platformProperties, "platformProperties", 0);
+        }
+
         this.config = ConfigUtils.emptyConfigBuilder()
                 .forClassLoader(toUrlClassloader(builder.sourceDirectories))
                 .withSources(new PropertiesConfigSource(builder.forcedProperties, "forcedProperties", 600))
@@ -70,9 +84,7 @@ public final class EffectiveConfig {
                 .withSources(new YamlConfigSourceLoader.InFileSystem())
                 .withSources(new YamlConfigSourceLoader.InClassPath())
                 .addPropertiesSources()
-                // todo: this is due to ApplicationModel#getPlatformProperties not being included in the effective config
-                .withSources(new PropertiesConfigSource(Map.of("platform.quarkus.native.builder-image", "<<ignored>>"),
-                        "NativeConfig#builderImage", 0))
+                .withSources(platformPropertiesConfigSource)
                 .withDefaultValues(builder.defaultProperties)
                 .withProfile(builder.profile)
                 .withMapping(PackageConfig.class)
@@ -80,6 +92,7 @@ public final class EffectiveConfig {
                 .withInterceptors(ConfigCompatibility.FrontEnd.instance(), ConfigCompatibility.BackEnd.instance())
                 .build();
         this.values = generateFullConfigMap(config);
+        this.quarkusValues = generateQuarkusConfigMap(config);
     }
 
     public SmallRyeConfig getConfig() {
@@ -88,6 +101,10 @@ public final class EffectiveConfig {
 
     public Map<String, String> getValues() {
         return values;
+    }
+
+    public Map<String, String> getQuarkusValues() {
+        return quarkusValues;
     }
 
     private Map<String, String> asStringMap(Map<String, ?> map) {
@@ -102,14 +119,46 @@ public final class EffectiveConfig {
 
     @VisibleForTesting
     static Map<String, String> generateFullConfigMap(SmallRyeConfig config) {
+        Set<String> defaultNames = new HashSet<>();
+        defaultNames.addAll(configClass(PackageConfig.class).getProperties().keySet());
+        defaultNames.addAll(configClass(NativeConfig.class).getProperties().keySet());
         return Expressions.withoutExpansion(new Supplier<Map<String, String>>() {
             @Override
             public Map<String, String> get() {
                 Map<String, String> properties = new HashMap<>();
                 for (String propertyName : config.getPropertyNames()) {
-                    String value = config.getRawValue(propertyName);
-                    if (value != null) {
-                        properties.put(propertyName, value);
+                    ConfigValue configValue = config.getConfigValue(propertyName);
+                    // Remove defaults coming from PackageConfig and NativeConfig, as this Map as passed as
+                    // system properties to Gradle workers and, we loose the ability to determine if it was set by
+                    // the user to evaluate deprecated configuration
+                    if (configValue.getValue() != null && (!defaultNames.contains(configValue.getName())
+                            || !DefaultValuesConfigSource.NAME.equals(configValue.getConfigSourceName()))) {
+                        properties.put(propertyName, configValue.getValue());
+                    }
+                }
+                return unmodifiableMap(properties);
+            }
+        });
+    }
+
+    static Map<String, String> generateQuarkusConfigMap(SmallRyeConfig config) {
+        Set<String> defaultNames = new HashSet<>();
+        defaultNames.addAll(configClass(PackageConfig.class).getProperties().keySet());
+        defaultNames.addAll(configClass(NativeConfig.class).getProperties().keySet());
+        return Expressions.withoutExpansion(new Supplier<Map<String, String>>() {
+            @Override
+            public Map<String, String> get() {
+                Map<String, String> properties = new HashMap<>();
+                for (String propertyName : config.getPropertyNames()) {
+                    if (propertyName.startsWith("quarkus.") || propertyName.startsWith("platform.quarkus.")) {
+                        ConfigValue configValue = config.getConfigValue(propertyName);
+                        // Remove defaults coming from PackageConfig and NativeConfig, as this Map as passed as
+                        // system properties to Gradle workers and, we loose the ability to determine if it was set by
+                        // the user to evaluate deprecated configuration
+                        if (configValue.getValue() != null && (!defaultNames.contains(configValue.getName())
+                                || !DefaultValuesConfigSource.NAME.equals(configValue.getConfigSourceName()))) {
+                            properties.put(propertyName, configValue.getValue());
+                        }
                     }
                 }
                 return unmodifiableMap(properties);
@@ -122,6 +171,7 @@ public final class EffectiveConfig {
     }
 
     static final class Builder {
+        private Map<String, String> platformProperties = emptyMap();
         private Map<String, String> forcedProperties = emptyMap();
         private Map<String, ?> taskProperties = emptyMap();
         private Map<String, String> buildProperties = emptyMap();
@@ -132,6 +182,11 @@ public final class EffectiveConfig {
 
         EffectiveConfig build() {
             return new EffectiveConfig(this);
+        }
+
+        Builder withPlatformProperties(Map<String, String> platformProperties) {
+            this.platformProperties = platformProperties;
+            return this;
         }
 
         Builder withForcedProperties(Map<String, String> forcedProperties) {

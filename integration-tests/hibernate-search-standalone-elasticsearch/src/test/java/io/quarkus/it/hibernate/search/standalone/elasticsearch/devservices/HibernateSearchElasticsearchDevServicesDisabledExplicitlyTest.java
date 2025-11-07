@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
@@ -38,7 +37,7 @@ public class HibernateSearchElasticsearchDevServicesDisabledExplicitlyTest {
                     // But here it doesn't matter as we won't send a request to Elasticsearch anyway,
                     // so we're free to put anything.
                     // Just make sure to set something consistent with what we have in application.properties.
-                    "quarkus.hibernate-search-standalone.elasticsearch.version", "8.15"));
+                    "quarkus.hibernate-search-standalone.elasticsearch.version", "9.1"));
             return config;
         }
 
@@ -50,11 +49,6 @@ public class HibernateSearchElasticsearchDevServicesDisabledExplicitlyTest {
             return "someotherprofile";
         }
 
-        @Override
-        public List<TestResourceEntry> testResources() {
-            // Enables injection of DevServicesContext
-            return List.of(new TestResourceEntry(DevServicesContextSpy.class));
-        }
     }
 
     DevServicesContext context;

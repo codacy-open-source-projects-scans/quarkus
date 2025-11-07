@@ -18,7 +18,6 @@ import io.micrometer.core.instrument.binder.MeterBinder;
 import io.quarkus.micrometer.runtime.config.MicrometerConfig;
 import io.quarkus.runtime.ShutdownEvent;
 import io.quarkus.runtime.StartupEvent;
-import io.quarkus.runtime.util.JavaVersionUtil;
 
 /**
  * A component collecting metrics about virtual threads.
@@ -40,12 +39,12 @@ public class VirtualThreadCollector {
 
     @Inject
     public VirtualThreadCollector(MicrometerConfig mc) {
-        var config = mc.binder.virtualThreads;
-        this.enabled = JavaVersionUtil.isJava21OrHigher() && config.enabled.orElse(true);
+        var config = mc.binder().virtualThreads();
+        this.enabled = Runtime.version().major() >= 21 && config.enabled().orElse(true);
         MeterBinder instantiated = null;
         if (enabled) {
-            if (config.tags.isPresent()) {
-                List<String> list = config.tags.get();
+            if (config.tags().isPresent()) {
+                List<String> list = config.tags().get();
                 this.tags = list.stream().map(this::createTagFromEntry).collect(Collectors.toList());
             } else {
                 this.tags = List.of();

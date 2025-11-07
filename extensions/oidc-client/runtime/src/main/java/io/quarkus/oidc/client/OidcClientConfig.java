@@ -12,11 +12,11 @@ import io.quarkus.oidc.common.runtime.OidcConstants;
  * @deprecated create {@link io.quarkus.oidc.client.runtime.OidcClientConfig} with the {@link OidcClientConfigBuilder}
  *             for example, you can use the {@link io.quarkus.oidc.client.runtime.OidcClientConfig#builder()} method.
  */
-@Deprecated(since = "3.18")
+@Deprecated(since = "3.18", forRemoval = true)
 public class OidcClientConfig extends OidcClientCommonConfig implements io.quarkus.oidc.client.runtime.OidcClientConfig {
 
     public OidcClientConfig() {
-
+        this.refreshInterval = Optional.empty();
     }
 
     public OidcClientConfig(io.quarkus.oidc.client.runtime.OidcClientConfig mapping) {
@@ -24,13 +24,16 @@ public class OidcClientConfig extends OidcClientCommonConfig implements io.quark
         id = mapping.id();
         clientEnabled = mapping.clientEnabled();
         scopes = mapping.scopes();
+        audience = mapping.audience();
         refreshTokenTimeSkew = mapping.refreshTokenTimeSkew();
         accessTokenExpiresIn = mapping.accessTokenExpiresIn();
+        accessTokenExpirySkew = mapping.accessTokenExpirySkew();
         absoluteExpiresIn = mapping.absoluteExpiresIn();
         grant.addConfigMappingValues(mapping.grant());
         grantOptions = mapping.grantOptions();
         earlyTokensAcquisition = mapping.earlyTokensAcquisition();
         headers = mapping.headers();
+        refreshInterval = mapping.refreshInterval();
     }
 
     /**
@@ -50,6 +53,11 @@ public class OidcClientConfig extends OidcClientCommonConfig implements io.quark
     public Optional<List<String>> scopes = Optional.empty();
 
     /**
+     * List of access token audiences
+     */
+    Optional<List<String>> audience = Optional.empty();
+
+    /**
      * Refresh token time skew.
      * If this property is enabled then the configured duration is converted to seconds and is added to the current time
      * when checking whether the access token should be refreshed. If the sum is greater than this access token's
@@ -65,12 +73,19 @@ public class OidcClientConfig extends OidcClientCommonConfig implements io.quark
     public Optional<Duration> accessTokenExpiresIn = Optional.empty();
 
     /**
+     * Access token expiry time skew that can be added to the calculated token expiry time.
+     */
+    public Optional<Duration> accessTokenExpirySkew = Optional.empty();
+
+    /**
      * If the access token 'expires_in' property should be checked as an absolute time value
      * as opposed to a duration relative to the current time.
      */
     public boolean absoluteExpiresIn;
 
     public Grant grant = new Grant();
+
+    private final Optional<Duration> refreshInterval;
 
     @Override
     public Optional<String> id() {
@@ -88,6 +103,11 @@ public class OidcClientConfig extends OidcClientCommonConfig implements io.quark
     }
 
     @Override
+    public Optional<List<String>> audience() {
+        return audience;
+    }
+
+    @Override
     public Optional<Duration> refreshTokenTimeSkew() {
         return refreshTokenTimeSkew;
     }
@@ -95,6 +115,11 @@ public class OidcClientConfig extends OidcClientCommonConfig implements io.quark
     @Override
     public Optional<Duration> accessTokenExpiresIn() {
         return accessTokenExpiresIn;
+    }
+
+    @Override
+    public Optional<Duration> accessTokenExpirySkew() {
+        return accessTokenExpirySkew;
     }
 
     @Override
@@ -120,6 +145,11 @@ public class OidcClientConfig extends OidcClientCommonConfig implements io.quark
     @Override
     public Map<String, String> headers() {
         return headers;
+    }
+
+    @Override
+    public Optional<Duration> refreshInterval() {
+        return refreshInterval;
     }
 
     public static class Grant implements io.quarkus.oidc.client.runtime.OidcClientConfig.Grant {

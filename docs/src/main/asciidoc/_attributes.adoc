@@ -29,6 +29,8 @@
 // overridden to the full version, at least when building locally.
 :hibernate-orm-version-major-minor: ${hibernate-orm.majorVersion}.${hibernate-orm.minorVersion}
 :hibernate-search-version-major-minor: ${hibernate-search.majorVersion}.${hibernate-search.minorVersion}
+:hibernate-validator-version-major-minor: ${hibernate-validator.majorVersion}.${hibernate-validator.minorVersion}
+:jakarta-persistence-version-major-minor: ${jakarta-persistence.majorVersion}.${jakarta-persistence.minorVersion}
 // .
 :quarkus-home-url: ${quarkus-home-url}
 :quarkus-org-url: https://github.com/quarkusio
@@ -52,8 +54,11 @@
 :quickstarts-tree-url: ${quickstarts-base-url}/tree/main
 // .
 :hibernate-orm-docs-url: https://docs.jboss.org/hibernate/orm/{hibernate-orm-version-major-minor}/userguide/html_single/Hibernate_User_Guide.html
+:hibernate-orm-javadocs-url: https://docs.jboss.org/hibernate/orm/{hibernate-orm-version-major-minor}/javadocs/
 :hibernate-orm-dialect-docs-url: https://docs.jboss.org/hibernate/orm/{hibernate-orm-version-major-minor}/dialect/dialect.html
 :hibernate-search-docs-url: https://docs.jboss.org/hibernate/search/{hibernate-search-version-major-minor}/reference/en-US/html_single/
+:hibernate-validator-docs-url: https://docs.jboss.org/hibernate/validator/{hibernate-validator-version-major-minor}/reference/en-US/html_single/
+:jakarta-persistence-spec-url: https://jakarta.ee/specifications/persistence/{jakarta-persistence-version-major-minor}/jakarta-persistence-spec-{jakarta-persistence-version-major-minor}#a6072
 // .
 :amazon-services-guide: https://docs.quarkiverse.io/quarkus-amazon-services/dev/index.html
 :config-consul-guide: https://docs.quarkiverse.io/quarkus-config-extensions/dev/consul.html
@@ -67,5 +72,15 @@
 // .
 :create-app-group-id: org.acme
 :create-cli-group-id: {create-app-group-id}
+// Attributes required for single-sourcing to downstream.
+:jdk-version-other: 17
+:jdk-version-latest: 21
+:jdk-version-all: 17 or 21
+:openshift-long: OpenShift
+:openshift: OpenShift
+:name-image-ubi9-open-jdk-17: registry.access.redhat.com/ubi9/openjdk-17
+:name-image-ubi9-open-jdk-17-short: ubi9/openjdk-17
+:name-image-ubi9-open-jdk-21: registry.access.redhat.com/ubi9/openjdk-21
+:name-image-ubi9-open-jdk-21-short: ubi9/openjdk-21
 // .
 include::_attributes-local.adoc[]

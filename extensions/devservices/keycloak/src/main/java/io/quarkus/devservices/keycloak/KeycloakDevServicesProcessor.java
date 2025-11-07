@@ -1,5 +1,7 @@
 package io.quarkus.devservices.keycloak;
 
+import static io.quarkus.devservices.common.ContainerLocator.locateContainerWithLabels;
+import static io.quarkus.devservices.common.Labels.QUARKUS_DEV_SERVICE;
 import static io.quarkus.devservices.keycloak.KeycloakDevServicesConfigBuildItem.getKeycloakUrl;
 import static io.quarkus.devservices.keycloak.KeycloakDevServicesRequiredBuildItem.getDevServicesConfigurator;
 import static io.quarkus.devservices.keycloak.KeycloakDevServicesUtils.createWebClient;
@@ -8,9 +10,9 @@ import static io.quarkus.devservices.keycloak.KeycloakDevServicesUtils.getPasswo
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.net.ConnectException;
 import java.net.MalformedURLException;
 import java.net.ServerSocket;
+import java.net.SocketException;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
@@ -47,12 +49,13 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.DockerImageName;
 
+import io.quarkus.deployment.IsDevServicesSupportedByLaunchMode;
 import io.quarkus.deployment.IsDevelopment;
-import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
 import io.quarkus.deployment.builditem.CuratedApplicationShutdownBuildItem;
+import io.quarkus.deployment.builditem.DevServicesComposeProjectBuildItem;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
 import io.quarkus.deployment.builditem.DevServicesSharedNetworkBuildItem;
@@ -62,6 +65,7 @@ import io.quarkus.deployment.console.ConsoleInstalledBuildItem;
 import io.quarkus.deployment.console.StartupLogCompressor;
 import io.quarkus.deployment.dev.devservices.DevServicesConfig;
 import io.quarkus.deployment.logging.LoggingSetupBuildItem;
+import io.quarkus.devservices.common.ComposeLocator;
 import io.quarkus.devservices.common.ConfigureUtil;
 import io.quarkus.devservices.common.ContainerAddress;
 import io.quarkus.devservices.common.ContainerLocator;
@@ -78,7 +82,7 @@ import io.vertx.mutiny.core.buffer.Buffer;
 import io.vertx.mutiny.ext.web.client.HttpResponse;
 import io.vertx.mutiny.ext.web.client.WebClient;
 
-@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = DevServicesConfig.Enabled.class)
+@BuildSteps(onlyIf = { IsDevServicesSupportedByLaunchMode.class, DevServicesConfig.Enabled.class })
 public class KeycloakDevServicesProcessor {
 
     private static final Logger LOG = Logger.getLogger(KeycloakDevServicesProcessor.class);
@@ -109,8 +113,8 @@ public class KeycloakDevServicesProcessor {
 
     // Properties recognized by Quarkus-powered Keycloak
     private static final String KEYCLOAK_QUARKUS_HOSTNAME = "KC_HOSTNAME";
-    private static final String KEYCLOAK_QUARKUS_ADMIN_PROP = "KEYCLOAK_ADMIN";
-    private static final String KEYCLOAK_QUARKUS_ADMIN_PASSWORD_PROP = "KEYCLOAK_ADMIN_PASSWORD";
+    private static final String KEYCLOAK_QUARKUS_ADMIN_PROP = "KC_BOOTSTRAP_ADMIN_USERNAME";
+    private static final String KEYCLOAK_QUARKUS_ADMIN_PASSWORD_PROP = "KC_BOOTSTRAP_ADMIN_PASSWORD";
     private static final String KEYCLOAK_QUARKUS_START_CMD = "start --http-enabled=true --hostname-strict=false "
             + "--spi-user-profile-declarative-user-profile-config-file=/opt/keycloak/upconfig.json";
 
@@ -123,8 +127,8 @@ public class KeycloakDevServicesProcessor {
      * This allows other applications to discover the running service and use it instead of starting a new instance.
      */
     private static final String DEV_SERVICE_LABEL = "quarkus-dev-service-keycloak";
-    private static final ContainerLocator KEYCLOAK_DEV_MODE_CONTAINER_LOCATOR = new ContainerLocator(DEV_SERVICE_LABEL,
-            KEYCLOAK_PORT);
+    private static final ContainerLocator KEYCLOAK_DEV_MODE_CONTAINER_LOCATOR = locateContainerWithLabels(KEYCLOAK_PORT,
+            DEV_SERVICE_LABEL);
 
     private static volatile RunningDevService devService;
     private static volatile KeycloakDevServicesConfig capturedDevServicesConfiguration;
@@ -135,6 +139,7 @@ public class KeycloakDevServicesProcessor {
     @BuildStep
     DevServicesResultBuildItem startKeycloakContainer(
             List<KeycloakDevServicesRequiredBuildItem> devSvcRequiredMarkerItems,
+            DevServicesComposeProjectBuildItem composeProjectBuildItem,
             BuildProducer<KeycloakDevServicesConfigBuildItem> keycloakBuildItemBuildProducer,
             List<DevServicesSharedNetworkBuildItem> devServicesSharedNetworkBuildItem,
             KeycloakDevServicesConfig config,
@@ -144,7 +149,13 @@ public class KeycloakDevServicesProcessor {
             LoggingSetupBuildItem loggingSetupBuildItem,
             DevServicesConfig devServicesConfig, DockerStatusBuildItem dockerStatusBuildItem) {
 
+        if (!devServicesConfig.enabled() || !config.enabled()) {
+            LOG.debug("Not starting Dev Services for Keycloak as it has been disabled in the configuration");
+            return null;
+        }
+
         if (devSvcRequiredMarkerItems.isEmpty()
+                || oidcDevServicesEnabled()
                 || linuxContainersNotAvailable(dockerStatusBuildItem, devSvcRequiredMarkerItems)) {
             if (devService != null) {
                 closeDevService();
@@ -191,8 +202,11 @@ public class KeycloakDevServicesProcessor {
 
             boolean useSharedNetwork = DevServicesSharedNetworkBuildItem.isSharedNetworkRequired(devServicesConfig,
                     devServicesSharedNetworkBuildItem);
-            RunningDevService newDevService = startContainer(keycloakBuildItemBuildProducer, useSharedNetwork,
-                    devServicesConfig.timeout(), errors, devServicesConfigurator);
+            RunningDevService newDevService = startContainer(composeProjectBuildItem,
+                    keycloakBuildItemBuildProducer,
+                    useSharedNetwork,
+                    devServicesConfig.timeout(),
+                    errors, devServicesConfigurator);
             if (newDevService == null) {
                 if (errors.isEmpty()) {
                     compressor.close();
@@ -246,6 +260,10 @@ public class KeycloakDevServicesProcessor {
         LOG.info("Dev Services for Keycloak started.");
 
         return devService.toBuildItem();
+    }
+
+    private static boolean oidcDevServicesEnabled() {
+        return ConfigProvider.getConfig().getOptionalValue("quarkus.oidc.devservices.enabled", boolean.class).orElse(false);
     }
 
     private static boolean linuxContainersNotAvailable(DockerStatusBuildItem dockerStatusBuildItem,
@@ -303,7 +321,7 @@ public class KeycloakDevServicesProcessor {
             BuildProducer<KeycloakDevServicesConfigBuildItem> keycloakBuildItemBuildProducer, String internalURL,
             String hostURL, List<RealmRepresentation> realmReps, List<String> errors,
             KeycloakDevServicesConfigurator devServicesConfigurator, String internalBaseUrl) {
-        final String realmName = realmReps != null && !realmReps.isEmpty() ? realmReps.iterator().next().getRealm()
+        final String realmName = !realmReps.isEmpty() ? realmReps.iterator().next().getRealm()
                 : getDefaultRealmName();
         final String authServerInternalUrl = realmsURL(internalURL, realmName);
 
@@ -320,29 +338,32 @@ public class KeycloakDevServicesProcessor {
 
         List<String> realmNames = new LinkedList<>();
 
-        // this needs to be only if we actually start the dev-service as it adds a shutdown hook
-        // whose TCCL is the Augmentation CL, which if not removed, causes a massive memory leaks
-        if (vertxInstance == null) {
-            vertxInstance = Vertx.vertx();
-        }
+        if (createDefaultRealm || !realmReps.isEmpty()) {
 
-        WebClient client = createWebClient(vertxInstance);
-        try {
-            String adminToken = getAdminToken(client, clientAuthServerBaseUrl);
-            if (createDefaultRealm) {
-                createDefaultRealm(client, adminToken, clientAuthServerBaseUrl, users, oidcClientId, oidcClientSecret, errors,
-                        devServicesConfigurator);
-                realmNames.add(realmName);
-            } else {
-                if (realmReps != null) {
+            // this needs to be only if we actually start the dev-service as it adds a shutdown hook
+            // whose TCCL is the Augmentation CL, which if not removed, causes a massive memory leaks
+            if (vertxInstance == null) {
+                vertxInstance = Vertx.vertx();
+            }
+
+            WebClient client = createWebClient(vertxInstance);
+            try {
+                String adminToken = getAdminToken(client, clientAuthServerBaseUrl);
+                if (createDefaultRealm) {
+                    createDefaultRealm(client, adminToken, clientAuthServerBaseUrl, users, oidcClientId, oidcClientSecret,
+                            errors,
+                            devServicesConfigurator);
+                    realmNames.add(realmName);
+                } else if (realmReps != null) {
                     for (RealmRepresentation realmRep : realmReps) {
                         createRealm(client, adminToken, clientAuthServerBaseUrl, realmRep, errors);
                         realmNames.add(realmRep.getRealm());
                     }
                 }
+
+            } finally {
+                client.close();
             }
-        } finally {
-            client.close();
         }
 
         Map<String, String> configProperties = new HashMap<>();
@@ -370,6 +391,7 @@ public class KeycloakDevServicesProcessor {
     }
 
     private static RunningDevService startContainer(
+            DevServicesComposeProjectBuildItem composeProjectBuildItem,
             BuildProducer<KeycloakDevServicesConfigBuildItem> keycloakBuildItemBuildProducer,
             boolean useSharedNetwork, Optional<Duration> timeout,
             List<String> errors, KeycloakDevServicesConfigurator devServicesConfigurator) {
@@ -391,6 +413,7 @@ public class KeycloakDevServicesProcessor {
 
             QuarkusOidcContainer oidcContainer = new QuarkusOidcContainer(dockerImageName,
                     capturedDevServicesConfiguration.port(),
+                    composeProjectBuildItem.getDefaultNetworkId(),
                     useSharedNetwork,
                     capturedDevServicesConfiguration.realmPath().orElse(List.of()),
                     resourcesMap(errors),
@@ -398,6 +421,7 @@ public class KeycloakDevServicesProcessor {
                     capturedDevServicesConfiguration.shared(),
                     capturedDevServicesConfiguration.javaOpts(),
                     capturedDevServicesConfiguration.startCommand(),
+                    capturedDevServicesConfiguration.features(),
                     capturedDevServicesConfiguration.showLogs(),
                     capturedDevServicesConfiguration.containerMemoryLimit(),
                     errors);
@@ -423,11 +447,13 @@ public class KeycloakDevServicesProcessor {
         };
 
         return maybeContainerAddress
+                .or(() -> ComposeLocator.locateContainer(composeProjectBuildItem, List.of(imageName, "keycloak"),
+                        KEYCLOAK_PORT, LaunchMode.current(), useSharedNetwork))
                 .map(containerAddress -> {
                     // TODO: this probably needs to be addressed
                     String sharedContainerUrl = getSharedContainerUrl(containerAddress);
                     Map<String, String> configs = prepareConfiguration(keycloakBuildItemBuildProducer, sharedContainerUrl,
-                            sharedContainerUrl, null, errors, devServicesConfigurator, sharedContainerUrl);
+                            sharedContainerUrl, List.of(), errors, devServicesConfigurator, sharedContainerUrl);
                     return new RunningDevService(KEYCLOAK_CONTAINER_NAME, containerAddress.getId(), null, configs);
                 })
                 .orElseGet(defaultKeycloakContainerSupplier);
@@ -468,18 +494,21 @@ public class KeycloakDevServicesProcessor {
         private final String containerLabelValue;
         private final Optional<String> javaOpts;
         private final boolean sharedContainer;
-        private String hostName;
+        private final String hostName;
         private final boolean keycloakX;
         private final List<RealmRepresentation> realmReps = new LinkedList<>();
         private final Optional<String> startCommand;
+        private final Optional<Set<String>> features;
         private final boolean showLogs;
         private final MemorySize containerMemoryLimit;
         private final List<String> errors;
 
-        public QuarkusOidcContainer(DockerImageName dockerImageName, OptionalInt fixedExposedPort, boolean useSharedNetwork,
+        public QuarkusOidcContainer(DockerImageName dockerImageName, OptionalInt fixedExposedPort,
+                String defaultNetworkId,
+                boolean useSharedNetwork,
                 List<String> realmPaths, Map<String, String> resources, String containerLabelValue,
-                boolean sharedContainer, Optional<String> javaOpts, Optional<String> startCommand, boolean showLogs,
-                MemorySize containerMemoryLimit, List<String> errors) {
+                boolean sharedContainer, Optional<String> javaOpts, Optional<String> startCommand,
+                Optional<Set<String>> features, boolean showLogs, MemorySize containerMemoryLimit, List<String> errors) {
             super(dockerImageName);
 
             this.useSharedNetwork = useSharedNetwork;
@@ -499,11 +528,13 @@ public class KeycloakDevServicesProcessor {
 
             this.fixedExposedPort = fixedExposedPort;
             this.startCommand = startCommand;
+            this.features = features;
             this.showLogs = showLogs;
             this.containerMemoryLimit = containerMemoryLimit;
             this.errors = errors;
 
             super.setWaitStrategy(Wait.forLogMessage(".*Keycloak.*started.*", 1));
+            this.hostName = ConfigureUtil.configureNetwork(this, defaultNetworkId, useSharedNetwork, "keycloak");
         }
 
         @Override
@@ -511,9 +542,8 @@ public class KeycloakDevServicesProcessor {
             super.configure();
 
             if (useSharedNetwork) {
-                hostName = ConfigureUtil.configureSharedNetwork(this, "keycloak");
                 if (keycloakX) {
-                    addEnv(KEYCLOAK_QUARKUS_HOSTNAME, "localhost");
+                    addEnv(KEYCLOAK_QUARKUS_HOSTNAME, (isHttps() ? "https://" : "http://") + hostName + ":" + KEYCLOAK_PORT);
                 } else {
                     addEnv(KEYCLOAK_WILDFLY_FRONTEND_URL, "http://localhost:" + fixedExposedPort.getAsInt());
                 }
@@ -532,6 +562,7 @@ public class KeycloakDevServicesProcessor {
 
             if (sharedContainer && LaunchMode.current() == LaunchMode.DEVELOPMENT) {
                 withLabel(DEV_SERVICE_LABEL, containerLabelValue);
+                withLabel(QUARKUS_DEV_SERVICE, containerLabelValue);
             }
 
             if (javaOpts.isPresent()) {
@@ -541,8 +572,11 @@ public class KeycloakDevServicesProcessor {
             if (keycloakX) {
                 addEnv(KEYCLOAK_QUARKUS_ADMIN_PROP, KEYCLOAK_ADMIN_USER);
                 addEnv(KEYCLOAK_QUARKUS_ADMIN_PASSWORD_PROP, KEYCLOAK_ADMIN_PASSWORD);
-                withCommand(startCommand.orElse(KEYCLOAK_QUARKUS_START_CMD)
-                        + (useSharedNetwork ? " --hostname-port=" + fixedExposedPort.getAsInt() : ""));
+                String finalStartCommand = startCommand.orElse(KEYCLOAK_QUARKUS_START_CMD);
+                if (features.isPresent()) {
+                    finalStartCommand += (" --features=" + features.get().stream().collect(Collectors.joining(",")));
+                }
+                withCommand(finalStartCommand);
                 addUpConfigResource();
                 if (isHttps()) {
                     addExposedPort(KEYCLOAK_HTTPS_PORT);
@@ -728,7 +762,7 @@ public class KeycloakDevServicesProcessor {
                     .await().atMost(capturedDevServicesConfiguration.webClientTimeout());
         } catch (TimeoutException e) {
             LOG.error("Admin token can not be acquired due to a client connection timeout. " +
-                    "You may try increasing the `quarkus.oidc.devui.web-client-timeout` property.");
+                    "You may try increasing the `quarkus.keycloak.devservices.web-client-timeout` property.");
         } catch (Throwable t) {
             LOG.error("Admin token can not be acquired", t);
         }
@@ -794,7 +828,7 @@ public class KeycloakDevServicesProcessor {
     }
 
     private static Predicate<? super Throwable> realmEndpointNotAvailable() {
-        return t -> (t instanceof ConnectException
+        return t -> (t instanceof SocketException
                 || (t instanceof RealmEndpointAccessException && ((RealmEndpointAccessException) t).getErrorStatus() == 404));
     }
 
@@ -825,6 +859,7 @@ public class KeycloakDevServicesProcessor {
         realm.setAccessTokenLifespan(600);
         realm.setSsoSessionMaxLifespan(600);
         realm.setRefreshTokenMaxReuse(10);
+        realm.setRequiredActions(List.of());
 
         RolesRepresentation roles = new RolesRepresentation();
         List<RoleRepresentation> realmRoles = new ArrayList<>();
@@ -861,7 +896,7 @@ public class KeycloakDevServicesProcessor {
         client.setImplicitFlowEnabled(true);
         client.setEnabled(true);
         client.setRedirectUris(List.of("*"));
-        client.setDefaultClientScopes(List.of("microprofile-jwt"));
+        client.setDefaultClientScopes(List.of("microprofile-jwt", "basic"));
 
         return client;
     }
@@ -873,6 +908,8 @@ public class KeycloakDevServicesProcessor {
         user.setEnabled(true);
         user.setCredentials(new ArrayList<>());
         user.setRealmRoles(realmRoles);
+        user.setEmailVerified(true);
+        user.setRequiredActions(List.of());
 
         CredentialRepresentation credential = new CredentialRepresentation();
 

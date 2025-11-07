@@ -7,7 +7,10 @@ import static io.quarkus.grpc.deployment.GrpcDotNames.CREATE_CHANNEL_METHOD;
 import static io.quarkus.grpc.deployment.GrpcDotNames.RETRIEVE_CHANNEL_METHOD;
 import static io.quarkus.grpc.deployment.GrpcInterceptors.MICROMETER_INTERCEPTORS;
 import static io.quarkus.grpc.deployment.ResourceRegistrationUtils.registerResourcesForProperties;
+import static org.jboss.jandex.gizmo2.Jandex2Gizmo.classDescOf;
 
+import java.lang.constant.ClassDesc;
+import java.lang.constant.MethodTypeDesc;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -16,7 +19,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
-import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 import jakarta.enterprise.context.ApplicationScoped;
@@ -30,6 +32,7 @@ import org.jboss.jandex.AnnotationTarget;
 import org.jboss.jandex.AnnotationTarget.Kind;
 import org.jboss.jandex.AnnotationValue;
 import org.jboss.jandex.ClassInfo;
+import org.jboss.jandex.ClassType;
 import org.jboss.jandex.DotName;
 import org.jboss.jandex.FieldInfo;
 import org.jboss.jandex.IndexView;
@@ -59,9 +62,13 @@ import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.RuntimeInitializedClassBuildItem;
 import io.quarkus.deployment.recording.RecorderContext;
-import io.quarkus.gizmo.MethodCreator;
-import io.quarkus.gizmo.MethodDescriptor;
-import io.quarkus.gizmo.ResultHandle;
+import io.quarkus.gizmo2.Const;
+import io.quarkus.gizmo2.Expr;
+import io.quarkus.gizmo2.Reflection2Gizmo;
+import io.quarkus.gizmo2.creator.BlockCreator;
+import io.quarkus.gizmo2.desc.ClassMethodDesc;
+import io.quarkus.gizmo2.desc.ConstructorDesc;
+import io.quarkus.gizmo2.desc.MethodDesc;
 import io.quarkus.grpc.GrpcClient;
 import io.quarkus.grpc.MutinyClient;
 import io.quarkus.grpc.RegisterClientInterceptor;
@@ -104,7 +111,7 @@ public class GrpcClientProcessor {
     @BuildStep
     @Record(ExecutionTime.STATIC_INIT)
     void setUpStork(GrpcStorkRecorder storkRecorder, GrpcClientBuildTimeConfig config) {
-        storkRecorder.init(config.storkProactiveConnections);
+        storkRecorder.init(config.storkProactiveConnections());
     }
 
     @BuildStep
@@ -218,8 +225,17 @@ public class GrpcClientProcessor {
     public void generateGrpcClientProducers(List<GrpcClientBuildItem> clients,
             BuildProducer<SyntheticBeanBuildItem> syntheticBeans) {
 
+        // squash all GrpcClientBuildItem's ClientInfo(s) per clientName
+        // so any extension could add own GrpcClientBuildItem(s) as well
+        Map<String, Set<ClientInfo>> clientsMap = new HashMap<>();
         for (GrpcClientBuildItem client : clients) {
-            for (ClientInfo clientInfo : client.getClients()) {
+            Set<ClientInfo> infos = clientsMap.computeIfAbsent(client.getClientName(), cn -> new HashSet<>());
+            infos.addAll(client.getClients());
+        }
+
+        for (Map.Entry<String, Set<ClientInfo>> entry : clientsMap.entrySet()) {
+            String clientName = entry.getKey();
+            for (ClientInfo clientInfo : entry.getValue()) {
                 if (clientInfo.type == ClientType.CHANNEL) {
                     // channel
 
@@ -227,30 +243,24 @@ public class GrpcClientProcessor {
                     // bean that provides the GrpcClientConfiguration for the specific service.
 
                     ExtendedBeanConfigurator configurator = SyntheticBeanBuildItem.configure(GrpcDotNames.CHANNEL)
-                            .addQualifier().annotation(GrpcDotNames.GRPC_CLIENT).addValue("value", client.getClientName())
+                            .addQualifier().annotation(GrpcDotNames.GRPC_CLIENT).addValue("value", clientName)
                             .done()
                             .scope(Singleton.class)
                             .unremovable()
                             .forceApplicationClass()
-                            .creator(new Consumer<>() {
-                                @Override
-                                public void accept(MethodCreator mc) {
-                                    GrpcClientProcessor.this.generateChannelProducer(mc, client.getClientName(), clientInfo);
-                                }
-                            })
+                            .creator(cg -> GrpcClientProcessor.this.generateChannelProducer(cg.createMethod(),
+                                    clientName, clientInfo))
                             .destroyer(Channels.ChannelDestroyer.class);
                     if (!clientInfo.interceptors.isEmpty()) {
                         for (String interceptorClass : clientInfo.interceptors) {
-                            configurator.addQualifier(AnnotationInstance.create(GrpcDotNames.REGISTER_CLIENT_INTERCEPTOR, null,
-                                    new AnnotationValue[] { AnnotationValue.createClassValue("value",
-                                            Type.create(DotName.createSimple(interceptorClass),
-                                                    org.jboss.jandex.Type.Kind.CLASS)) }));
+                            configurator.addQualifier(AnnotationInstance.builder(GrpcDotNames.REGISTER_CLIENT_INTERCEPTOR)
+                                    .value(ClassType.create(interceptorClass))
+                                    .build());
                         }
                     }
                     syntheticBeans.produce(configurator.done());
                 } else {
                     // blocking stub, mutiny stub, mutiny client
-                    String clientName = client.getClientName();
                     ExtendedBeanConfigurator configurator = SyntheticBeanBuildItem.configure(clientInfo.className)
                             .addQualifier().annotation(GrpcDotNames.GRPC_CLIENT).addValue("value", clientName).done()
                             // Only the mutiny client can use the Application scope, the others are "final" and so need Singleton.
@@ -259,18 +269,13 @@ public class GrpcClientProcessor {
                             .unremovable()
                             .forceApplicationClass()
                             .addType(MutinyClient.class)
-                            .creator(new Consumer<>() {
-                                @Override
-                                public void accept(MethodCreator mc) {
-                                    GrpcClientProcessor.this.generateClientProducer(mc, clientName, clientInfo);
-                                }
-                            });
+                            .creator(cg -> GrpcClientProcessor.this.generateClientProducer(cg.createMethod(),
+                                    clientName, clientInfo));
                     if (!clientInfo.interceptors.isEmpty()) {
                         for (String interceptorClass : clientInfo.interceptors) {
-                            configurator.addQualifier(AnnotationInstance.create(GrpcDotNames.REGISTER_CLIENT_INTERCEPTOR, null,
-                                    new AnnotationValue[] { AnnotationValue.createClassValue("value",
-                                            Type.create(DotName.createSimple(interceptorClass),
-                                                    org.jboss.jandex.Type.Kind.CLASS)) }));
+                            configurator.addQualifier(AnnotationInstance.builder(GrpcDotNames.REGISTER_CLIENT_INTERCEPTOR)
+                                    .value(ClassType.create(interceptorClass))
+                                    .build());
                         }
                     }
                     syntheticBeans.produce(configurator.done());
@@ -429,6 +434,16 @@ public class GrpcClientProcessor {
         return UnremovableBeanBuildItem.beanTypes(GrpcDotNames.CLIENT_INTERCEPTOR);
     }
 
+    @BuildStep
+    UnremovableBeanBuildItem unremovableChannelBuilderCustomizers() {
+        return UnremovableBeanBuildItem.beanTypes(GrpcDotNames.CHANNEL_BUILDER_CUSTOMIZER);
+    }
+
+    @BuildStep
+    UnremovableBeanBuildItem unremovableServerBuilderCustomizers() {
+        return UnremovableBeanBuildItem.beanTypes(GrpcDotNames.SERVER_BUILDER_CUSTOMIZER);
+    }
+
     Set<String> getRegisteredInterceptors(InjectionPointInfo injectionPoint) {
         Set<AnnotationInstance> qualifiers = injectionPoint.getRequiredQualifiers();
         if (qualifiers.size() <= 1) {
@@ -449,18 +464,9 @@ public class GrpcClientProcessor {
                         + " - only Mutiny service interfaces, blocking stubs, reactive stubs based on Mutiny and io.grpc.Channel can be injected via @GrpcClient");
     }
 
-    private void generateChannelProducer(MethodCreator mc, String clientName, ClientInfo client) {
-        ResultHandle name = mc.load(clientName);
-        ResultHandle interceptorsArray = mc.newArray(String.class, client.interceptors.size());
-        int idx = 0;
-        for (String interceptor : client.interceptors) {
-            mc.writeArrayValue(interceptorsArray, idx++, mc.load(interceptor));
-        }
-        ResultHandle interceptorsSet = mc.invokeStaticInterfaceMethod(
-                MethodDescriptor.ofMethod(Set.class, "of", Set.class, Object[].class), interceptorsArray);
-        ResultHandle result = mc.invokeStaticMethod(CREATE_CHANNEL_METHOD, name, interceptorsSet);
-        mc.returnValue(result);
-        mc.close();
+    private void generateChannelProducer(BlockCreator bc, String clientName, ClientInfo client) {
+        bc.return_(bc.invokeStatic(CREATE_CHANNEL_METHOD, Const.of(clientName),
+                bc.setOf(client.interceptors.stream().toList(), Const::of)));
     }
 
     private static Set<DotName> getRawTypeClosure(ClassInfo classInfo, IndexView index) {
@@ -490,50 +496,40 @@ public class GrpcClientProcessor {
         return types;
     }
 
-    private void generateClientProducer(MethodCreator mc, String clientName, ClientInfo clientInfo) {
-        ResultHandle name = mc.load(clientName);
-        ResultHandle interceptorsArray = mc.newArray(String.class, clientInfo.interceptors.size());
-        int idx = 0;
-        for (String interceptor : clientInfo.interceptors) {
-            mc.writeArrayValue(interceptorsArray, idx++, mc.load(interceptor));
-        }
-        ResultHandle interceptorsSet = mc.invokeStaticInterfaceMethod(
-                MethodDescriptor.ofMethod(Set.class, "of", Set.class, Object[].class), interceptorsArray);
+    private void generateClientProducer(BlockCreator bc, String clientName, ClientInfo clientInfo) {
+        Const name = Const.of(clientName);
 
         // First obtain the channel instance for the given service name
-        ResultHandle channel = mc.invokeStaticMethod(RETRIEVE_CHANNEL_METHOD, name, interceptorsSet);
-        ResultHandle client;
+        Expr channel = bc.invokeStatic(RETRIEVE_CHANNEL_METHOD, name,
+                bc.setOf(clientInfo.interceptors.stream().toList(), Const::of));
 
+        Expr client;
         if (clientInfo.type == ClientType.MUTINY_CLIENT) {
             // Instantiate the client, e.g. new HealthClient(serviceName,channel,GrpcClientConfigProvider.getStubConfigurator())
-            ResultHandle stubConfigurator = mc.invokeStaticMethod(GrpcDotNames.GET_STUB_CONFIGURATOR);
-            client = mc.newInstance(
-                    MethodDescriptor.ofConstructor(clientInfo.implName.toString(), String.class.getName(),
-                            Channel.class.getName(), BiFunction.class),
-                    name, channel, stubConfigurator);
+            client = bc.new_(
+                    ConstructorDesc.of(classDescOf(clientInfo.implName), String.class, Channel.class, BiFunction.class),
+                    name, channel, bc.invokeStatic(GrpcDotNames.GET_STUB_CONFIGURATOR));
         } else {
             // Create the stub, e.g. newBlockingStub(channel)
-            MethodDescriptor factoryMethod = MethodDescriptor
-                    .ofMethod(convertToServiceName(clientInfo.className), clientInfo.type.getFactoryMethodName(),
-                            clientInfo.className.toString(),
-                            Channel.class.getName());
-            client = mc.invokeStaticMethod(factoryMethod, channel);
+            MethodDesc factoryMethod = ClassMethodDesc.of(convertToServiceName(clientInfo.className),
+                    clientInfo.type.getFactoryMethodName(),
+                    MethodTypeDesc.of(classDescOf(clientInfo.className), Reflection2Gizmo.classDescOf(Channel.class)));
+            client = bc.invokeStatic(factoryMethod, channel);
 
             // If needed, modify the call options, e.g. stub = stub.withCompression("gzip")
-            client = mc.invokeStaticMethod(CONFIGURE_STUB, name, client);
+            client = bc.invokeStatic(CONFIGURE_STUB, name, client);
             if (clientInfo.type.isBlocking()) {
-                client = mc.invokeStaticMethod(ADD_BLOCKING_CLIENT_INTERCEPTOR, client);
+                client = bc.invokeStatic(ADD_BLOCKING_CLIENT_INTERCEPTOR, client);
             }
         }
-        mc.returnValue(client);
-        mc.close();
+        bc.return_(client);
     }
 
-    private String convertToServiceName(DotName stubName) {
+    private static ClassDesc convertToServiceName(DotName stubName) {
         if (stubName.isInner()) {
-            return stubName.prefix().toString();
+            return classDescOf(stubName.prefix());
         } else {
-            return stubName.toString();
+            return classDescOf(stubName);
         }
     }
 }

@@ -1,6 +1,7 @@
 package io.quarkus.smallrye.faulttolerance.deployment;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -27,7 +28,7 @@ import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.builditem.AnnotationProxyBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveMethodBuildItem;
 import io.quarkus.deployment.recording.RecorderContext;
-import io.quarkus.gizmo.ClassOutput;
+import io.quarkus.gizmo2.ClassOutput;
 import io.smallrye.common.annotation.Blocking;
 import io.smallrye.common.annotation.NonBlocking;
 import io.smallrye.faulttolerance.api.ApplyFaultTolerance;
@@ -102,6 +103,10 @@ final class FaultToleranceScanner {
                 // synthetic methods can't be intercepted
                 continue;
             }
+            if (Modifier.isPrivate(method.flags())) {
+                // private methods can't be intercepted
+                continue;
+            }
             if (annotationStore.hasAnnotation(method, io.quarkus.arc.processor.DotNames.NO_CLASS_INTERCEPTORS)
                     && !annotationStore.hasAnyAnnotation(method, DotNames.FT_ANNOTATIONS)) {
                 // methods annotated @NoClassInterceptors and not annotated with an interceptor binding are not intercepted
@@ -130,28 +135,45 @@ final class FaultToleranceScanner {
         result.beanClass = getClassProxy(beanClass);
         result.method = createMethodDescriptor(method);
 
-        result.applyFaultTolerance = getAnnotation(ApplyFaultTolerance.class, method, beanClass, annotationsPresentDirectly);
-        result.applyGuard = getAnnotation(ApplyGuard.class, method, beanClass, annotationsPresentDirectly);
+        result.applyFaultTolerance = getAnnotation(ApplyFaultTolerance.class, DotNames.APPLY_FAULT_TOLERANCE,
+                method, beanClass, annotationsPresentDirectly);
+        result.applyGuard = getAnnotation(ApplyGuard.class, DotNames.APPLY_GUARD,
+                method, beanClass, annotationsPresentDirectly);
 
-        result.asynchronous = getAnnotation(Asynchronous.class, method, beanClass, annotationsPresentDirectly);
-        result.asynchronousNonBlocking = getAnnotation(AsynchronousNonBlocking.class, method, beanClass,
-                annotationsPresentDirectly);
-        result.blocking = getAnnotation(Blocking.class, method, beanClass, annotationsPresentDirectly);
-        result.nonBlocking = getAnnotation(NonBlocking.class, method, beanClass, annotationsPresentDirectly);
+        result.asynchronous = getAnnotation(Asynchronous.class, DotNames.ASYNCHRONOUS,
+                method, beanClass, annotationsPresentDirectly);
+        result.asynchronousNonBlocking = getAnnotation(AsynchronousNonBlocking.class, DotNames.ASYNCHRONOUS_NON_BLOCKING,
+                method, beanClass, annotationsPresentDirectly);
+        result.blocking = getAnnotation(Blocking.class, DotNames.BLOCKING,
+                method, beanClass, annotationsPresentDirectly);
+        result.nonBlocking = getAnnotation(NonBlocking.class, DotNames.NON_BLOCKING,
+                method, beanClass, annotationsPresentDirectly);
 
-        result.bulkhead = getAnnotation(Bulkhead.class, method, beanClass, annotationsPresentDirectly);
-        result.circuitBreaker = getAnnotation(CircuitBreaker.class, method, beanClass, annotationsPresentDirectly);
-        result.circuitBreakerName = getAnnotation(CircuitBreakerName.class, method, beanClass, annotationsPresentDirectly);
-        result.fallback = getAnnotation(Fallback.class, method, beanClass, annotationsPresentDirectly);
-        result.rateLimit = getAnnotation(RateLimit.class, method, beanClass, annotationsPresentDirectly);
-        result.retry = getAnnotation(Retry.class, method, beanClass, annotationsPresentDirectly);
-        result.timeout = getAnnotation(Timeout.class, method, beanClass, annotationsPresentDirectly);
+        result.bulkhead = getAnnotation(Bulkhead.class, DotNames.BULKHEAD,
+                method, beanClass, annotationsPresentDirectly);
+        result.circuitBreaker = getAnnotation(CircuitBreaker.class, DotNames.CIRCUIT_BREAKER,
+                method, beanClass, annotationsPresentDirectly);
+        result.circuitBreakerName = getAnnotation(CircuitBreakerName.class, DotNames.CIRCUIT_BREAKER_NAME,
+                method, beanClass, annotationsPresentDirectly);
+        result.fallback = getAnnotation(Fallback.class, DotNames.FALLBACK,
+                method, beanClass, annotationsPresentDirectly);
+        result.rateLimit = getAnnotation(RateLimit.class, DotNames.RATE_LIMIT,
+                method, beanClass, annotationsPresentDirectly);
+        result.retry = getAnnotation(Retry.class, DotNames.RETRY,
+                method, beanClass, annotationsPresentDirectly);
+        result.timeout = getAnnotation(Timeout.class, DotNames.TIMEOUT,
+                method, beanClass, annotationsPresentDirectly);
 
-        result.customBackoff = getAnnotation(CustomBackoff.class, method, beanClass, annotationsPresentDirectly);
-        result.exponentialBackoff = getAnnotation(ExponentialBackoff.class, method, beanClass, annotationsPresentDirectly);
-        result.fibonacciBackoff = getAnnotation(FibonacciBackoff.class, method, beanClass, annotationsPresentDirectly);
-        result.retryWhen = getAnnotation(RetryWhen.class, method, beanClass, annotationsPresentDirectly);
-        result.beforeRetry = getAnnotation(BeforeRetry.class, method, beanClass, annotationsPresentDirectly);
+        result.customBackoff = getAnnotation(CustomBackoff.class, DotNames.CUSTOM_BACKOFF,
+                method, beanClass, annotationsPresentDirectly);
+        result.exponentialBackoff = getAnnotation(ExponentialBackoff.class, DotNames.EXPONENTIAL_BACKOFF,
+                method, beanClass, annotationsPresentDirectly);
+        result.fibonacciBackoff = getAnnotation(FibonacciBackoff.class, DotNames.FIBONACCI_BACKOFF,
+                method, beanClass, annotationsPresentDirectly);
+        result.retryWhen = getAnnotation(RetryWhen.class, DotNames.RETRY_WHEN,
+                method, beanClass, annotationsPresentDirectly);
+        result.beforeRetry = getAnnotation(BeforeRetry.class, DotNames.BEFORE_RETRY,
+                method, beanClass, annotationsPresentDirectly);
 
         result.annotationsPresentDirectly = annotationsPresentDirectly;
 
@@ -164,25 +186,25 @@ final class FaultToleranceScanner {
         MethodDescriptor result = new MethodDescriptor();
         result.declaringClass = getClassProxy(method.declaringClass());
         result.name = method.name();
-        result.parameterTypes = method.parameterTypes()
-                .stream()
-                .map(this::getClassProxy)
-                .toArray(Class[]::new);
+        Class<?>[] parameterTypes = new Class<?>[method.parametersCount()];
+        for (int i = 0; i < method.parametersCount(); i++) {
+            parameterTypes[i] = getClassProxy(method.parameterType(i));
+        }
+        result.parameterTypes = parameterTypes;
         result.returnType = getClassProxy(method.returnType());
         return result;
     }
 
-    private <A extends Annotation> A getAnnotation(Class<A> annotationType, MethodInfo method,
-            ClassInfo beanClass, Set<Class<? extends Annotation>> directlyPresent) {
+    private <A extends Annotation> A getAnnotation(Class<A> annotationType, DotName annotationName,
+            MethodInfo method, ClassInfo beanClass, Set<Class<? extends Annotation>> directlyPresent) {
 
-        DotName annotationName = DotName.createSimple(annotationType);
         if (annotationStore.hasAnnotation(method, annotationName)) {
             directlyPresent.add(annotationType);
             AnnotationInstance annotation = annotationStore.getAnnotation(method, annotationName);
             return createAnnotation(annotationType, annotation);
         }
 
-        return getAnnotationFromClass(annotationType, beanClass);
+        return getAnnotationFromClass(annotationType, annotationName, beanClass);
     }
 
     // ---
@@ -283,8 +305,9 @@ final class FaultToleranceScanner {
 
     // ---
 
-    private <A extends Annotation> A getAnnotationFromClass(Class<A> annotationType, ClassInfo clazz) {
-        DotName annotationName = DotName.createSimple(annotationType);
+    // almost all FT annotations are inherited (except `@Blocking` and `@NonBlocking`, which we'll remove soon,
+    // and `@CircuitBreakerName`, which can only be put on methods), so no need to test for that here
+    private <A extends Annotation> A getAnnotationFromClass(Class<A> annotationType, DotName annotationName, ClassInfo clazz) {
         if (annotationStore.hasAnnotation(clazz, annotationName)) {
             AnnotationInstance annotation = annotationStore.getAnnotation(clazz, annotationName);
             return createAnnotation(annotationType, annotation);
@@ -299,7 +322,7 @@ final class FaultToleranceScanner {
         if (parentClass == null) {
             return null;
         }
-        return getAnnotationFromClass(annotationType, parentClass);
+        return getAnnotationFromClass(annotationType, annotationName, parentClass);
     }
 
     private <A extends Annotation> A createAnnotation(Class<A> annotationType, AnnotationInstance instance) {

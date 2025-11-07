@@ -18,8 +18,17 @@ public class MailerTLSRegistryTest extends FakeSmtpTestBase {
 
     @Test
     public void sendMailWithCorrectTrustStore() {
-        MailersRuntimeConfig mailersConfig = getDefaultConfig();
-        mailersConfig.defaultMailer.tlsConfigurationName = Optional.of("my-mailer");
+        MailersRuntimeConfig mailersConfig = new DefaultMailersRuntimeConfig(new DefaultMailerRuntimeConfig() {
+            @Override
+            public Optional<String> tlsConfigurationName() {
+                return Optional.of("my-mailer");
+            }
+
+            @Override
+            public Optional<Boolean> tls() {
+                return Optional.of(true);
+            }
+        });
         ReactiveMailer mailer = getMailer(mailersConfig, "my-mailer", new BaseTlsConfiguration() {
 
             @Override
@@ -28,6 +37,11 @@ public class MailerTLSRegistryTest extends FakeSmtpTestBase {
                 jksOptions.setPath("target/certs/mailer-certs-truststore.p12");
                 jksOptions.setPassword("password");
                 return jksOptions;
+            }
+
+            @Override
+            public String getName() {
+                return "test";
             }
 
         });
@@ -37,12 +51,17 @@ public class MailerTLSRegistryTest extends FakeSmtpTestBase {
 
     @Test
     public void sendMailWithDefaultTrustAll() {
-        MailersRuntimeConfig mailersConfig = getDefaultConfig();
+        MailersRuntimeConfig mailersConfig = new DefaultMailersRuntimeConfig();
         ReactiveMailer mailer = getMailer(mailersConfig, null, new BaseTlsConfiguration() {
 
             @Override
             public boolean isTrustAll() {
                 return true;
+            }
+
+            @Override
+            public String getName() {
+                return "test";
             }
         });
         startServer(SERVER_JKS);
@@ -51,13 +70,22 @@ public class MailerTLSRegistryTest extends FakeSmtpTestBase {
 
     @Test
     public void sendMailWithNamedTrustAll() {
-        MailersRuntimeConfig mailersConfig = getDefaultConfig();
-        mailersConfig.defaultMailer.tlsConfigurationName = Optional.of("my-mailer");
+        MailersRuntimeConfig mailersConfig = new DefaultMailersRuntimeConfig(new DefaultMailerRuntimeConfig() {
+            @Override
+            public Optional<String> tlsConfigurationName() {
+                return Optional.of("my-mailer");
+            }
+        });
         ReactiveMailer mailer = getMailer(mailersConfig, "my-mailer", new BaseTlsConfiguration() {
 
             @Override
             public boolean isTrustAll() {
                 return true;
+            }
+
+            @Override
+            public String getName() {
+                return "test";
             }
         });
         startServer(SERVER_JKS);
@@ -66,12 +94,23 @@ public class MailerTLSRegistryTest extends FakeSmtpTestBase {
 
     @Test
     public void sendMailWithoutTrustStore() {
-        MailersRuntimeConfig mailersConfig = getDefaultConfig();
-        mailersConfig.defaultMailer.tlsConfigurationName = Optional.of("my-mailer");
-        mailersConfig.defaultMailer.tls = Optional.of(true);
+        MailersRuntimeConfig mailersConfig = new DefaultMailersRuntimeConfig(new DefaultMailerRuntimeConfig() {
+            @Override
+            public Optional<String> tlsConfigurationName() {
+                return Optional.of("my-mailer");
+            }
+
+            @Override
+            public Optional<Boolean> tls() {
+                return Optional.of(true);
+            }
+        });
         startServer(SERVER_JKS);
         ReactiveMailer mailer = getMailer(mailersConfig, "my-mailer", new BaseTlsConfiguration() {
-
+            @Override
+            public String getName() {
+                return "test";
+            }
         });
 
         Assertions.assertThatThrownBy(() -> mailer.send(getMail()).await().indefinitely())
@@ -81,8 +120,12 @@ public class MailerTLSRegistryTest extends FakeSmtpTestBase {
 
     @Test
     public void testWithWrongTlsName() {
-        MailersRuntimeConfig mailersConfig = getDefaultConfig();
-        mailersConfig.defaultMailer.tlsConfigurationName = Optional.of("missing-mailer-configuration");
+        MailersRuntimeConfig mailersConfig = new DefaultMailersRuntimeConfig(new DefaultMailerRuntimeConfig() {
+            @Override
+            public Optional<String> tlsConfigurationName() {
+                return Optional.of("missing-mailer-configuration");
+            }
+        });
         Assertions.assertThatThrownBy(() -> getMailer(mailersConfig, "my-mailer", new BaseTlsConfiguration() {
 
             @Override
@@ -91,6 +134,11 @@ public class MailerTLSRegistryTest extends FakeSmtpTestBase {
                 jksOptions.setPath("target/certs/mailer-certs-truststore.p12");
                 jksOptions.setPassword("password");
                 return jksOptions;
+            }
+
+            @Override
+            public String getName() {
+                return "test";
             }
 
         })).hasMessageContaining("missing-mailer-configuration");

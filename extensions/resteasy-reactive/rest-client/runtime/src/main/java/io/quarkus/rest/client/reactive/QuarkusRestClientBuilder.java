@@ -3,6 +3,7 @@ package io.quarkus.rest.client.reactive;
 import java.net.URI;
 import java.net.URL;
 import java.security.KeyStore;
+import java.time.Duration;
 import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 
@@ -19,6 +20,7 @@ import org.eclipse.microprofile.rest.client.spi.RestClientBuilderListener;
 import org.jboss.resteasy.reactive.client.api.ClientLogger;
 import org.jboss.resteasy.reactive.client.api.LoggingScope;
 
+import io.quarkus.proxy.ProxyType;
 import io.quarkus.rest.client.reactive.runtime.QuarkusRestClientBuilderImpl;
 import io.quarkus.rest.client.reactive.runtime.RestClientBuilderImpl;
 import io.quarkus.tls.TlsConfiguration;
@@ -36,12 +38,12 @@ import io.vertx.core.http.HttpClientOptions;
 public interface QuarkusRestClientBuilder extends Configurable<QuarkusRestClientBuilder> {
 
     static QuarkusRestClientBuilder newBuilder() {
-        RestClientBuilderImpl proxy = new RestClientBuilderImpl();
+        RestClientBuilderImpl delegate = new RestClientBuilderImpl();
         for (RestClientBuilderListener listener : ServiceLoader.load(RestClientBuilderListener.class)) {
-            listener.onNewBuilder(proxy);
+            listener.onNewBuilder(delegate);
         }
 
-        return new QuarkusRestClientBuilderImpl(proxy);
+        return new QuarkusRestClientBuilderImpl(delegate);
     }
 
     /**
@@ -227,6 +229,22 @@ public interface QuarkusRestClientBuilder extends Configurable<QuarkusRestClient
     QuarkusRestClientBuilder nonProxyHosts(String nonProxyHosts);
 
     /**
+     * Specifies the connect timeout for the proxy connection
+     *
+     * @param connectTimeout proxy connect timeout.
+     * @return the current builder
+     */
+    QuarkusRestClientBuilder proxyConnectTimeout(Duration connectTimeout);
+
+    /**
+     * Specifies the proxy type for the proxy connection.
+     *
+     * @param proxyType proxy type
+     * @return the current builder
+     */
+    QuarkusRestClientBuilder proxyType(ProxyType proxyType);
+
+    /**
      * Specifies the URI formatting style to use when multiple query parameter values are passed to the client.
      *
      * @param style the URI formatting style to use for multiple query parameter values
@@ -303,6 +321,13 @@ public interface QuarkusRestClientBuilder extends Configurable<QuarkusRestClient
      * always throws an exception if HTTP response code >= 400
      */
     QuarkusRestClientBuilder disableDefaultMapper(Boolean disable);
+
+    /**
+     * Supports receiving compressed messages using GZIP.
+     * When this feature is enabled and a server returns a response that includes the header {@code Content-Encoding: gzip},
+     * REST Client will automatically decode the content and proceed with the message handling.
+     */
+    QuarkusRestClientBuilder enableCompression(boolean enableCompression);
 
     /**
      * Based on the configured QuarkusRestClientBuilder, creates a new instance of the given REST interface to invoke API calls

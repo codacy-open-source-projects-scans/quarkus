@@ -13,6 +13,11 @@ public interface Capability {
     String AGROAL = QUARKUS_PREFIX + ".agroal";
 
     /**
+     * An assistant implementation
+     */
+    String ASSISTANT = QUARKUS_PREFIX + ".assistant";
+
+    /**
      * JSR 365 compatible contexts and dependency injection
      */
     String CDI = QUARKUS_PREFIX + ".cdi";
@@ -111,6 +116,8 @@ public interface Capability {
     String HIBERNATE_REACTIVE = QUARKUS_PREFIX + ".hibernate.reactive";
     String HIBERNATE_VALIDATOR = QUARKUS_PREFIX + ".hibernate.validator";
     String OPENTELEMETRY_TRACER = QUARKUS_PREFIX + ".opentelemetry.tracer";
+    String OPENTELEMETRY_METRICS = QUARKUS_PREFIX + ".opentelemetry.metrics";
+    String OPENTELEMETRY_LOGS = QUARKUS_PREFIX + ".opentelemetry.logs";
 
     String OPENSHIFT = QUARKUS_PREFIX + ".openshift";
     String OPENSHIFT_CLIENT = OPENSHIFT + ".client";
@@ -127,6 +134,7 @@ public interface Capability {
     String SMALLRYE_OPENAPI = QUARKUS_PREFIX + ".smallrye.openapi";
     String SMALLRYE_GRAPHQL = QUARKUS_PREFIX + ".smallrye.graphql";
     String SMALLRYE_FAULT_TOLERANCE = QUARKUS_PREFIX + ".smallrye.faulttolerance";
+    String SMALLRYE_STORK = QUARKUS_PREFIX + ".smallrye.stork";
 
     String SPRING_WEB = QUARKUS_PREFIX + ".spring.web";
 
@@ -161,4 +169,8 @@ public interface Capability {
     String REACTIVE_MYSQL_CLIENT = QUARKUS_PREFIX + ".reactive-mysql-client";
     String REACTIVE_MSSQL_CLIENT = QUARKUS_PREFIX + ".reactive-mssql-client";
     String REACTIVE_DB2_CLIENT = QUARKUS_PREFIX + ".reactive-db2-client";
+
+    String GRPC = QUARKUS_PREFIX + ".grpc";
+
+    String WEBSOCKETS_NEXT = QUARKUS_PREFIX + ".websockets.next";
 }

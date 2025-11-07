@@ -7,7 +7,6 @@ import java.util.function.Function;
 import org.jboss.jandex.AnnotationInstance;
 import org.jboss.jandex.AnnotationTarget;
 import org.jboss.jandex.DotName;
-import org.jboss.jandex.MethodInfo;
 
 import io.quarkus.builder.item.MultiBuildItem;
 import io.quarkus.runtime.configuration.ConfigurationException;
@@ -32,6 +31,7 @@ public final class EagerSecurityInterceptorBindingBuildItem extends MultiBuildIt
      * For example, we know that endpoint annotated with {@link HttpAuthenticationMechanism} is always secured.
      */
     private final boolean requiresSecurityCheck;
+    private final Function<AnnotationInstance, String> bindingValueExtractor;
 
     /**
      *
@@ -40,10 +40,17 @@ public final class EagerSecurityInterceptorBindingBuildItem extends MultiBuildIt
      */
     public EagerSecurityInterceptorBindingBuildItem(Function<String, Consumer<RoutingContext>> interceptorCreator,
             DotName... interceptorBindings) {
+        this(interceptorCreator, null, false, interceptorBindings);
+    }
+
+    public EagerSecurityInterceptorBindingBuildItem(Function<String, Consumer<RoutingContext>> interceptorCreator,
+            Function<AnnotationInstance, String> bindingValueExtractor,
+            boolean requiresSecurityCheck, DotName... interceptorBindings) {
         this.annotationBindings = interceptorBindings;
         this.interceptorCreator = interceptorCreator;
         this.bindingToValue = Map.of();
-        this.requiresSecurityCheck = false;
+        this.requiresSecurityCheck = requiresSecurityCheck;
+        this.bindingValueExtractor = bindingValueExtractor;
     }
 
     EagerSecurityInterceptorBindingBuildItem(Function<String, Consumer<RoutingContext>> interceptorCreator,
@@ -52,6 +59,7 @@ public final class EagerSecurityInterceptorBindingBuildItem extends MultiBuildIt
         this.interceptorCreator = interceptorCreator;
         this.bindingToValue = bindingToValue;
         this.requiresSecurityCheck = true;
+        this.bindingValueExtractor = null;
     }
 
     public DotName[] getAnnotationBindings() {
@@ -62,18 +70,22 @@ public final class EagerSecurityInterceptorBindingBuildItem extends MultiBuildIt
         return interceptorCreator;
     }
 
-    public String getBindingValue(AnnotationInstance annotationInstance, DotName annotation, MethodInfo classEndpoint) {
+    public String getBindingValue(AnnotationInstance annotationInstance, DotName annotation,
+            AnnotationTarget annotationTarget) {
+        if (bindingValueExtractor != null) {
+            return bindingValueExtractor.apply(annotationInstance);
+        }
         if (bindingToValue.containsKey(annotation.toString())) {
             return bindingToValue.get(annotation.toString());
         }
         if (annotationInstance.value() == null || annotationInstance.value().asString().isBlank()) {
             throw new ConfigurationException("Annotation '" + annotation + "' placed on '"
-                    + toTargetName(classEndpoint) + "' must not have blank value");
+                    + toTargetName(annotationTarget) + "' must not have blank value");
         }
         return annotationInstance.value().asString();
     }
 
-    private static String toTargetName(AnnotationTarget target) {
+    public static String toTargetName(AnnotationTarget target) {
         if (target.kind() == AnnotationTarget.Kind.METHOD) {
             return target.asMethod().declaringClass().name().toString() + "#" + target.asMethod().name();
         } else {

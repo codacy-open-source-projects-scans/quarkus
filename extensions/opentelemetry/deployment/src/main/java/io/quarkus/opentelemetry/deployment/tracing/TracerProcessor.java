@@ -15,7 +15,6 @@ import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 import jakarta.enterprise.inject.spi.EventContext;
-import jakarta.inject.Singleton;
 
 import org.jboss.jandex.AnnotationInstance;
 import org.jboss.jandex.AnnotationTarget;
@@ -25,7 +24,6 @@ import org.jboss.jandex.IndexView;
 import org.jboss.jandex.MethodInfo;
 import org.jboss.logging.Logger;
 
-import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.context.propagation.TextMapPropagator;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.IdGenerator;
@@ -35,10 +33,8 @@ import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.ObserverRegistrationPhaseBuildItem;
 import io.quarkus.arc.deployment.ObserverRegistrationPhaseBuildItem.ObserverConfiguratorBuildItem;
-import io.quarkus.arc.deployment.SyntheticBeanBuildItem;
 import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
 import io.quarkus.arc.processor.DotNames;
-import io.quarkus.builder.Version;
 import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.Capability;
 import io.quarkus.deployment.annotations.BuildProducer;
@@ -46,15 +42,16 @@ import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
 import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Record;
-import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
-import io.quarkus.gizmo.MethodDescriptor;
-import io.quarkus.gizmo.ResultHandle;
+import io.quarkus.gizmo2.Expr;
+import io.quarkus.gizmo2.Var;
+import io.quarkus.gizmo2.creator.BlockCreator;
+import io.quarkus.gizmo2.desc.MethodDesc;
 import io.quarkus.opentelemetry.runtime.config.build.OTelBuildConfig;
 import io.quarkus.opentelemetry.runtime.config.build.OTelBuildConfig.SecurityEvents.SecurityEventType;
-import io.quarkus.opentelemetry.runtime.tracing.DelayedAttributes;
 import io.quarkus.opentelemetry.runtime.tracing.TracerRecorder;
 import io.quarkus.opentelemetry.runtime.tracing.cdi.TracerProducer;
+import io.quarkus.opentelemetry.runtime.tracing.intrumentation.websockets.WebSocketTracesInterceptorImpl;
 import io.quarkus.opentelemetry.runtime.tracing.security.EndUserSpanProcessor;
 import io.quarkus.opentelemetry.runtime.tracing.security.SecurityEventUtil;
 import io.quarkus.vertx.http.deployment.spi.FrameworkEndpointsBuildItem;
@@ -174,17 +171,6 @@ public class TracerProcessor {
 
     @BuildStep
     @Record(ExecutionTime.STATIC_INIT)
-    SyntheticBeanBuildItem setupDelayedAttribute(TracerRecorder recorder, ApplicationInfoBuildItem appInfo) {
-        return SyntheticBeanBuildItem.configure(DelayedAttributes.class).types(Attributes.class)
-                .supplier(recorder.delayedAttributes(Version.getVersion(),
-                        appInfo.getName(), appInfo.getVersion()))
-                .scope(Singleton.class)
-                .setRuntimeInit()
-                .done();
-    }
-
-    @BuildStep
-    @Record(ExecutionTime.STATIC_INIT)
     void setupSampler(
             TracerRecorder recorder,
             DropNonApplicationUrisBuildItem dropNonApplicationUris,
@@ -237,24 +223,34 @@ public class TracerProcessor {
         }
     }
 
+    @BuildStep
+    void registerWebSocketTracesInterceptor(BuildProducer<AdditionalBeanBuildItem> additionalBeanProducer,
+            Capabilities capabilities) {
+        if (capabilities.isPresent(Capability.WEBSOCKETS_NEXT)) {
+            additionalBeanProducer.produce(AdditionalBeanBuildItem.unremovableOf(WebSocketTracesInterceptorImpl.class));
+        }
+    }
+
     private static ObserverConfiguratorBuildItem createEventObserver(
             ObserverRegistrationPhaseBuildItem observerRegistrationPhase, SecurityEventType eventType, String utilMethodName) {
         return new ObserverConfiguratorBuildItem(observerRegistrationPhase.getContext()
                 .configure()
                 .beanClass(DotName.createSimple(TracerProducer.class.getName()))
                 .observedType(eventType.getObservedType())
-                .notify(mc -> {
+                .notify(ng -> {
+                    BlockCreator bc = ng.notifyMethod();
+
                     // Object event = eventContext.getEvent();
-                    ResultHandle eventContext = mc.getMethodParam(0);
-                    ResultHandle event = mc.invokeInterfaceMethod(
-                            MethodDescriptor.ofMethod(EventContext.class, "getEvent", Object.class), eventContext);
+                    Var eventContext = ng.eventContext();
+                    Expr event = bc.invokeInterface(MethodDesc.of(EventContext.class, "getEvent", Object.class),
+                            eventContext);
                     // Call to SecurityEventUtil#addEvent or SecurityEventUtil#addAllEvents, that is:
                     // SecurityEventUtil.addAllEvents((SecurityEvent) event)
                     // SecurityEventUtil.addEvent((AuthenticationSuccessEvent) event)
                     // Method 'addEvent' is overloaded and accepts SecurityEventType#getObservedType
-                    mc.invokeStaticMethod(MethodDescriptor.ofMethod(SecurityEventUtil.class, utilMethodName,
-                            void.class, eventType.getObservedType()), mc.checkCast(event, eventType.getObservedType()));
-                    mc.returnNull();
+                    bc.invokeStatic(MethodDesc.of(SecurityEventUtil.class, utilMethodName,
+                            void.class, eventType.getObservedType()), bc.cast(event, eventType.getObservedType()));
+                    bc.return_();
                 }));
     }
 

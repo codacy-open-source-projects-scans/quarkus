@@ -65,7 +65,7 @@ public class ClientRequestContextImpl implements ResteasyReactiveClientRequestCo
         // Always create a duplicated context because each REST Client invocation must have its own context
         // A separate context allows integrations like OTel to create a separate Span for each invocation (expected)
         Context current = client.vertx.getOrCreateContext();
-        this.context = VertxContext.createNewDuplicatedContext(current);
+        this.context = VertxContext.newNestedContext(current);
         restClientRequestContext.properties.put(VERTX_CONTEXT_PROPERTY, context);
     }
 

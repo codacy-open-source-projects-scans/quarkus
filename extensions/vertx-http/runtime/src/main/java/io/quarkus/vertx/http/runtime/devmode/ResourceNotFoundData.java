@@ -12,6 +12,7 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -25,6 +26,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import org.jboss.logging.Logger;
 
 import io.quarkus.runtime.TemplateHtmlBuilder;
+import io.quarkus.runtime.annotations.DevMCPEnableByDefault;
+import io.quarkus.runtime.annotations.JsonRpcDescription;
 import io.quarkus.runtime.util.ClassPathUtils;
 import io.smallrye.common.annotation.NonBlocking;
 import io.vertx.core.json.JsonArray;
@@ -39,9 +42,9 @@ public class ResourceNotFoundData {
 
     private String baseUrl;
     private String httpRoot;
-    private List<RouteDescription> endpointRoutes;
-    private Set<String> staticRoots;
-    private List<AdditionalRouteDescription> additionalEndpoints;
+    private List<RouteDescription> endpointRoutes = Collections.emptyList();
+    private Set<String> staticRoots = Collections.emptySet();
+    private List<AdditionalRouteDescription> additionalEndpoints = Collections.emptyList();
 
     public void setBaseUrl(String baseUrl) {
         this.baseUrl = baseUrl;
@@ -135,7 +138,9 @@ public class ResourceNotFoundData {
     }
 
     @NonBlocking
-    public JsonObject getJsonContent() {
+    @JsonRpcDescription("Information on endpoints exposed by this application in Dev Mode. This includes Quarkus endpoints and application endpoints")
+    @DevMCPEnableByDefault
+    public JsonObject getAllEndpoints() {
         List<RouteDescription> combinedRoutes = getCombinedRoutes();
         JsonObject infoMap = new JsonObject();
 

@@ -5,6 +5,8 @@ import org.keycloak.adapters.authorization.cip.HttpClaimInformationPointProvider
 import org.keycloak.adapters.authorization.cip.spi.ClaimInformationPointProviderFactory;
 import org.keycloak.authorization.client.representation.ServerConfiguration;
 import org.keycloak.authorization.client.representation.TokenIntrospectionResponse;
+import org.keycloak.authorization.client.util.crypto.AuthzClientCryptoProvider;
+import org.keycloak.common.crypto.CryptoProvider;
 import org.keycloak.jose.jwk.JSONWebKeySet;
 import org.keycloak.jose.jwk.JWK;
 import org.keycloak.jose.jws.JWSHeader;
@@ -78,6 +80,8 @@ public class KeycloakReflectionBuildStep {
         serviceProvider.produce(new ServiceProviderBuildItem(ClaimInformationPointProviderFactory.class.getName(),
                 HttpClaimInformationPointProviderFactory.class.getName(),
                 ClaimsInformationPointProviderFactory.class.getName()));
+        serviceProvider.produce(new ServiceProviderBuildItem(CryptoProvider.class.getName(),
+                AuthzClientCryptoProvider.class.getName()));
     }
 
     @BuildStep
@@ -87,5 +91,6 @@ public class KeycloakReflectionBuildStep {
         runtimeInit.produce(new RuntimeInitializedClassBuildItem("org.keycloak.common.util.DerUtils"));
         runtimeInit.produce(new RuntimeInitializedClassBuildItem("org.keycloak.common.util.KeystoreUtil"));
         runtimeInit.produce(new RuntimeInitializedClassBuildItem("org.keycloak.common.util.CertificateUtils"));
+        runtimeInit.produce(new RuntimeInitializedClassBuildItem("org.keycloak.common.util.SecretGenerator"));
     }
 }

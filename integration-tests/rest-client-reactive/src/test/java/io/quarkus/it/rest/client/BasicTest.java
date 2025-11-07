@@ -14,7 +14,9 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.awaitility.Awaitility;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import io.opentelemetry.api.trace.SpanId;
@@ -22,11 +24,14 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.TraceId;
 import io.quarkus.test.common.http.TestHTTPResource;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.QuarkusTestProfile;
+import io.quarkus.test.junit.TestProfile;
 import io.restassured.RestAssured;
 import io.restassured.common.mapper.TypeRef;
 import io.restassured.response.Response;
 
 @QuarkusTest
+@TestProfile(BasicTest.TestProfile.class)
 public class BasicTest {
 
     @TestHTTPResource("/apples")
@@ -37,6 +42,13 @@ public class BasicTest {
     String helloUrl;
     @TestHTTPResource("/params")
     String paramsUrl;
+
+    @BeforeEach
+    @AfterEach
+    public void clear() {
+        // Reset captured traces
+        RestAssured.given().when().get("/export-clear").then().statusCode(200);
+    }
 
     @Test
     public void shouldMakeTextRequest() {
@@ -139,9 +151,6 @@ public class BasicTest {
 
     @Test
     void shouldCreateClientSpans() {
-        // Reset captured traces
-        RestAssured.given().when().get("/export-clear").then().statusCode(200);
-
         Response response = with().body(helloUrl).post("/call-hello-client-trace");
         assertThat(response.asString()).isEqualTo("Hello, MaryMaryMary");
 
@@ -179,7 +188,7 @@ public class BasicTest {
         Assertions.assertNotNull(initialServerSpan.get("attr_client.address"));
         Assertions.assertNotNull(initialServerSpan.get("attr_user_agent.original"));
 
-        Awaitility.await().atMost(Duration.ofSeconds(30))
+        Awaitility.await().atMost(Duration.ofSeconds(5))
                 .until(() -> getClientSpansFromFullUrl("POST", "http://localhost:8081/hello?count=3").size() > 0);
 
         spans = getClientSpansFromFullUrl("POST", "http://localhost:8081/hello?count=3");
@@ -210,10 +219,10 @@ public class BasicTest {
 
         clientSpanId = (String) clientSpan.get("spanId");
 
-        Awaitility.await().atMost(Duration.ofSeconds(30))
+        Awaitility.await().atMost(Duration.ofSeconds(5))
                 .until(() -> getServerSpansFromPath("POST /hello", "/hello").size() > 0);
         spans = getServerSpansFromPath("POST /hello", "/hello");
-        Assertions.assertEquals(1, spans.size());
+        Assertions.assertEquals(1, spans.size(), "found: " + spans);
 
         final Map<String, Object> serverSpanClientSide = spans.get(0);
         Assertions.assertNotNull(serverSpanClientSide);
@@ -282,5 +291,12 @@ public class BasicTest {
                         "CLIENT".equals(stringObjectMap.get("kind")) &&
                         ((String) stringObjectMap.get("attr_url.full")).startsWith(httpUrl))
                 .collect(Collectors.toList());
+    }
+
+    public static class TestProfile implements QuarkusTestProfile {
+        @Override
+        public Map<String, String> getConfigOverrides() {
+            return Map.of("w-fault-tolerance-int/mp-rest/url", "${test.url}");
+        }
     }
 }

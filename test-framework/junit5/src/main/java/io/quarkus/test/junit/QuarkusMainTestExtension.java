@@ -4,14 +4,22 @@ import static io.quarkus.test.junit.IntegrationTestUtil.activateLogging;
 import static io.quarkus.test.junit.TestResourceUtil.TestResourceManagerReflections.copyEntriesFromProfile;
 
 import java.io.Closeable;
+import java.io.IOException;
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Enumeration;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.logging.Handler;
 
 import org.jboss.logmanager.LogContext;
 import org.jboss.logmanager.handlers.OutputStreamHandler;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.extension.AfterAllCallback;
 import org.junit.jupiter.api.extension.AfterEachCallback;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
@@ -25,9 +33,12 @@ import org.junit.jupiter.api.extension.ParameterResolutionException;
 import org.junit.jupiter.api.extension.ParameterResolver;
 import org.junit.jupiter.api.extension.ReflectiveInvocationContext;
 
+import io.quarkus.bootstrap.BootstrapException;
+import io.quarkus.bootstrap.app.CuratedApplication;
 import io.quarkus.bootstrap.app.StartupAction;
 import io.quarkus.bootstrap.logging.InitialConfigurator;
 import io.quarkus.bootstrap.logging.QuarkusDelayedHandler;
+import io.quarkus.bootstrap.resolver.AppModelResolverException;
 import io.quarkus.deployment.dev.testing.LogCapturingOutputFilter;
 import io.quarkus.dev.console.QuarkusConsole;
 import io.quarkus.dev.testing.TracingHandler;
@@ -44,6 +55,7 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
 
     PrepareResult prepareResult;
     LinkedBlockingDeque<Runnable> shutdownTasks;
+    protected ClassLoader originalCl;
 
     /**
      * The result from an {@link Launch} test
@@ -79,25 +91,57 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
             }
             prepareResult = null;
         }
+        if (isNewTestClass && extensionContext.getRequiredTestClass().isAnnotationPresent(Nested.class)) {
+            // we need to rerun the augmentor in this case
+            prepareResult = null;
+        }
         if (prepareResult == null) {
             shutdownTasks = new LinkedBlockingDeque<>();
-            prepareResult = createAugmentor(extensionContext, profile, shutdownTasks);
+            prepareResult = prepare(extensionContext, profile, shutdownTasks);
         }
+    }
+
+    protected PrepareResult prepare(ExtensionContext context, Class<? extends QuarkusTestProfile> profile,
+            Collection<Runnable> shutdownTasks) throws Exception {
+
+        originalCl = Thread.currentThread().getContextClassLoader();
+        quarkusTestProfile = profile;
+        final Class<?> requiredTestClass = context.getRequiredTestClass();
+        final CuratedApplication curatedApplication = getCuratedApplication(requiredTestClass, context.getDisplayName());
+
+        var result = AppMakerHelper.prepare(requiredTestClass, curatedApplication, profile);
+        if (result.profileInstance() != null) {
+            Runnable configCleaner = AppMakerHelper.setExtraPropertiesRestorably(profile, result.profileInstance());
+            shutdownTasks.add(configCleaner);
+        }
+        return result;
+    }
+
+    // Override, because in main tests the quarkus classloader isn't used for tests
+    protected CuratedApplication getCuratedApplication(Class<?> requiredTestClass, String displayName)
+            throws AppModelResolverException, IOException, BootstrapException {
+        var curatedApp = AppMakerHelper.makeCuratedApplication(requiredTestClass, displayName, false);
+        shutdownTasks.add(curatedApp::close);
+        return curatedApp;
     }
 
     private LaunchResult doLaunch(ExtensionContext context, Class<? extends QuarkusTestProfile> selectedProfile,
             String[] arguments) throws Exception {
         ensurePrepared(context, selectedProfile);
-        LogCapturingOutputFilter filter = new LogCapturingOutputFilter(prepareResult.curatedApplication, false, false,
+        LogCapturingOutputFilter filter = new LogCapturingOutputFilter(prepareResult.curatedApplication(), false, false,
                 () -> true);
         QuarkusConsole.addOutputFilter(filter);
         try {
             var result = doJavaStart(context, selectedProfile, arguments);
             //merge all the output into one, strip ansi, then split into lines
             List<String> out = Arrays
-                    .asList(String.join("", filter.captureOutput()).replaceAll("\\u001B\\[(.*?)[a-zA-Z]", "").split("\n"));
+                    .asList(String.join("", filter.captureOutput())
+                            .replaceAll("\\u001B\\[(.*?)[a-zA-Z]", "")
+                            .split("\n"));
             List<String> err = Arrays
-                    .asList(String.join("", filter.captureErrorOutput()).replaceAll("\\u001B\\[(.*?)[a-zA-Z]", "").split("\n"));
+                    .asList(String.join("", filter.captureErrorOutput())
+                            .replaceAll("\\u001B\\[(.*?)[a-zA-Z]", "")
+                            .split("\n"));
             return new LaunchResult() {
                 @Override
                 public List<String> getOutputStream() {
@@ -116,7 +160,8 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
             };
         } finally {
             QuarkusConsole.removeOutputFilter(filter);
-            Thread.currentThread().setContextClassLoader(originalCl);
+            Thread.currentThread()
+                    .setContextClassLoader(originalCl);
         }
     }
 
@@ -129,7 +174,8 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
     private static Handler REDIRECT_QUARKUS_CONSOLE_HANDLER = null;
 
     private static void installLoggerRedirect() throws Exception {
-        var rootLogger = LogContext.getLogContext().getLogger("");
+        var rootLogger = LogContext.getLogContext()
+                .getLogger("");
 
         ORIGINAL_QUARKUS_CONSOLE_HANDLER = null;
         REDIRECT_QUARKUS_CONSOLE_HANDLER = null;
@@ -155,7 +201,8 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
     }
 
     private static void uninstallLoggerRedirect() throws Exception {
-        var rootLogger = LogContext.getLogContext().getLogger("");
+        var rootLogger = LogContext.getLogContext()
+                .getLogger("");
         if (REDIRECT_QUARKUS_CONSOLE_HANDLER != null) {
             rootLogger.addHandler(ORIGINAL_QUARKUS_CONSOLE_HANDLER);
             rootLogger.removeHandler(REDIRECT_QUARKUS_CONSOLE_HANDLER);
@@ -163,10 +210,12 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
     }
 
     private void flushAllLoggers() {
-        Enumeration<String> loggerNames = org.jboss.logmanager.LogContext.getLogContext().getLoggerNames();
+        Enumeration<String> loggerNames = org.jboss.logmanager.LogContext.getLogContext()
+                .getLoggerNames();
         while (loggerNames != null && loggerNames.hasMoreElements()) {
             String loggerName = loggerNames.nextElement();
-            var logger = org.jboss.logmanager.LogContext.getLogContext().getLogger(loggerName);
+            var logger = org.jboss.logmanager.LogContext.getLogContext()
+                    .getLogger(loggerName);
             for (Handler h : logger.getHandlers()) {
                 h.flush();
             }
@@ -180,14 +229,18 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
         TracingHandler.quarkusStarting();
         Closeable testResourceManager = null;
         try {
-            StartupAction startupAction = prepareResult.augmentAction.createInitialRuntimeApplication();
-            Thread.currentThread().setContextClassLoader(startupAction.getClassLoader());
+            StartupAction startupAction = prepareResult.augmentAction().createInitialRuntimeApplication();
+            Thread.currentThread()
+                    .setContextClassLoader(startupAction.getClassLoader());
             QuarkusConsole.installRedirects();
             flushAllLoggers();
             installLoggerRedirect();
 
-            QuarkusTestProfile profileInstance = prepareResult.profileInstance;
+            QuarkusTestProfile profileInstance = prepareResult.profileInstance();
 
+            // We need to start up the resources, but we need to do it in the classloader
+            // of the running application, not the classloader of the test
+            // (for a main test, they are not the same)
             //must be done after the TCCL has been set
             Class<?> testResourceManagerClass = startupAction.getClassLoader().loadClass(TestResourceManager.class.getName());
             testResourceManager = TestResourceUtil.TestResourceManagerReflections.createReflectively(testResourceManagerClass,
@@ -195,14 +248,15 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
                     profile,
                     copyEntriesFromProfile(profileInstance, startupAction.getClassLoader()),
                     profileInstance != null && profileInstance.disableGlobalTestResources(),
-                    startupAction.getDevServicesProperties(),
-                    Optional.empty());
+                    startupAction.getOrInitialiseDevServicesProperties(),
+                    Optional.ofNullable(startupAction.getOrInitialiseDevServicesNetworkId()));
             TestResourceUtil.TestResourceManagerReflections.initReflectively(testResourceManager, profile);
             Map<String, String> properties = TestResourceUtil.TestResourceManagerReflections
                     .startReflectively(testResourceManager);
             startupAction.overrideConfig(properties);
 
-            testResourceManager.getClass().getMethod("inject", Object.class)
+            testResourceManager.getClass()
+                    .getMethod("inject", Object.class)
                     .invoke(testResourceManager, context.getRequiredTestInstance());
 
             var result = startupAction.runMainClassBlocking(arguments);
@@ -225,7 +279,8 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
             uninstallLoggerRedirect();
             QuarkusConsole.uninstallRedirects();
             if (originalCl != null) {
-                Thread.currentThread().setContextClassLoader(originalCl);
+                Thread.currentThread()
+                        .setContextClassLoader(originalCl);
             }
         }
     }
@@ -236,17 +291,20 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
         if (isIntegrationTest(extensionContext.getRequiredTestClass())) {
             return false;
         }
-        Class<?> type = parameterContext.getParameter().getType();
+        Class<?> type = parameterContext.getParameter()
+                .getType();
         return type == LaunchResult.class || type == QuarkusMainLauncher.class;
     }
 
     @Override
     public Object resolveParameter(ParameterContext parameterContext, ExtensionContext extensionContext)
             throws ParameterResolutionException {
-        Class<?> type = parameterContext.getParameter().getType();
+        Class<?> type = parameterContext.getParameter()
+                .getType();
         Class<? extends QuarkusTestProfile> profile = getQuarkusTestProfile(extensionContext);
         if (type == LaunchResult.class) {
-            var launch = extensionContext.getRequiredTestMethod().getAnnotation(Launch.class);
+            var launch = extensionContext.getRequiredTestMethod()
+                    .getAnnotation(Launch.class);
             if (launch != null) {
                 doLaunchAndAssertExitCode(extensionContext, profile, launch);
             } else {
@@ -292,8 +350,10 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
     public void interceptTestMethod(Invocation<Void> invocation, ReflectiveInvocationContext<Method> invocationContext,
             ExtensionContext extensionContext) throws Throwable {
         Class<? extends QuarkusTestProfile> profile = getQuarkusTestProfile(extensionContext);
-        if (invocationContext.getArguments().isEmpty()) {
-            var launch = extensionContext.getRequiredTestMethod().getAnnotation(Launch.class);
+        if (invocationContext.getArguments()
+                .isEmpty()) {
+            var launch = extensionContext.getRequiredTestMethod()
+                    .getAnnotation(Launch.class);
             if (launch != null) {
                 // in this case, resolveParameter has not been called by JUnit, so we need to make sure the application is launched
                 doLaunchAndAssertExitCode(extensionContext, profile, launch);

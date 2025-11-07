@@ -5,10 +5,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * @deprecated use the {@link io.quarkus.oidc.common.runtime.config.OidcClientCommonConfig} interface instead
- */
-@Deprecated(since = "3.18")
 public abstract class OidcClientCommonConfig extends OidcCommonConfig
         implements io.quarkus.oidc.common.runtime.config.OidcClientCommonConfig {
 
@@ -32,7 +28,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
      *
      * @deprecated use the {@link #tokenPath()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Optional<String> tokenPath = Optional.empty();
 
     /**
@@ -40,7 +36,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
      *
      * @deprecated use the {@link #revokePath()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Optional<String> revokePath = Optional.empty();
 
     /**
@@ -49,7 +45,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
      *
      * @deprecated use the {@link #clientId()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Optional<String> clientId = Optional.empty();
 
     /**
@@ -60,7 +56,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
      *
      * @deprecated use the {@link #clientName()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Optional<String> clientName = Optional.empty();
 
     /**
@@ -68,7 +64,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
      *
      * @deprecated use the {@link #credentials()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Credentials credentials = new Credentials();
 
     @Override
@@ -99,7 +95,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use {@link io.quarkus.oidc.common.runtime.config.OidcClientCommonConfigBuilder.CredentialsBuilder}
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public static class Credentials implements io.quarkus.oidc.common.runtime.config.OidcClientCommonConfig.Credentials {
 
         /**
@@ -667,7 +663,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use the {@link #tokenPath()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Optional<String> getTokenPath() {
         return tokenPath;
     }
@@ -675,7 +671,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use {@link io.quarkus.oidc.common.runtime.config.OidcClientCommonConfigBuilder}
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public void setTokenPath(String tokenPath) {
         this.tokenPath = Optional.of(tokenPath);
     }
@@ -683,7 +679,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use the {@link #revokePath()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Optional<String> getRevokePath() {
         return revokePath;
     }
@@ -691,7 +687,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use {@link io.quarkus.oidc.common.runtime.config.OidcClientCommonConfigBuilder}
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public void setRevokePath(String revokePath) {
         this.revokePath = Optional.of(revokePath);
     }
@@ -699,7 +695,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use the {@link #clientId()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Optional<String> getClientId() {
         return clientId;
     }
@@ -707,7 +703,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use {@link io.quarkus.oidc.common.runtime.config.OidcClientCommonConfigBuilder}
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public void setClientId(String clientId) {
         this.clientId = Optional.of(clientId);
     }
@@ -715,7 +711,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use the {@link #clientName()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Optional<String> getClientName() {
         return clientName;
     }
@@ -723,7 +719,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use {@link io.quarkus.oidc.common.runtime.config.OidcClientCommonConfigBuilder}
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public void setClientName(String clientName) {
         this.clientName = Optional.of(clientName);
     }
@@ -731,7 +727,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use the {@link #credentials()} method instead
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public Credentials getCredentials() {
         return credentials;
     }
@@ -739,7 +735,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
     /**
      * @deprecated use {@link io.quarkus.oidc.common.runtime.config.OidcClientCommonConfigBuilder}
      */
-    @Deprecated(since = "3.18")
+    @Deprecated(since = "3.18", forRemoval = true)
     public void setCredentials(Credentials credentials) {
         this.credentials = credentials;
     }

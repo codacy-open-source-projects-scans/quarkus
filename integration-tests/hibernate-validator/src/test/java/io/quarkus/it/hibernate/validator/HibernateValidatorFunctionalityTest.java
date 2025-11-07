@@ -325,7 +325,9 @@ public class HibernateValidatorFunctionalityTest {
     public void testInjection() throws Exception {
         StringBuilder expected = new StringBuilder();
         expected.append("passed").append("\n");
-        expected.append("failed: value (InjectedConstraintValidatorConstraint violation)");
+        expected.append("failed: value (InjectedConstraintValidatorConstraint violation)\n");
+        expected.append("passed").append("\n");
+        expected.append("failed: value (InjectedRuntimeConstraintValidatorConstraint violation)");
 
         RestAssured.when()
                 .get("/hibernate-validator/test/injection")
@@ -539,5 +541,17 @@ public class HibernateValidatorFunctionalityTest {
                 .get("/hibernate-validator/test/rest-end-point-clock-based-constraints")
                 .then()
                 .body(is("passed"));
+    }
+
+    @Test
+    void testConstraintsDefinedInXml() {
+        RestAssured.given()
+                .when()
+                .get("/hibernate-validator/test/constraints-defined-in-xml")
+                .then()
+                .statusCode(200)
+                .body(containsString("failed"),
+                        containsString("id (must be greater than 0)"),
+                        containsString("name (must not be null)"));
     }
 }

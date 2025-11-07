@@ -3,6 +3,7 @@ package io.quarkus.qute.runtime;
 import java.lang.annotation.Annotation;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -34,6 +35,7 @@ import io.quarkus.qute.Location;
 import io.quarkus.qute.ParameterDeclaration;
 import io.quarkus.qute.RenderedResults;
 import io.quarkus.qute.ResultsCollectingTemplateInstance;
+import io.quarkus.qute.SectionNode;
 import io.quarkus.qute.Template;
 import io.quarkus.qute.TemplateInstance;
 import io.quarkus.qute.TemplateInstanceBase;
@@ -170,6 +172,22 @@ public class TemplateProducer {
                 unambiguousTemplate = null;
             }
             this.renderedResults = renderedResults;
+        }
+
+        @Override
+        public SectionNode getRootNode() {
+            if (unambiguousTemplate != null) {
+                return unambiguousTemplate.get().getRootNode();
+            }
+            throw ambiguousTemplates("getRootNode()");
+        }
+
+        @Override
+        public Optional<URI> getSource() {
+            if (unambiguousTemplate != null) {
+                return unambiguousTemplate.get().getSource();
+            }
+            throw ambiguousTemplates("getSource()");
         }
 
         @Override
@@ -320,6 +338,16 @@ public class TemplateProducer {
             @Override
             public List<TemplateNode> getNodes() {
                 return InjectableTemplate.this.getNodes();
+            }
+
+            @Override
+            public SectionNode getRootNode() {
+                return InjectableTemplate.this.getRootNode();
+            }
+
+            @Override
+            public Optional<URI> getSource() {
+                return InjectableTemplate.this.getSource();
             }
 
             @Override

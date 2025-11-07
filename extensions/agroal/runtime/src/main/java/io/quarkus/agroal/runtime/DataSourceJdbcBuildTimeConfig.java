@@ -21,8 +21,7 @@ public interface DataSourceJdbcBuildTimeConfig {
     /**
      * The datasource driver class name
      */
-    @WithConverter(TrimmedStringConverter.class)
-    Optional<String> driver();
+    Optional<@WithConverter(TrimmedStringConverter.class) String> driver();
 
     /**
      * Whether we want to use regular JDBC transactions, XA, or disable all transactional capabilities.
@@ -33,14 +32,21 @@ public interface DataSourceJdbcBuildTimeConfig {
     TransactionIntegration transactions();
 
     /**
-     * Enable datasource metrics collection. If unspecified, collecting metrics will be enabled by default if
-     * a metrics extension is active.
-     */
-    Optional<Boolean> enableMetrics();
-
-    /**
      * Enable OpenTelemetry JDBC instrumentation.
      */
     @WithDefault("false")
     boolean telemetry();
+
+    DataSourceJdbcMetrics metrics();
+
+    @ConfigGroup
+    interface DataSourceJdbcMetrics {
+
+        /**
+         * Enable metrics collection for this datasource.
+         */
+        @WithDefault("false")
+        Optional<Boolean> enabled();
+
+    }
 }

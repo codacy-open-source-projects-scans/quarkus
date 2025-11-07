@@ -40,7 +40,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 public class CachingTest {
     private static final Map<String, TaskOutcome> ALL_SUCCESS = Map.of(
             ":quarkusGenerateCode", TaskOutcome.SUCCESS,
-            ":quarkusGenerateCodeDev", TaskOutcome.SUCCESS,
             ":quarkusGenerateCodeTests", TaskOutcome.SUCCESS,
             ":quarkusAppPartsBuild", TaskOutcome.SUCCESS,
             ":quarkusDependenciesBuild", TaskOutcome.SUCCESS,
@@ -56,7 +55,6 @@ public class CachingTest {
             ":build", TaskOutcome.UP_TO_DATE);
     public static final Map<String, TaskOutcome> FROM_CACHE = Map.of(
             ":quarkusGenerateCode", TaskOutcome.FROM_CACHE,
-            ":quarkusGenerateCodeDev", TaskOutcome.SUCCESS,
             ":quarkusGenerateCodeTests", TaskOutcome.FROM_CACHE,
             ":quarkusAppPartsBuild", TaskOutcome.FROM_CACHE,
             ":quarkusDependenciesBuild", TaskOutcome.SUCCESS,
@@ -82,7 +80,6 @@ public class CachingTest {
                 .toArray(new String[0]);
 
         Map<String, String> env = Map.of();
-
         assertBuildResult("initial", gradleBuild(rerunTasks(arguments), env), ALL_SUCCESS);
         assertBuildResult("initial rebuild", gradleBuild(arguments, env), ALL_UP_TO_DATE);
 
@@ -97,8 +94,8 @@ public class CachingTest {
         assertBuildResult("change FOO_ENV_VAR rebuild", gradleBuild(arguments, env), ALL_UP_TO_DATE);
 
         // Change an unrelated environment variable, all up-to-date
-        env = Map.of("SOME_UNRELATED", "meep");
-        assertBuildResult("SOME_UNRELATED", gradleBuild(arguments, env), FROM_CACHE);
+        env = Map.of("FOO_ENV_VAR", "some-other-value", "SOME_UNRELATED", "meep");
+        assertBuildResult("SOME_UNRELATED", gradleBuild(arguments, env), ALL_UP_TO_DATE);
     }
 
     @Test
@@ -170,7 +167,7 @@ public class CachingTest {
         Map<String, String> env = simulateCI ? Map.of("CI", "yes") : Map.of();
 
         List<String> args = new ArrayList<>();
-        Collections.addAll(args, "build", "--info", "--stacktrace", "--build-cache", "--configuration-cache");
+        Collections.addAll(args, "build", "--info", "--stacktrace", "--build-cache", "--no-configuration-cache");
         if (packageType.equals("native-sources")) {
             args.add("-Dquarkus.native.enabled=true");
             args.add("-Dquarkus.native.sources-only=true");
@@ -212,7 +209,7 @@ public class CachingTest {
                 .describedAs("output: %s", result.getOutput())
                 .containsEntry(":compileJava", TaskOutcome.FROM_CACHE)
                 .containsEntry(":quarkusGenerateCode", TaskOutcome.FROM_CACHE)
-                .containsEntry(":quarkusGenerateCodeDev", TaskOutcome.UP_TO_DATE)
+                .doesNotContainKey(":quarkusGenerateCodeDev")
                 .containsEntry(":quarkusAppPartsBuild", isFastOrLegacyJar ? TaskOutcome.FROM_CACHE : TaskOutcome.UP_TO_DATE)
                 .containsEntry(":quarkusDependenciesBuild", isFastOrLegacyJar ? TaskOutcome.SUCCESS : TaskOutcome.UP_TO_DATE)
                 .containsEntry(":quarkusBuild", simulateCI || isFastJar ? TaskOutcome.SUCCESS : TaskOutcome.FROM_CACHE);
