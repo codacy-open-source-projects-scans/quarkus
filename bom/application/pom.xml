@@ -46,11 +46,11 @@
         <microprofile-jwt.version>2.1</microprofile-jwt.version>
         <microprofile-lra.version>2.0.1</microprofile-lra.version>
         <microprofile-openapi.version>4.1.1</microprofile-openapi.version>
-        <smallrye-common.version>2.13.9</smallrye-common.version>
+        <smallrye-common.version>2.14.0</smallrye-common.version>
         <smallrye-config.version>3.14.1</smallrye-config.version>
         <smallrye-health.version>4.2.0</smallrye-health.version>
         <smallrye-metrics.version>4.0.0</smallrye-metrics.version>
-        <smallrye-open-api.version>4.2.0</smallrye-open-api.version>
+        <smallrye-open-api.version>4.2.1</smallrye-open-api.version>
         <smallrye-graphql.version>2.16.0</smallrye-graphql.version>
         <smallrye-fault-tolerance.version>6.9.3</smallrye-fault-tolerance.version>
         <smallrye-jwt.version>4.6.2</smallrye-jwt.version>
@@ -82,7 +82,7 @@
         <jakarta.xml.bind-api.version>4.0.4</jakarta.xml.bind-api.version>
         <jaxb-runtime.version>4.0.6</jaxb-runtime.version>
         <asm.version>9.9</asm.version>
-        <commons-io.version>2.20.0</commons-io.version>
+        <commons-io.version>2.21.0</commons-io.version>
         <jboss-metadata-web.version>16.1.0.Final</jboss-metadata-web.version>
         <maven-toolchain.version>3.0-alpha-2</maven-toolchain.version>
         <plexus-component-annotations.version>2.1.0</plexus-component-annotations.version>
@@ -93,7 +93,7 @@
         <jackson-bom.version>2.20.1</jackson-bom.version>
         <commons-logging-jboss-logging.version>1.0.0.Final</commons-logging-jboss-logging.version>
         <commons-lang3.version>3.19.0</commons-lang3.version>
-        <commons-codec.version>1.19.0</commons-codec.version>
+        <commons-codec.version>1.20.0</commons-codec.version>
         <classmate.version>1.7.1</classmate.version>
         <!-- See root POM for hibernate-orm.version, hibernate-reactive.version, hibernate-validator.version,
              hibernate-search.version, antlr.version, bytebuddy.version -->
@@ -117,7 +117,7 @@
         <httpcore.version>4.4.16</httpcore.version>
         <httpasync.version>4.1.5</httpasync.version>
         <cronutils.version>9.2.1</cronutils.version>
-        <quartz.version>2.5.1</quartz.version>
+        <quartz.version>2.5.0</quartz.version>
         <h2.version>2.4.240</h2.version> <!-- When updating, needs to be matched in io.quarkus.hibernate.orm.runtime.config.DialectVersions
                                               and the dependency jts-core needs to be updated in extensions/jdbc/jdbc-h2/runtime/pom.xml -->
         <postgresql-jdbc.version>42.7.8</postgresql-jdbc.version>
@@ -180,8 +180,8 @@
         <quarkus-security.version>2.2.1</quarkus-security.version>
         <keycloak-client.version>26.0.7</keycloak-client.version>
         <logstash-gelf.version>1.15.1</logstash-gelf.version>
-        <checker-qual.version>3.51.1</checker-qual.version>
-        <error-prone-annotations.version>2.43.0</error-prone-annotations.version>
+        <checker-qual.version>3.52.0</checker-qual.version>
+        <error-prone-annotations.version>2.44.0</error-prone-annotations.version>
         <jib-core.version>0.27.3</jib-core.version>
         <google-http-client.version>1.47.1</google-http-client.version>
         <scram-client.version>2.1</scram-client.version>
@@ -206,7 +206,7 @@
         <jansi.version>2.4.0</jansi.version> <!-- Keep in sync with aesh-readline and dekorate -->
         <!-- these two artifacts needs to be compatible together -->
         <strimzi-oauth.version>0.16.1</strimzi-oauth.version>
-        <strimzi-oauth.nimbus.version>10.5</strimzi-oauth.nimbus.version>
+        <strimzi-oauth.nimbus.version>10.6</strimzi-oauth.nimbus.version>
         <jose4j.version>0.9.6</jose4j.version>
         <java-buildpack-client.version>0.0.14</java-buildpack-client.version>
         <crac.version>1.5.0</crac.version>
