@@ -27,6 +27,7 @@ public final class ConfigProperty extends AbstractConfigItem {
     private final EnumAcceptedValues enumAcceptedValues;
 
     private final String defaultValue;
+    private final boolean escapeDefaultValue;
 
     private final String javadocSiteLink;
 
@@ -35,7 +36,7 @@ public final class ConfigProperty extends AbstractConfigItem {
             boolean list, boolean optional, boolean secret,
             String mapKey, boolean unnamedMapKey, boolean withinMap, boolean converted, @JsonProperty("enum") boolean isEnum,
             EnumAcceptedValues enumAcceptedValues,
-            String defaultValue, String javadocSiteLink,
+            String defaultValue, boolean escapeDefaultValue, String javadocSiteLink,
             Deprecation deprecation) {
         super(sourceType, sourceElementName, sourceElementType, path, type, deprecation);
         this.phase = phase;
@@ -52,6 +53,7 @@ public final class ConfigProperty extends AbstractConfigItem {
         this.isEnum = isEnum;
         this.enumAcceptedValues = enumAcceptedValues;
         this.defaultValue = defaultValue;
+        this.escapeDefaultValue = escapeDefaultValue;
         this.javadocSiteLink = javadocSiteLink;
     }
 
@@ -121,6 +123,10 @@ public final class ConfigProperty extends AbstractConfigItem {
         return defaultValue;
     }
 
+    public boolean isEscapeDefaultValue() {
+        return escapeDefaultValue;
+    }
+
     public String getJavadocSiteLink() {
         return javadocSiteLink;
     }
@@ -136,6 +142,13 @@ public final class ConfigProperty extends AbstractConfigItem {
         }
 
         ConfigProperty other = (ConfigProperty) o;
+
+        // let's put the deprecated properties last
+        if (isDeprecated() && !other.isDeprecated()) {
+            return 1;
+        } else if (!isDeprecated() && other.isDeprecated()) {
+            return -1;
+        }
 
         if (isWithinMap()) {
             if (other.isWithinMap()) {
