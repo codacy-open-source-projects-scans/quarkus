@@ -122,7 +122,7 @@
                                               and the dependency jts-core needs to be updated in extensions/jdbc/jdbc-h2/runtime/pom.xml -->
         <postgresql-jdbc.version>42.7.8</postgresql-jdbc.version>
         <mariadb-jdbc.version>3.5.6</mariadb-jdbc.version>
-        <mysql-jdbc.version>8.3.0</mysql-jdbc.version>
+        <mysql-jdbc.version>9.5.0</mysql-jdbc.version>
         <mssql-jdbc.version>13.2.1.jre11</mssql-jdbc.version>
         <adal4j.version>1.6.7</adal4j.version>
         <oracle-jdbc.version>23.26.0.0.0</oracle-jdbc.version>
@@ -130,7 +130,7 @@
         <shrinkwrap.version>1.2.6</shrinkwrap.version>
         <hamcrest.version>2.2</hamcrest.version><!-- The version needs to be compatible with both REST Assured and Awaitility -->
         <junit.jupiter.version>5.13.4</junit.jupiter.version>
-        <infinispan.version>16.0.1</infinispan.version>
+        <infinispan.version>16.0.2</infinispan.version>
         <infinispan.protostream.version>6.0.1</infinispan.protostream.version>
         <caffeine.version>3.2.3</caffeine.version>
         <netty.version>4.1.128.Final</netty.version>
@@ -141,7 +141,7 @@
         <jctools-core.version>4.0.5</jctools-core.version>
         <kafka3.version>4.0.1</kafka3.version>
         <lz4.version>1.8.0</lz4.version> <!-- dependency of the kafka-clients that could be overridden by other imported BOMs in the platform -->
-        <snappy.version>1.1.10.5</snappy.version>
+        <snappy.version>1.1.10.8</snappy.version>
         <strimzi-test-container.version>0.113.0</strimzi-test-container.version>
         <!-- Scala is used by Kafka so we need to choose a compatible version -->
         <scala.version>2.13.16</scala.version>
@@ -2330,6 +2330,11 @@
             <dependency>
                 <groupId>io.quarkus</groupId>
                 <artifactId>quarkus-reactive-datasource-deployment</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-reactive-datasource-spi</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -5828,7 +5833,7 @@
             </dependency>
             <dependency>
                 <groupId>org.infinispan</groupId>
-                <artifactId>infinispan-server-testdriver-core</artifactId>
+                <artifactId>testcontainers-infinispan</artifactId>
                 <version>${infinispan.version}</version>
             </dependency>
             <dependency>

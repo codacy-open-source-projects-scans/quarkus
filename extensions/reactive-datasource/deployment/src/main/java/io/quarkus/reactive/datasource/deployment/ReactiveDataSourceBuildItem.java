@@ -3,7 +3,6 @@ package io.quarkus.reactive.datasource.deployment;
 import java.util.Optional;
 
 import io.quarkus.builder.item.MultiBuildItem;
-import io.vertx.sqlclient.Pool;
 
 /**
  * A build item for Reactive Datasources, a.k.a. Verx {@link Pool}s.
@@ -11,7 +10,10 @@ import io.vertx.sqlclient.Pool;
  * If you inject this build item when recording runtime init template calls, you are guaranteed the Pool configuration
  * has been injected. Pools are created witihin their own extensions
  * Similar to VertxPoolBuildItem, but doesn't include the Pool itself, only the name.
+ *
+ * Deprecated: use io/quarkus/reactive/datasource/spi/ReactiveDataSourceBuildItem.java instead
  */
+@Deprecated
 public final class ReactiveDataSourceBuildItem extends MultiBuildItem {
 
     private final String name;
