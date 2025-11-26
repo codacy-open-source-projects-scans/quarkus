@@ -163,6 +163,11 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
         Optional<String> resource();
 
         /**
+         * Supported scopes.
+         */
+        Optional<Set<String>> scopes();
+
+        /**
          * Authorization server URL.
          * 'quarkus.oidc.auth-server-url' property value is reported by default.
          */
@@ -254,7 +259,7 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
     CodeGrant codeGrant();
 
     /**
-     * Default token state manager configuration
+     * Token state manager configuration
      */
     @ConfigDocSection
     TokenStateManager tokenStateManager();
@@ -524,13 +529,16 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
         boolean splitTokens();
 
         /**
-         * Mandates that the Default TokenStateManager encrypt the session cookie that stores the tokens.
+         * Mandates that the TokenStateManager stores tokens in the encrypted form.
+         * Default TokenStateManager encrypts a session cookie that keeps the tokens.
+         * Custom TokenStateManager do not have to encrypt tokens, they will already be encrypted
+         * by the time it is asked to store tokens.
          */
         @WithDefault("true")
         boolean encryptionRequired();
 
         /**
-         * The secret used by the Default TokenStateManager to encrypt the session cookie
+         * The secret used by the TokenStateManager to encrypt the session cookie
          * storing the tokens when {@link #encryptionRequired} property is enabled.
          * <p>
          * If this secret is not set, the client secret configured with
@@ -539,7 +547,8 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
          * checked.
          * The secret is auto-generated every time an application starts if it remains uninitialized after checking all of these
          * properties.
-         * Generated secret can not decrypt the session cookie encrypted before the restart, therefore a user re-authentication
+         * Generated secret can not decrypt the session cookie or token encrypted before the restart, therefore a user
+         * re-authentication
          * will be required.
          * <p>
          * The length of the secret used to encrypt the tokens should be at least 32 characters long.
@@ -569,7 +578,7 @@ public interface OidcTenantConfig extends OidcClientCommonConfig {
         }
 
         /**
-         * Session cookie key encryption algorithm
+         * Session cookie or token key encryption algorithm
          */
         @WithDefault("A256GCMKW")
         EncryptionAlgorithm encryptionAlgorithm();
