@@ -91,6 +91,7 @@ import org.eclipse.aether.util.artifact.JavaScopes;
 import org.fusesource.jansi.internal.Kernel32;
 
 import io.quarkus.bootstrap.BootstrapConstants;
+import io.quarkus.bootstrap.app.ApplicationModelSerializer;
 import io.quarkus.bootstrap.app.ConfiguredClassLoading;
 import io.quarkus.bootstrap.app.QuarkusBootstrap;
 import io.quarkus.bootstrap.devmode.DependenciesFilter;
@@ -790,9 +791,7 @@ public class DevMojo extends AbstractMojo {
             var colon = goal.lastIndexOf(':');
             if (colon >= 0) {
                 var plugin = pluginPrefixes.get(goal.substring(0, colon));
-                if (plugin == null) {
-                    getLog().warn("Failed to locate plugin for " + goal);
-                } else {
+                if (plugin != null) {
                     executedPluginGoals.computeIfAbsent(plugin.getId(), k -> new ArrayList<>()).add(goal.substring(colon + 1));
                 }
             }
@@ -1556,7 +1555,7 @@ public class DevMojo extends AbstractMojo {
                 .extensionDevModeJvmOptionFilter(extensionJvmOptions);
 
         // serialize the app model to avoid re-resolving it in the dev process
-        BootstrapUtils.serializeAppModel(appModel, appModelLocation);
+        ApplicationModelSerializer.serialize(appModel, appModelLocation);
         builder.jvmArgs("-D" + BootstrapConstants.SERIALIZED_APP_MODEL + "=" + appModelLocation);
 
         if (noDeps) {

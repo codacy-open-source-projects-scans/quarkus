@@ -222,7 +222,7 @@ public class BeanGenerator extends AbstractGenerator {
 
         boolean isApplicationClass = applicationClassPredicate.test(clazz.name())
                 || bean.isForceApplicationClass()
-                || bean.hasBoundDecoratorWhichIsApplicationClass(applicationClassPredicate);
+                || bean.hasBoundDecoratorMatching(applicationClassPredicate);
         ResourceClassOutput classOutput = new ResourceClassOutput(isApplicationClass,
                 name -> name.equals(generatedName) ? SpecialType.BEAN : null, generateSources);
 
@@ -1355,7 +1355,7 @@ public class BeanGenerator extends AbstractGenerator {
                         msgBuilder.append("\n\t- ").append(matchingIP.getTargetInfo());
                     }
                 }
-                b1.throw_(InactiveBeanException.class, b1.objToString(msg));
+                b1.throw_(InactiveBeanException.class, b1.exprToString(msg));
             });
         }
 
@@ -2034,7 +2034,7 @@ public class BeanGenerator extends AbstractGenerator {
                 // return identifier.equals(((InjectableBean) other).getIdentifier());
                 Expr otherBean = bc.cast(other, InjectableBean.class);
                 Expr otherIdentifier = bc.invokeInterface(MethodDescs.GET_IDENTIFIER, otherBean);
-                bc.return_(bc.objEquals(Const.of(bean.getIdentifier()), otherIdentifier));
+                bc.return_(bc.exprEquals(Const.of(bean.getIdentifier()), otherIdentifier));
             });
         });
     }

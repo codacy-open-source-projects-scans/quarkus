@@ -7,21 +7,17 @@ import static io.quarkus.bootstrap.util.DependencyUtils.hasWinner;
 import static io.quarkus.bootstrap.util.DependencyUtils.newDependencyBuilder;
 
 import java.io.BufferedReader;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.BiConsumer;
@@ -100,7 +96,7 @@ public class ApplicationDependencyResolver {
     private Collection<ConditionalDependency> conditionalDepsToProcess = new ConcurrentLinkedDeque<>();
 
     private MavenArtifactResolver resolver;
-    private List<Dependency> managedDeps;
+    private Map<ArtifactKey, Dependency> managedDeps;
     private ApplicationModelBuilder appBuilder;
     private boolean collectReloadableModules;
     private DependencyLoggingConfig depLogging;
@@ -187,16 +183,24 @@ public class ApplicationDependencyResolver {
     }
 
     /**
+     * Managed dependency version constraints.
+     *
+     * @param managedDeps managed dependency version constraints
+     * @return self
+     */
+    public ApplicationDependencyResolver setManagedDependencies(Map<ArtifactKey, Dependency> managedDeps) {
+        this.managedDeps = managedDeps;
+        return this;
+    }
+
+    /**
      * Resolves application dependencies and adds the to the application model builder.
      *
      * @param collectRtDepsRequest request to collect runtime dependencies
      * @throws AppModelResolverException in case of a failure
      */
     public void resolve(CollectRequest collectRtDepsRequest) throws AppModelResolverException {
-        this.managedDeps = collectRtDepsRequest.getManagedDependencies();
-        // managed dependencies will be a bit augmented with every added extension, so let's load the properties early
         collectPlatformProperties();
-        this.managedDeps = managedDeps.isEmpty() ? new ArrayList<>() : managedDeps;
 
         DependencyNode root = resolveRuntimeDeps(collectRtDepsRequest);
         processRuntimeDeps(root);
@@ -294,8 +298,14 @@ public class ApplicationDependencyResolver {
 
     private Collection<AppDep> collectDeploymentDeps() {
         final ConcurrentLinkedDeque<AppDep> injectQueue = new ConcurrentLinkedDeque<>();
-        var taskRunner = deploymentInjectionPoints.size() == 1 ? ModelResolutionTaskRunner.getBlockingTaskRunner()
-                : getTaskRunner();
+        final ModelResolutionTaskRunner taskRunner;
+        if (deploymentInjectionPoints.size() == 1 || BLOCKING_TASK_RUNNER) {
+            taskRunner = ModelResolutionTaskRunner.getBlockingTaskRunner();
+        } else {
+            // We've been running into Maven resolver failures to acquire a lock to a local fail when resolving dependencies lately.
+            // This error handler will catch those errors and will re-try the corresponding tasks with the blocking task runner.
+            taskRunner = ModelResolutionTaskRunner.getNonBlockingTaskRunner(new RetryLockAcquisitionErrorHandler());
+        }
         for (AppDep extDep : deploymentInjectionPoints) {
             extDep.scheduleCollectDeploymentDeps(taskRunner, injectQueue);
         }
@@ -323,7 +333,7 @@ public class ApplicationDependencyResolver {
         var children = root.getChildren();
         while (children != null) {
             for (DependencyNode node : children) {
-                managedDeps.add(node.getDependency());
+                managedDeps.putIfAbsent(DependencyUtils.getKey(node.getArtifact()), node.getDependency());
                 if (!node.getChildren().isEmpty()) {
                     depStack.add(node.getChildren());
                 }
@@ -332,7 +342,7 @@ public class ApplicationDependencyResolver {
         }
         final CollectRequest request = new CollectRequest()
                 .setDependencies(collectCompileOnly)
-                .setManagedDependencies(managedDeps)
+                .setManagedDependencies(new ArrayList<>(managedDeps.values()))
                 .setRepositories(collectRtDepsRequest.getRepositories());
         if (collectRtDepsRequest.getRoot() != null) {
             request.setRoot(collectRtDepsRequest.getRoot());
@@ -384,7 +394,7 @@ public class ApplicationDependencyResolver {
      */
     private void collectPlatformProperties() throws AppModelResolverException {
         final PlatformImportsImpl platformReleases = new PlatformImportsImpl();
-        for (Dependency d : managedDeps) {
+        for (Dependency d : managedDeps.values()) {
             final Artifact artifact = d.getArtifact();
             final String extension = artifact.getExtension();
             if ("json".equals(extension)
@@ -629,7 +639,10 @@ public class ApplicationDependencyResolver {
             if (existingDep == null) {
                 appBuilder.addDependency(resolvedDep);
                 if (ext != null) {
-                    managedDeps.add(new Dependency(ext.info.deploymentArtifact, JavaScopes.COMPILE));
+                    final ArtifactKey deploymentKey = getKey(ext.info.deploymentArtifact);
+                    if (!managedDeps.containsKey(deploymentKey)) {
+                        managedDeps.put(deploymentKey, new Dependency(ext.info.deploymentArtifact, JavaScopes.COMPILE));
+                    }
                 }
             } else if (existingDep != resolvedDep) {
                 throw new IllegalStateException(node.getArtifact() + " is already present in the application model");
@@ -821,70 +834,18 @@ public class ApplicationDependencyResolver {
     private DependencyNode collectDependencies(Artifact artifact, Collection<Exclusion> exclusions,
             List<RemoteRepository> repos) {
         final CollectRequest collectRequest = getCollectRequest(artifact, exclusions, repos);
-        DependencyNode root = null;
+        final DependencyNode root;
         try {
             root = resolver.getSystem()
                     .collectDependencies(resolver.getSession(), collectRequest)
                     .getRoot();
         } catch (DependencyCollectionException e) {
-            // It could happen, especially in Maven 3.8, that multiple threads could end up writing/reading
-            // the same temporary files while resolving the same artifact. Once one of the threads completes
-            // resolving the artifact, the temporary file will be renamed to the target artifact file
-            // and the other thread will fail with one of the file-not-found exceptions.
-            // In this case, we simply re-try the collect request, which should now pick up the already resolved artifact.
-            String missingFile = getMissingFileOrNull(e);
-            if (missingFile != null) {
-                Set<String> missingFiles = new HashSet<>();
-                while (missingFile != null) {
-                    if (missingFiles.add(missingFile)) {
-                        log.debugf("Re-trying the collect request for %s due to missing %s", artifact, missingFile);
-                        try {
-                            root = resolver.getSystem()
-                                    .collectDependencies(resolver.getSession(), collectRequest)
-                                    .getRoot();
-                            break;
-                        } catch (DependencyCollectionException dce) {
-                            missingFile = getMissingFileOrNull(dce);
-                        }
-                    } else {
-                        // if it's the second time it's missing, we give up
-                        throw wrapInDeploymentInjectionException(artifact, e);
-                    }
-                }
-            }
-            if (root == null) {
-                throw wrapInDeploymentInjectionException(artifact, e);
-            }
+            throw new DeploymentInjectionException("Failed to collect dependencies for " + artifact, e);
         }
         if (root.getChildren().size() != 1) {
             throw new DeploymentInjectionException("Only one child expected but got " + root.getChildren());
         }
         return root.getChildren().get(0);
-    }
-
-    private static DeploymentInjectionException wrapInDeploymentInjectionException(Artifact artifact, Exception e) {
-        return new DeploymentInjectionException("Failed to collect dependencies for " + artifact, e);
-    }
-
-    /**
-     * Checks whether the cause of this exception a kind of no-such-file exception and returns the file that was missing.
-     *
-     * @param dce top level exception
-     * @return missing file that was the cause or null, if the cause was different
-     */
-    private static String getMissingFileOrNull(DependencyCollectionException dce) {
-        Throwable t = dce.getCause();
-        while (t != null) {
-            var cause = t.getCause();
-            // It looks like in Maven 3.9 it's NoSuchFileException, while in Maven 3.8 it's FileNotFoundException
-            if (cause instanceof NoSuchFileException e) {
-                return e.getFile();
-            } else if (cause instanceof FileNotFoundException) {
-                return cause.getMessage();
-            }
-            t = cause;
-        }
-        return null;
     }
 
     private CollectRequest getCollectRequest(Artifact artifact, Collection<Exclusion> exclusions,
@@ -895,12 +856,16 @@ public class ApplicationDependencyResolver {
         } catch (BootstrapMavenException e) {
             throw new DeploymentInjectionException("Failed to resolve descriptor for " + artifact, e);
         }
-        final List<Dependency> allConstraints = new ArrayList<>(
-                managedDeps.size() + descr.getManagedDependencies().size());
-        allConstraints.addAll(managedDeps);
-        allConstraints.addAll(descr.getManagedDependencies());
+        final List<Dependency> effectiveConstraints;
+        if (descr.getManagedDependencies().isEmpty()) {
+            effectiveConstraints = new ArrayList<>(managedDeps.values());
+        } else {
+            final Map<ArtifactKey, Dependency> effecctiveMap = new HashMap<>(managedDeps);
+            DependencyUtils.putAll(effecctiveMap, descr.getManagedDependencies());
+            effectiveConstraints = new ArrayList<>(effecctiveMap.values());
+        }
         return new CollectRequest()
-                .setManagedDependencies(allConstraints)
+                .setManagedDependencies(effectiveConstraints)
                 .setRepositories(repos)
                 .setRootArtifact(artifact)
                 .setDependencies(List.of(new Dependency(artifact, JavaScopes.COMPILE, false, exclusions)));

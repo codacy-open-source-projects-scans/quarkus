@@ -1136,7 +1136,7 @@ public interface LogConfiguration {
          * Enable logging to a file.
          */
         @WithDefault("true")
-        boolean enable();
+        boolean enabled();
 
         /**
          * The log format.
@@ -1172,12 +1172,12 @@ public class LoggingProcessor {
 ----
 
 A configuration property name can be split into segments. For example, a property name like
-`quarkus.log.file.enable` can be split into the following segments:
+`quarkus.log.file.enabled` can be split into the following segments:
 
 * `quarkus` - a namespace claimed by Quarkus which is a prefix for `@ConfigMapping` interfaces,
 * `log` - a name segment which corresponds to the prefix set in the interface annotated with `@ConfigMapping`,
 * `file` - a name segment which corresponds to the `file` field in this class,
-* `enable` - a name segment which corresponds to `enable` field in `FileConfig`.
+* `enabled` - a name segment which corresponds to `enabled` field in `FileConfig`.
 
 <1> The `@ConfigMapping` annotation indicates that the interface is a configuration mapping, in this case one which
 corresponds to a `quarkus.log` segment.
@@ -1189,7 +1189,7 @@ A corresponding `application.properties` for the above example could be:
 
 [source%nowrap,properties]
 ----
-quarkus.log.file.enable=true
+quarkus.log.file.enabled=true
 quarkus.log.file.level=DEBUG
 quarkus.log.file.path=/tmp/debug.log
 ----
@@ -2117,7 +2117,7 @@ See xref:extension-writing-dev-service.adoc[how to write a Dev Service] for more
 [[testing-extensions]]
 === Testing Extensions
 
-Testing of Quarkus extensions should be done with the `io.quarkus.test.QuarkusUnitTest` JUnit 5 extension.
+Testing of Quarkus extensions should be done with the `io.quarkus.test.QuarkusUnitTest` JUnit extension.
 This extension allows for Arquillian-style tests that test specific functionalities.
 It is not intended for testing user applications, as this should be done via `io.quarkus.test.junit.QuarkusTest`.
 The main difference is that `QuarkusTest` simply boots the application once at the start of the run, while `QuarkusUnitTest` deploys a custom
@@ -2126,7 +2126,7 @@ Quarkus application for each test class.
 These tests should be placed in the deployment module, if additional Quarkus modules are required for testing
 their deployment modules should also be added as test scoped dependencies.
 
-Note that `QuarkusUnitTest` is in the `quarkus-junit5-internal` module.
+Note that `QuarkusUnitTest` is in the `quarkus-junit-internal` module.
 
 An example test class may look like:
 

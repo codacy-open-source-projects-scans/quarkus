@@ -110,7 +110,7 @@ public class SubclassGenerator extends AbstractGenerator {
         }
 
         boolean isApplicationClass = applicationClassPredicate.test(bean.getBeanClass())
-                || bean.hasBoundDecoratorWhichIsApplicationClass(applicationClassPredicate);
+                || bean.hasBoundDecoratorMatching(applicationClassPredicate);
         ResourceClassOutput classOutput = new ResourceClassOutput(isApplicationClass,
                 name -> name.equals(generatedName) ? SpecialType.SUBCLASS : null,
                 generateSources);
@@ -592,16 +592,9 @@ public class SubclassGenerator extends AbstractGenerator {
         // First generate the delegate subclass
         // An instance of this subclass is injected in the delegate injection point of a decorator instance
         ClassInfo decoratorClass = decorator.getTarget().get().asClass();
-        String baseName;
-        if (decoratorClass.enclosingClass() != null) {
-            baseName = decoratorClass.enclosingClass().withoutPackagePrefix() + UNDERSCORE
-                    + decoratorClass.name().withoutPackagePrefix();
-        } else {
-            baseName = decoratorClass.name().withoutPackagePrefix();
-        }
         // Name: AlphaDecorator_FooBeanId_Delegate_Subclass
         String generatedName = generatedName(providerType.name(),
-                baseName + UNDERSCORE + bean.getIdentifier() + UNDERSCORE + "Delegate");
+                decoratorClass.name().withoutPackagePrefix() + UNDERSCORE + bean.getIdentifier() + UNDERSCORE + "Delegate");
 
         Set<MethodInfo> decoratedMethods = bean.getDecoratedMethods(decorator);
         Set<MethodDesc> decoratedMethodDescriptors = new HashSet<>(decoratedMethods.size());
@@ -610,10 +603,11 @@ public class SubclassGenerator extends AbstractGenerator {
         }
 
         Map<MethodDesc, DecoratorMethod> nextDecorators = bean.getNextDecorators(decorator);
-        List<DecoratorInfo> decoratorParameters = new ArrayList<>();
+        Set<DecoratorInfo> decoratorParametersSet = new HashSet<>();
         for (DecoratorMethod decoratorMethod : nextDecorators.values()) {
-            decoratorParameters.add(decoratorMethod.decorator);
+            decoratorParametersSet.add(decoratorMethod.decorator);
         }
+        List<DecoratorInfo> decoratorParameters = new ArrayList<>(decoratorParametersSet);
         Collections.sort(decoratorParameters);
 
         List<ClassDesc> delegateSubclassCtorParams = new ArrayList<>();
@@ -807,19 +801,19 @@ public class SubclassGenerator extends AbstractGenerator {
         LocalVar cc = subclassCtor.localVar("cc", subclassCtor.invokeStatic(MethodDescs.CREATIONAL_CTX_CHILD, ccParam));
 
         // Create new delegate subclass instance
-        Expr[] params = new Expr[1 + decoratorParameters.size()];
-        params[0] = subclass.this_();
-        int paramIdx = 1;
+        Expr[] args = new Expr[1 + decoratorParameters.size()];
+        args[0] = subclass.this_();
+        int argIndex = 1;
         for (DecoratorInfo decoratorParameter : decoratorParameters) {
             LocalVar decoratorVar = decoratorToLocalVar.get(decoratorParameter.getIdentifier());
             if (decoratorVar == null) {
-                throw new IllegalStateException("Decorator var must not be null");
+                throw new IllegalStateException("Unknown next " + decoratorParameter + " when generating " + generatedName);
             }
-            params[paramIdx] = decoratorVar;
-            paramIdx++;
+            args[argIndex] = decoratorVar;
+            argIndex++;
         }
         Expr delegateSubclassInstance = subclassCtor.new_(ConstructorDesc.of(
-                delegateSubclass, delegateSubclassCtorParams), params);
+                delegateSubclass, delegateSubclassCtorParams), args);
 
         // Set the DecoratorDelegateProvider to satisfy the delegate IP
         LocalVar prev = subclassCtor.localVar("prev", subclassCtor.invokeStatic(

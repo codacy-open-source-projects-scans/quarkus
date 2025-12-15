@@ -226,6 +226,7 @@
                 <module>hibernate-orm-tenancy</module>
                 <module>hibernate-orm-jpamodelgen</module>
                 <module>hibernate-orm-data</module>
+                <module>hibernate-orm-panache-data</module>
                 <module>hibernate-orm-envers</module>
                 <module>vertx-http</module>
                 <module>vertx-http-compressors</module>
@@ -289,7 +290,6 @@
                 <module>amazon-lambda-rest-reactive-routes</module>
                 <module>amazon-lambda-rest-funqy</module>
                 <module>amazon-lambda-rest-servlet</module>
-                <module>amazon-lambda-http-resteasy</module>
                 <module>amazon-lambda-http-resteasy-reactive</module>
                 <module>container-image</module>
                 <module>kubernetes</module>
