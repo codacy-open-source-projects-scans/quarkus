@@ -49,6 +49,7 @@ import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
 import io.quarkus.deployment.builditem.MainClassBuildItem;
 import io.quarkus.deployment.builditem.TransformedClassesBuildItem;
 import io.quarkus.deployment.builditem.TransformedClassesBuildItem.TransformedClass;
+import io.quarkus.deployment.jvm.ResolvedJVMRequirements;
 import io.quarkus.deployment.pkg.JarUnsigner;
 import io.quarkus.deployment.pkg.PackageConfig;
 import io.quarkus.deployment.pkg.builditem.CurateOutcomeBuildItem;
@@ -69,7 +70,6 @@ public class FastJarBuilder extends AbstractJarBuilder<JarBuildItem> {
 
     private final List<AdditionalApplicationArchiveBuildItem> additionalApplicationArchives;
     private final Set<ArtifactKey> parentFirstArtifactKeys;
-    private final ExecutorService executorService;
 
     public FastJarBuilder(CurateOutcomeBuildItem curateOutcome,
             OutputTargetBuildItem outputTarget,
@@ -83,12 +83,12 @@ public class FastJarBuilder extends AbstractJarBuilder<JarBuildItem> {
             List<GeneratedResourceBuildItem> generatedResources,
             Set<ArtifactKey> parentFirstArtifactKeys,
             Set<ArtifactKey> removedArtifactKeys,
-            ExecutorService executorService) {
+            ExecutorService executorService,
+            ResolvedJVMRequirements jvmRequirements) {
         super(curateOutcome, outputTarget, applicationInfo, packageConfig, mainClass, applicationArchives, transformedClasses,
-                generatedClasses, generatedResources, removedArtifactKeys);
+                generatedClasses, generatedResources, removedArtifactKeys, executorService, jvmRequirements);
         this.additionalApplicationArchives = additionalApplicationArchives;
         this.parentFirstArtifactKeys = parentFirstArtifactKeys;
-        this.executorService = executorService;
     }
 
     public JarBuildItem build() throws IOException {
@@ -314,6 +314,7 @@ public class FastJarBuilder extends AbstractJarBuilder<JarBuildItem> {
                     outputTarget.getOutputDirectory(), executorService)) {
                 ResolvedDependency appArtifact = curateOutcome.getApplicationModel().getAppArtifact();
                 generateManifest(archiveCreator, classPath.toString(), packageConfig, appArtifact,
+                        jvmRequirements,
                         QuarkusEntryPoint.class.getName(),
                         applicationInfo);
             }

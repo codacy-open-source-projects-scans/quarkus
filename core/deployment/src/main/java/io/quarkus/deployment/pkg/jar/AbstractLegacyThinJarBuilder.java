@@ -17,8 +17,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Predicate;
 
-import org.jboss.logging.Logger;
-
 import io.quarkus.builder.item.BuildItem;
 import io.quarkus.deployment.builditem.ApplicationArchivesBuildItem;
 import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
@@ -26,6 +24,7 @@ import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
 import io.quarkus.deployment.builditem.MainClassBuildItem;
 import io.quarkus.deployment.builditem.TransformedClassesBuildItem;
+import io.quarkus.deployment.jvm.ResolvedJVMRequirements;
 import io.quarkus.deployment.pkg.JarUnsigner;
 import io.quarkus.deployment.pkg.PackageConfig;
 import io.quarkus.deployment.pkg.builditem.CurateOutcomeBuildItem;
@@ -34,10 +33,6 @@ import io.quarkus.maven.dependency.ArtifactKey;
 import io.quarkus.maven.dependency.ResolvedDependency;
 
 public abstract class AbstractLegacyThinJarBuilder<T extends BuildItem> extends AbstractJarBuilder<T> {
-
-    private static final Logger LOG = Logger.getLogger(AbstractLegacyThinJarBuilder.class);
-
-    private final ExecutorService executorService;
 
     public AbstractLegacyThinJarBuilder(CurateOutcomeBuildItem curateOutcome,
             OutputTargetBuildItem outputTarget,
@@ -49,11 +44,10 @@ public abstract class AbstractLegacyThinJarBuilder<T extends BuildItem> extends 
             List<GeneratedClassBuildItem> generatedClasses,
             List<GeneratedResourceBuildItem> generatedResources,
             Set<ArtifactKey> removedArtifactKeys,
-            ExecutorService executorService) {
+            ExecutorService executorService,
+            ResolvedJVMRequirements jvmRequirements) {
         super(curateOutcome, outputTarget, applicationInfo, packageConfig, mainClass, applicationArchives, transformedClasses,
-                generatedClasses, generatedResources, removedArtifactKeys);
-
-        this.executorService = executorService;
+                generatedClasses, generatedResources, removedArtifactKeys, executorService, jvmRequirements);
     }
 
     public abstract T build() throws IOException;
@@ -77,7 +71,8 @@ public abstract class AbstractLegacyThinJarBuilder<T extends BuildItem> extends 
             ResolvedDependency appArtifact = curateOutcome.getApplicationModel().getAppArtifact();
             // the manifest needs to be the first entry in the jar, otherwise JarInputStream does not work properly
             // see https://bugs.openjdk.java.net/browse/JDK-8031748
-            generateManifest(archiveCreator, classPath.toString(), packageConfig, appArtifact, mainClass.getClassName(),
+            generateManifest(archiveCreator, classPath.toString(), packageConfig, appArtifact, jvmRequirements,
+                    mainClass.getClassName(),
                     applicationInfo);
 
             copyCommonContent(archiveCreator, services, ignoredEntriesPredicate);
