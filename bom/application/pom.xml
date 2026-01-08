@@ -32,7 +32,7 @@
         <opentelemetry-instrumentation.version>2.23.0-alpha</opentelemetry-instrumentation.version> <!-- OTel SDk 1.55.0-->
         <opentelemetry-semconv.version>1.37.0-alpha</opentelemetry-semconv.version>
         <quarkus-http.version>5.3.5</quarkus-http.version>
-        <micrometer.version>1.14.7</micrometer.version><!-- keep in sync with hdrhistogram: https://central.sonatype.com/artifact/io.micrometer/micrometer-core -->
+        <micrometer.version>1.16.1</micrometer.version><!-- keep in sync with hdrhistogram: https://central.sonatype.com/artifact/io.micrometer/micrometer-core -->
         <hdrhistogram.version>2.2.2</hdrhistogram.version><!-- keep in sync with micrometer -->
         <google-auth.version>0.22.0</google-auth.version>
         <graphql-java.version>24.3</graphql-java.version> <!-- keep in sync with smallrye-graphql -->
@@ -45,7 +45,7 @@
         <microprofile-jwt.version>2.1</microprofile-jwt.version>
         <microprofile-lra.version>2.0.1</microprofile-lra.version>
         <microprofile-openapi.version>4.1.1</microprofile-openapi.version>
-        <smallrye-common.version>2.14.0</smallrye-common.version>
+        <smallrye-common.version>2.15.0</smallrye-common.version>
         <smallrye-config.version>3.15.0</smallrye-config.version>
         <smallrye-health.version>4.3.0</smallrye-health.version>
         <smallrye-open-api.version>4.2.3</smallrye-open-api.version>
@@ -127,7 +127,7 @@
         <db2-jdbc.version>12.1.0.0</db2-jdbc.version>
         <shrinkwrap.version>1.2.6</shrinkwrap.version>
         <hamcrest.version>2.2</hamcrest.version><!-- The version needs to be compatible with both REST Assured and Awaitility -->
-        <junit.jupiter.version>6.0.1</junit.jupiter.version>
+        <junit.jupiter.version>6.0.2</junit.jupiter.version>
         <infinispan.version>16.0.5</infinispan.version>
         <infinispan.protostream.version>6.0.3</infinispan.protostream.version>
         <caffeine.version>3.2.3</caffeine.version>
@@ -138,7 +138,7 @@
         <mutiny.version>3.1.0</mutiny.version>
         <jctools-core.version>4.0.5</jctools-core.version>
         <kafka.version>4.1.1</kafka.version>
-        <lz4.version>1.8.0</lz4.version> <!-- dependency of the kafka-clients that could be overridden by other imported BOMs in the platform -->
+        <lz4.version>1.10.1</lz4.version> <!-- dependency of the kafka-clients that could be overridden by other imported BOMs in the platform -->
         <snappy.version>1.1.10.8</snappy.version>
         <strimzi-test-container.version>0.113.0</strimzi-test-container.version>
         <!-- Scala is used by Kafka so we need to choose a compatible version -->
@@ -178,7 +178,7 @@
         <quarkus-security.version>2.3.2</quarkus-security.version>
         <keycloak-client.version>26.0.7</keycloak-client.version>
         <logstash-gelf.version>1.15.1</logstash-gelf.version>
-        <checker-qual.version>3.52.1</checker-qual.version>
+        <checker-qual.version>3.53.0</checker-qual.version>
         <error-prone-annotations.version>2.45.0</error-prone-annotations.version>
         <jib-core.version>0.28.1</jib-core.version>
         <google-http-client.version>1.47.1</google-http-client.version>
@@ -3657,6 +3657,11 @@
                 <artifactId>byte-buddy-agent</artifactId>
                 <version>${bytebuddy.version}</version>
             </dependency>
+            <dependency>
+                <groupId>org.geolatte</groupId>
+                <artifactId>geolatte-geom</artifactId>
+                <version>${geolatte.version}</version>
+            </dependency>
 
             <!-- GRPC dependencies -->
             <dependency>
@@ -4530,9 +4535,16 @@
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>kafka-clients</artifactId>
                 <version>${kafka.version}</version>
+                <!-- TODO: remove the exclusion after upgrading to kafka-clients depending on the new lz4-java groupId (at.yawk.lz4) -->
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.lz4</groupId>
+                        <artifactId>lz4-java</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
             <dependency>
-                <groupId>org.lz4</groupId>
+                <groupId>at.yawk.lz4</groupId>
                 <artifactId>lz4-java</artifactId>
                 <version>${lz4.version}</version>
             </dependency>
@@ -5431,6 +5443,11 @@
             <dependency>
                 <groupId>org.hibernate.orm</groupId>
                 <artifactId>hibernate-envers</artifactId>
+                <version>${hibernate-orm.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.hibernate.orm</groupId>
+                <artifactId>hibernate-spatial</artifactId>
                 <version>${hibernate-orm.version}</version>
             </dependency>
             <dependency>
