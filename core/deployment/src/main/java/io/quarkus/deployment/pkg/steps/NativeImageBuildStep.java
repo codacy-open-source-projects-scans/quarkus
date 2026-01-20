@@ -288,36 +288,50 @@ public class NativeImageBuildStep {
             } catch (Throwable t) {
                 throw imageGenerationFailed(t, isContainerBuild);
             }
-            IoUtils.copy(generatedExecutablePath, finalExecutablePath);
-            Files.delete(generatedExecutablePath);
-            if (nativeConfig.debug().enabled()) {
-                final String symbolsName = String.format("%s.debug", nativeImageName);
-                Path generatedSymbols = outputDir.resolve(symbolsName);
-                if (generatedSymbols.toFile().exists()) {
-                    Path finalSymbolsPath = outputTargetBuildItem.getOutputDirectory().resolve(symbolsName);
-                    IoUtils.copy(generatedSymbols, finalSymbolsPath);
-                    Files.delete(generatedSymbols);
-                }
-            }
 
-            // See https://github.com/oracle/graal/issues/4921
-            try (DirectoryStream<Path> sharedLibs = Files.newDirectoryStream(outputDir, "*.{so,dll}")) {
-                sharedLibs.forEach(src -> {
-                    Path dst = null;
-                    try {
-                        dst = Path.of(outputTargetBuildItem.getOutputDirectory().toAbsolutePath().toString(),
-                                src.getFileName().toString());
-                        log.debugf("Copying a shared lib from %s to %s.", src, dst);
-                        Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
-                    } catch (IOException e) {
-                        log.errorf("Could not copy shared lib from %s to %s. Continuing. Error: %s", src, dst, e);
+            if (!nativeConfig.isCreateNativeBundle()) {
+                IoUtils.copy(generatedExecutablePath, finalExecutablePath);
+                Files.delete(generatedExecutablePath);
+                if (nativeConfig.debug().enabled()) {
+                    final String symbolsName = String.format("%s.debug", nativeImageName);
+                    Path generatedSymbols = outputDir.resolve(symbolsName);
+                    if (generatedSymbols.toFile().exists()) {
+                        Path finalSymbolsPath = outputTargetBuildItem.getOutputDirectory().resolve(symbolsName);
+                        IoUtils.copy(generatedSymbols, finalSymbolsPath);
+                        Files.delete(generatedSymbols);
                     }
-                });
-            } catch (IOException e) {
-                log.errorf("Could not list files in directory %s. Continuing. Error: %s", outputDir, e);
-            }
+                }
 
-            System.setProperty("native.image.path", finalExecutablePath.toAbsolutePath().toString());
+                // See https://github.com/oracle/graal/issues/4921
+                try (DirectoryStream<Path> sharedLibs = Files.newDirectoryStream(outputDir, "*.{so,dll}")) {
+                    sharedLibs.forEach(src -> {
+                        Path dst = null;
+                        try {
+                            dst = Path.of(outputTargetBuildItem.getOutputDirectory().toAbsolutePath().toString(),
+                                    src.getFileName().toString());
+                            log.debugf("Copying a shared lib from %s to %s.", src, dst);
+                            Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                        } catch (IOException e) {
+                            log.errorf("Could not copy shared lib from %s to %s. Continuing. Error: %s", src, dst, e);
+                        }
+                    });
+                } catch (IOException e) {
+                    log.errorf("Could not list files in directory %s. Continuing. Error: %s", outputDir, e);
+                }
+
+                System.setProperty("native.image.path", finalExecutablePath.toAbsolutePath().toString());
+            } else {
+                String defaultNibFileName = runnerJar.getFileName().toString().replaceFirst(".jar$", ".nib");
+                String nibFileName = nativeConfig.bundle().name().isPresent() ? nativeConfig.bundle().name().get()
+                        : defaultNibFileName;
+                Path nibFileOriginPath = Path.of(runnerJar.getParent().toAbsolutePath().toString(), nibFileName);
+                Path nibFileTargetPath = Path.of(outputTargetBuildItem.getOutputDirectory().toAbsolutePath().toString(),
+                        nibFileName);
+                log.debug("Copying " + nibFileOriginPath + " to " + nibFileTargetPath);
+                IoUtils.copy(nibFileOriginPath, nibFileTargetPath);
+                Files.delete(nibFileOriginPath);
+                log.info("Native image Bundle available at " + nibFileTargetPath.toAbsolutePath());
+            }
 
             return new NativeImageBuildItem(finalExecutablePath,
                     new NativeImageBuildItem.GraalVMVersion(graalVMVersion.getFullVersion(),
@@ -698,8 +712,8 @@ public class NativeImageBuildStep {
                 return this;
             }
 
-            public Builder setGraalVMVersion(GraalVM.Version graalVMVersion) {
-                this.graalVMVersion = graalVMVersion;
+            public Builder setGraalVMVersion(io.quarkus.runtime.graal.GraalVM.Version graalVMVersion) {
+                this.graalVMVersion = new GraalVM.Version(graalVMVersion);
                 return this;
             }
 
@@ -821,7 +835,7 @@ public class NativeImageBuildStep {
                  * Always install exit handlers, it will become the default and the flag will be deprecated
                  * in GraalVM for JDK 25 see https://github.com/quarkusio/quarkus/issues/47799
                  */
-                if (graalVMVersion.compareTo(GraalVM.Version.VERSION_25_0_0) < 0) {
+                if (graalVMVersion.compareTo(io.quarkus.runtime.graal.GraalVM.Version.VERSION_25_0_0) < 0) {
                     nativeImageArgs.add("--install-exit-handlers");
                 }
 
@@ -845,7 +859,7 @@ public class NativeImageBuildStep {
                  * @formatter:on
                  */
                 if (graalVMVersion.compareTo(GraalVM.Version.VERSION_24_2_0) >= 0
-                        && graalVMVersion.compareTo(GraalVM.Version.VERSION_25_0_0) < 0
+                        && graalVMVersion.compareTo(io.quarkus.runtime.graal.GraalVM.Version.VERSION_25_0_0) < 0
                         && (CPU.host() == CPU.x64)) {
                     addExperimentalVMOption(nativeImageArgs, "-H:+ForeignAPISupport");
                 }
@@ -911,6 +925,18 @@ public class NativeImageBuildStep {
                 if (!pie.isEmpty()) {
                     nativeImageArgs.add("-H:NativeLinkerOption=" + pie);
                 }
+                if (nativeConfig.isCreateNativeBundle()) {
+                    StringBuilder nativeBundleArg = new StringBuilder("--bundle-create");
+                    if (nativeConfig.bundle().name().isPresent()) {
+                        nativeBundleArg
+                                .append("=")
+                                .append(nativeConfig.bundle().name().get());
+                    }
+                    if (nativeConfig.bundle().dryRun()) {
+                        nativeBundleArg.append(",dry-run");
+                    }
+                    nativeImageArgs.add(nativeBundleArg.toString());
+                }
 
                 if (!nativeConfig.enableIsolates()) {
                     addExperimentalVMOption(nativeImageArgs, "-H:-SpawnIsolates");
@@ -953,6 +979,15 @@ public class NativeImageBuildStep {
                     if (!OS.WINDOWS.isCurrent() || containerBuild) {
                         // --enable-monitoring=heapdump is not supported on Windows
                         monitoringOptions.add(NativeConfig.MonitoringOption.HEAPDUMP);
+                    }
+
+                    if (graalVMVersion.compareTo(GraalVM.Version.VERSION_24_2_0) >= 0) {
+                        /*
+                         * After GraalVM/Mandrel 24.2, JCMD becomes available. The Quarkus thread dumper handles
+                         * SIGQUIT which interferes with JCMD. To avoid this problem, Quarkus must use the GraalVM
+                         * built-in thread dumper instead for versions beyond 24.2.
+                         */
+                        monitoringOptions.add(NativeConfig.MonitoringOption.THREADDUMP);
                     }
                 }
 
