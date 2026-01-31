@@ -1,6 +1,6 @@
 package io.quarkus.test.junit;
 
-import static io.quarkus.registry.ValueRegistry.RuntimeKey.key;
+import static io.quarkus.value.registry.ValueRegistry.RuntimeKey.key;
 
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
@@ -9,7 +9,7 @@ import org.junit.jupiter.api.extension.ParameterContext;
 import org.junit.jupiter.api.extension.ParameterResolutionException;
 import org.junit.jupiter.api.extension.ParameterResolver;
 
-import io.quarkus.registry.ValueRegistry;
+import io.quarkus.value.registry.ValueRegistry;
 
 /**
  * A parameter resolver for JUnit to allow the resolution of {@link ValueRegistry} and {@link ValueRegistry.RuntimeInfo}
@@ -26,7 +26,7 @@ public class ValueRegistryParameterResolver implements ParameterResolver {
         if (parameterContext.getParameter().getType().equals(ValueRegistry.class)) {
             return true;
         }
-        return valueRegistry.containsKey(key(parameterContext.getParameter().getType()));
+        return valueRegistry != null && valueRegistry.containsKey(key(parameterContext.getParameter().getType()));
     }
 
     @Override
@@ -36,6 +36,9 @@ public class ValueRegistryParameterResolver implements ParameterResolver {
         if (parameterContext.getParameter().getType().equals(ValueRegistry.class)) {
             return valueRegistry;
         }
+        if (valueRegistry == null) {
+            throw new ParameterResolutionException("Could not retrieve parameter: " + parameterContext.getParameter());
+        }
         return valueRegistry.get(key(parameterContext.getParameter().getType()));
     }
 
@@ -43,7 +46,7 @@ public class ValueRegistryParameterResolver implements ParameterResolver {
         Store store = extensionContext.getStore(Namespace.GLOBAL);
         QuarkusTestExtensionState state = store.get(QuarkusTestExtensionState.class.getName(), QuarkusTestExtensionState.class);
         if (state == null || state.getValueRegistry() == null) {
-            throw new ParameterResolutionException("Could not retrieve parameter: " + parameterContext.getParameter());
+            return null;
         }
         return state.getValueRegistry();
     }
