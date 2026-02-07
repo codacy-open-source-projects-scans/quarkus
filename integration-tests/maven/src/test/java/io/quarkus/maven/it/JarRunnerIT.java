@@ -39,6 +39,8 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.EnabledOnJre;
+import org.junit.jupiter.api.condition.JRE;
 import org.junit.jupiter.api.condition.OS;
 
 import io.quarkus.deployment.pkg.jar.FastJarFormat;
@@ -659,6 +661,49 @@ public class JarRunnerIT extends MojoTestBase {
 
     }
 
+    @Test
+    @EnabledOnJre(JRE.JAVA_25)
+    public void testThatAotFileUsable() throws Exception {
+        File testDir = initProject("projects/aot", "projects/project-aot");
+        RunningInvoker running = new RunningInvoker(testDir, false);
+
+        MavenProcessInvocationResult result = running
+                .execute(List.of("verify"), Collections.emptyMap());
+
+        await().atMost(TestUtils.getDefaultTimeout(), TimeUnit.MINUTES)
+                .until(() -> result.getProcess() != null && !result.getProcess().isAlive());
+        assertThat(running.log()).containsIgnoringCase("BUILD SUCCESS");
+        assertThat(running.log()).containsIgnoringCase("AOT file");
+        running.stop();
+
+        Path jar = testDir.toPath().toAbsolutePath()
+                .resolve(Paths.get("target/quarkus-app/quarkus-run.jar"));
+        File output = new File(testDir, "target/output.log");
+        output.createNewFile();
+
+        Process process = doLaunch(jar.getFileName(), output,
+                List.of("-XX:AOTCache=app.aot"))
+                .directory(jar.getParent().toFile()).start();
+        try {
+            // Wait until server up
+            dumpFileContentOnFailure(() -> {
+                await()
+                        .pollDelay(10, TimeUnit.SECONDS)
+                        .atMost(TestUtils.getDefaultTimeout(), TimeUnit.MINUTES)
+                        .until(() -> devModeClient.getHttpResponse("/hello", 200));
+                return null;
+            }, output, ConditionTimeoutException.class);
+
+            String logs = FileUtils.readFileToString(output, "UTF-8");
+
+            assertThat(logs).contains("rest");
+            assertThat(logs).doesNotContain("-Xlog:aot"); // this is what is printed when there is an error
+        } finally {
+            process.destroy();
+        }
+
+    }
+
     /**
      * Tests that quarkus.arc.exclude-dependency.* can be used for modules in a multimodule project
      */
@@ -762,6 +807,38 @@ public class JarRunnerIT extends MojoTestBase {
         }
     }
 
+    static void assertConfigFileWorksCorrectly(String path) {
+        try {
+            URL url = new URL("http://localhost:8080" + path + "/app/hello/greeting");
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            // the default Accept header used by HttpURLConnection is not compatible with RESTEasy negotiation as it uses q=.2
+            connection.setRequestProperty("Accept", "text/html, *; q=0.2, */*; q=0.2");
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                failConfigFilesFromTheClasspath();
+            }
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String output = br.readLine();
+                assertThat(output).isEqualTo("bonjour");
+            }
+
+            url = new URL("http://localhost:8080" + path + "/app/hello/greeting-prod");
+            connection = (HttpURLConnection) url.openConnection();
+            // the default Accept header used by HttpURLConnection is not compatible with RESTEasy negotiation as it uses q=.2
+            connection.setRequestProperty("Accept", "text/html, *; q=0.2, */*; q=0.2");
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                failConfigFilesFromTheClasspath();
+            }
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String output = br.readLine();
+                assertThat(output).isEqualTo("bonjour prod");
+            }
+        } catch (IOException e) {
+            failConfigFilesFromTheClasspath();
+        }
+    }
+
     static String performRequest(String path, int expectedCode) {
         try {
             URL url = new URL("http://localhost:8080" + path);
@@ -788,6 +865,10 @@ public class JarRunnerIT extends MojoTestBase {
 
     private static void failProtectionDomain() {
         fail("Failed to assert that the use of ProtectionDomain works correctly");
+    }
+
+    private static void failConfigFilesFromTheClasspath() {
+        fail("Failed to assert that the application properly reads config files from the classpath");
     }
 
     /**
@@ -818,7 +899,7 @@ public class JarRunnerIT extends MojoTestBase {
     }
 
     private void assertThatFastJarFormatWorks(String outputDir, String format) throws Exception {
-        File testDir = initProject("projects/rr-with-json-logging", "projects/rr-with-json-logging" + outputDir);
+        File testDir = initProject("projects/rr-with-json-logging", "projects/rr-with-json-logging" + outputDir + "-" + format);
         RunningInvoker running = new RunningInvoker(testDir, false);
 
         MavenProcessInvocationResult result = running
@@ -870,6 +951,7 @@ public class JarRunnerIT extends MojoTestBase {
             assertApplicationPropertiesSetCorrectly();
             assertResourceReadingFromClassPathWorksCorrectly("");
             assertUsingProtectionDomainWorksCorrectly("");
+            assertConfigFileWorksCorrectly("");
         } finally {
             process.destroy();
         }
