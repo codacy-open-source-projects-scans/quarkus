@@ -20,7 +20,6 @@ import org.testcontainers.utility.DockerImageName;
 import io.quarkus.datasource.common.runtime.DataSourceUtil;
 import io.quarkus.datasource.common.runtime.DatabaseKind;
 import io.quarkus.datasource.deployment.spi.DatasourceStartable;
-import io.quarkus.datasource.deployment.spi.DeferredDevServicesDatasourceProvider;
 import io.quarkus.datasource.deployment.spi.DevServicesDatasourceContainerConfig;
 import io.quarkus.datasource.deployment.spi.DevServicesDatasourceProvider;
 import io.quarkus.datasource.deployment.spi.DevServicesDatasourceProviderBuildItem;
@@ -71,7 +70,7 @@ public class DB2DevServicesProcessor {
             List<DevServicesSharedNetworkBuildItem> devServicesSharedNetworkBuildItem,
             DevServicesComposeProjectBuildItem composeProjectBuildItem,
             DevServicesConfig devServicesConfig) {
-        return new DevServicesDatasourceProviderBuildItem(DatabaseKind.DB2, new DeferredDevServicesDatasourceProvider() {
+        return new DevServicesDatasourceProviderBuildItem(DatabaseKind.DB2, new DevServicesDatasourceProvider() {
 
             @Override
             public String getFeature() {
@@ -153,6 +152,7 @@ public class DB2DevServicesProcessor {
         private final boolean podman;
 
         private final String hostName;
+        private ClassLoader creationClassloader;
 
         public QuarkusDb2Container(Optional<String> imageName, OptionalInt fixedExposedPort,
                 String defaultNetworkId, boolean useSharedNetwork, boolean podman) {
@@ -162,6 +162,23 @@ public class DB2DevServicesProcessor {
             this.useSharedNetwork = useSharedNetwork;
             this.podman = podman;
             this.hostName = ConfigureUtil.configureNetwork(this, defaultNetworkId, useSharedNetwork, "db2");
+            creationClassloader = Thread.currentThread().getContextClassLoader();
+        }
+
+        @Override
+        public void start() {
+            // Ideally StartupActionImpl would set the deployment classloader as the TCCL, but it sets the augmentation classloader as the TCCL
+            // In normal mode this doesn't matter because the augmentation classloader can see application classes, but in continuous testing/dev mode, it can't
+            // As a tactical workaround, stash away the deployment classloader and use it for the start, so that test containers classes can find application resources
+            ClassLoader orig = Thread.currentThread().getContextClassLoader();
+            try {
+                Thread.currentThread().setContextClassLoader(creationClassloader);
+                super.start();
+            } finally {
+                Thread.currentThread().setContextClassLoader(orig);
+                // Assume the same container instance won't start() twice, and null out the CL to be cautious about CL leaks
+                creationClassloader = null;
+            }
         }
 
         @Override

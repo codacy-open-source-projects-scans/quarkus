@@ -125,7 +125,7 @@
         <jacoco.agent.argLine></jacoco.agent.argLine>
 
         <asciidoctor-maven-plugin.version>2.0.0</asciidoctor-maven-plugin.version>
-        <docker-maven-plugin.version>0.48.0</docker-maven-plugin.version>
+        <docker-maven-plugin.version>0.48.1</docker-maven-plugin.version>
         <maven-invoker-plugin.version>3.9.1</maven-invoker-plugin.version>
 
         <!-- revapi API check -->
@@ -156,7 +156,7 @@
         <failsafe.argLine.additional>${surefire.argLine.additional}</failsafe.argLine.additional>
 
         <!-- google cloud functions invoker-->
-        <gcf-invoker.version>1.4.1</gcf-invoker.version>
+        <gcf-invoker.version>2.0.0</gcf-invoker.version>
         <!-- Jakarta JMS API -->
         <jakarta.jms-api.version>3.1.0</jakarta.jms-api.version>
 
