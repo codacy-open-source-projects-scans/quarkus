@@ -9,7 +9,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -21,12 +20,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
-import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
-import jakarta.enterprise.inject.Alternative;
 import jakarta.inject.Inject;
 
 import org.apache.commons.lang3.RandomStringUtils;
@@ -35,6 +31,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.config.spi.ConfigSource;
 import org.jboss.jandex.Index;
 import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
 import org.junit.platform.commons.JUnitException;
 
 import io.quarkus.bootstrap.BootstrapConstants;
@@ -59,6 +56,8 @@ import io.quarkus.test.common.PathTestHelper;
 import io.quarkus.test.common.TestClassIndexer;
 import io.quarkus.test.common.TestResourceManager;
 import io.quarkus.test.common.http.TestHTTPResourceManager;
+import io.quarkus.test.config.ValueRegistryInjector;
+import io.quarkus.value.registry.ValueRegistry;
 import io.smallrye.common.process.ProcessBuilder;
 import io.smallrye.config.SmallRyeConfig;
 
@@ -105,11 +104,14 @@ public final class IntegrationTestUtil {
     }
 
     static void doProcessTestInstance(Object testInstance, ExtensionContext context) {
+        ValueRegistry valueRegistry = context.getStore(Namespace.GLOBAL).get(ValueRegistry.class.getName(),
+                ValueRegistry.class);
+        ValueRegistryInjector.inject(testInstance, valueRegistry);
+        TestHTTPResourceManager.inject(testInstance, valueRegistry);
+
         ExtensionContext root = context.getRoot();
         ExtensionContext.Store store = root.getStore(ExtensionContext.Namespace.GLOBAL);
         QuarkusTestExtensionState state = store.get(QuarkusTestExtensionState.class.getName(), QuarkusTestExtensionState.class);
-        ValueRegistryInjector.inject(testInstance, state);
-        TestHTTPResourceManager.inject(testInstance, state.getValueRegistry());
         Object testResourceManager = state.testResourceManager;
         if (!(testResourceManager instanceof TestResourceManager)) {
             throw new RuntimeException(
@@ -122,35 +124,6 @@ public final class IntegrationTestUtil {
         Map<String, String> sysPropRestore = new HashMap<>();
         sysPropRestore.put(LaunchMode.DEVELOPMENT.getProfileKey(), System.getProperty(LaunchMode.TEST.getProfileKey()));
         return sysPropRestore;
-    }
-
-    static TestProfileAndProperties determineTestProfileAndProperties(Class<? extends QuarkusTestProfile> profile)
-            throws InstantiationException, IllegalAccessException, NoSuchMethodException, InvocationTargetException {
-        final Map<String, String> properties = new HashMap<>();
-        QuarkusTestProfile testProfile = null;
-        if (profile != null) {
-            testProfile = profile.getDeclaredConstructor().newInstance();
-            properties.putAll(testProfile.getConfigOverrides());
-            final Set<Class<?>> enabledAlternatives = testProfile.getEnabledAlternatives();
-            if (!enabledAlternatives.isEmpty()) {
-                properties.put("quarkus.arc.selected-alternatives", enabledAlternatives.stream()
-                        .peek((c) -> {
-                            if (!c.isAnnotationPresent(Alternative.class)) {
-                                throw new RuntimeException(
-                                        "Enabled alternative " + c + " is not annotated with @Alternative");
-                            }
-                        })
-                        .map(Class::getName).collect(Collectors.joining(",")));
-            }
-            final String configProfile = testProfile.getConfigProfile();
-            if (configProfile != null) {
-                properties.put(LaunchMode.NORMAL.getProfileKey(), configProfile);
-            }
-            properties.put("quarkus.config.build-time-mismatch-at-runtime", "fail");
-        }
-        // recalculate the property names that may have changed
-        ConfigProvider.getConfig().unwrap(SmallRyeConfig.class).getLatestPropertyNames();
-        return new TestProfileAndProperties(testProfile, properties);
     }
 
     static Optional<ListeningAddress> startLauncher(ArtifactLauncher<?> launcher, Map<String, String> additionalProperties)
