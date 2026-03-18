@@ -13,13 +13,13 @@ import static org.objectweb.asm.Opcodes.ACC_STATIC;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -29,6 +29,8 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import jakarta.annotation.Priority;
 
@@ -77,7 +79,6 @@ import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
 import io.quarkus.deployment.pkg.steps.NativeOrNativeSourcesBuild;
 import io.quarkus.deployment.recording.RecorderContext;
 import io.quarkus.gizmo.ClassCreator;
-import io.quarkus.gizmo.ClassOutput;
 import io.quarkus.gizmo.FieldDescriptor;
 import io.quarkus.gizmo.MethodCreator;
 import io.quarkus.gizmo.MethodDescriptor;
@@ -97,8 +98,6 @@ import io.quarkus.runtime.configuration.ConfigUtils;
 import io.quarkus.runtime.configuration.DisableableConfigSource;
 import io.quarkus.runtime.configuration.QuarkusConfigValue;
 import io.quarkus.runtime.configuration.RuntimeConfigBuilder;
-import io.quarkus.runtime.configuration.RuntimeOverrideConfigSource;
-import io.quarkus.runtime.configuration.RuntimeOverrideConfigSourceBuilder;
 import io.quarkus.runtime.configuration.StaticInitConfigBuilder;
 import io.smallrye.config.ConfigMappingInterface;
 import io.smallrye.config.ConfigMappingLoader;
@@ -185,15 +184,6 @@ public class ConfigGenerationBuildStep {
         runTimeConfigBuilder.produce(new RunTimeConfigBuilderBuildItem(builderClassName));
     }
 
-    @BuildStep(onlyIfNot = { IsProduction.class }) // for dev or test
-    void runtimeOverrideConfig(
-            BuildProducer<StaticInitConfigBuilderBuildItem> staticInitConfigBuilder,
-            BuildProducer<RunTimeConfigBuilderBuildItem> runTimeConfigBuilder) {
-        staticInitConfigBuilder
-                .produce(new StaticInitConfigBuilderBuildItem(RuntimeOverrideConfigSourceBuilder.class.getName()));
-        runTimeConfigBuilder.produce(new RunTimeConfigBuilderBuildItem(RuntimeOverrideConfigSourceBuilder.class.getName()));
-    }
-
     @BuildStep
     void generateMappings(
             NativeConfig nativeConfig,
@@ -242,7 +232,8 @@ public class ConfigGenerationBuildStep {
             BuildProducer<GeneratedClassBuildItem> generatedClass,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass) throws Exception {
 
-        Map<String, String> defaultValues = new HashMap<>();
+        // we make sure all entries to the config generation are properly sorted to make sure the build is reproducible
+        Map<String, String> defaultValues = new TreeMap<>();
         for (RunTimeConfigurationDefaultBuildItem e : runTimeDefaults) {
             defaultValues.put(e.getKey(), e.getValue());
         }
@@ -264,15 +255,17 @@ public class ConfigGenerationBuildStep {
         ignoreMappings.add(ConfigClass.configClass(CommandLineRuntimeConfig.class, "quarkus"));
         ignoreMappings.add(ConfigClass.configClass(DebugRuntimeConfig.class, "quarkus.debug"));
 
-        Set<ConfigClass> allMappings = new LinkedHashSet<>();
+        Set<ConfigClass> allMappings = new TreeSet<>(
+                Comparator.comparing((ConfigClass cc) -> cc.getType().getName()).thenComparing(ConfigClass::getPrefix));
         allMappings.addAll(staticSafeConfigMappings(configMappings));
         allMappings.addAll(runtimeConfigMappings(configMappings));
         allMappings.addAll(configItem.getReadResult().getBuildTimeRunTimeMappings());
         allMappings.addAll(configItem.getReadResult().getRunTimeMappings());
         allMappings.removeAll(ignoreMappings);
 
-        Set<ConfigClass> buildTimeRuntimeMappings = new LinkedHashSet<>(
-                configItem.getReadResult().getBuildTimeRunTimeMappings());
+        Set<ConfigClass> buildTimeRuntimeMappings = new TreeSet<>(
+                Comparator.comparing((ConfigClass cc) -> cc.getType().getName()).thenComparing(ConfigClass::getPrefix));
+        buildTimeRuntimeMappings.addAll(configItem.getReadResult().getBuildTimeRunTimeMappings());
         buildTimeRuntimeMappings.removeAll(ignoreMappings);
 
         // Shared components
@@ -308,11 +301,12 @@ public class ConfigGenerationBuildStep {
         reflectiveClass.produce(ReflectiveClassBuildItem.builder(CONFIG_STATIC_NAME).build());
 
         // For RunTime Config
-        Map<String, String> runtimeValues = new HashMap<>();
+        Map<String, String> runtimeValues = new TreeMap<>();
         for (Entry<String, ConfigValue> entry : configItem.getReadResult().getRunTimeValues().entrySet()) {
             runtimeValues.put(entry.getKey(), entry.getValue().getRawValue());
         }
-        Set<ConfigClass> runTimeMappings = new LinkedHashSet<>();
+        Set<ConfigClass> runTimeMappings = new TreeSet<>(
+                Comparator.comparing((ConfigClass cc) -> cc.getType().getName()).thenComparing(ConfigClass::getPrefix));
         runTimeMappings.addAll(runtimeConfigMappings(configMappings));
         runTimeMappings.addAll(configItem.getReadResult().getBuildTimeRunTimeMappings());
         runTimeMappings.addAll(configItem.getReadResult().getRunTimeMappings());
@@ -422,19 +416,6 @@ public class ConfigGenerationBuildStep {
         }
 
         recorder.handleConfigChange(values);
-    }
-
-    @BuildStep(onlyIfNot = { IsProduction.class })
-    public void setupConfigOverride(
-            BuildProducer<GeneratedClassBuildItem> generatedClassBuildItemBuildProducer) {
-
-        ClassOutput classOutput = new GeneratedClassGizmoAdaptor(generatedClassBuildItemBuildProducer, true);
-
-        try (ClassCreator clazz = ClassCreator.builder().classOutput(classOutput)
-                .className(RuntimeOverrideConfigSource.GENERATED_CLASS_NAME).build()) {
-            clazz.getFieldCreator(RuntimeOverrideConfigSource.FIELD_NAME, Map.class)
-                    .setModifiers(Modifier.STATIC | Modifier.PUBLIC | Modifier.VOLATILE);
-        }
     }
 
     @BuildStep

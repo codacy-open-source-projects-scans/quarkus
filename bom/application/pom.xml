@@ -50,7 +50,7 @@
         <smallrye-health.version>4.3.0</smallrye-health.version>
         <smallrye-open-api.version>4.2.4</smallrye-open-api.version>
         <smallrye-graphql.version>2.17.0</smallrye-graphql.version>
-        <smallrye-fault-tolerance.version>6.10.0</smallrye-fault-tolerance.version>
+        <smallrye-fault-tolerance.version>6.11.0</smallrye-fault-tolerance.version>
         <smallrye-jwt.version>4.6.3</smallrye-jwt.version>
         <smallrye-context-propagation.version>2.3.0</smallrye-context-propagation.version>
         <smallrye-reactive-streams-operators.version>1.0.13</smallrye-reactive-streams-operators.version>
@@ -147,7 +147,7 @@
         <aws-lambda-java-events.version>3.16.1</aws-lambda-java-events.version>
         <aws-xray.version>2.18.3</aws-xray.version>
         <cloudevents-api.version>3.0.0</cloudevents-api.version>
-        <azure-functions-java-library.version>3.2.3</azure-functions-java-library.version>
+        <azure-functions-java-library.version>3.2.4</azure-functions-java-library.version>
         <azure-functions-java-spi.version>1.1.0</azure-functions-java-spi.version>
         <kotlin.version>2.3.10</kotlin.version>
         <kotlin.coroutine.version>1.10.2</kotlin.coroutine.version>
