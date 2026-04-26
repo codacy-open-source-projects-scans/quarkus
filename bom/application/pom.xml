@@ -81,7 +81,7 @@
         <jaxb-runtime.version>4.0.6</jaxb-runtime.version>
         <asm.version>9.9.1</asm.version>
         <commons-io.version>2.21.0</commons-io.version>
-        <jboss-metadata-web.version>17.0.0</jboss-metadata-web.version>
+        <jboss-metadata-web.version>17.1.0</jboss-metadata-web.version>
         <maven-toolchain.version>3.0-alpha-2</maven-toolchain.version>
         <plexus-component-annotations.version>2.1.0</plexus-component-annotations.version>
         <!-- GraalVM sdk 23.1.2 has a minimum JDK requirement of 17+ at runtime -->
@@ -157,7 +157,7 @@
         <dekorate.version>4.1.5</dekorate.version> <!-- Please check with Java Operator SDK team before updating -->
         <maven-invoker.version>3.2.0</maven-invoker.version>
         <awaitility.version>4.3.0</awaitility.version>
-        <jboss-logmanager.version>3.2.1.Final</jboss-logmanager.version>
+        <jboss-logmanager.version>3.2.2.Final</jboss-logmanager.version>
         <flyway.version>12.0.0</flyway.version>
         <yasson.version>3.0.4</yasson.version>
         <!-- liquibase-mongodb is not released everytime with liquibase anymore, but the two versions need to be compatible -->
@@ -209,7 +209,7 @@
         <crac.version>1.5.0</crac.version>
         <sshd-common.version>2.17.1</sshd-common.version>
         <mime4j.version>0.8.12</mime4j.version>
-        <mutiny-zero.version>1.1.1</mutiny-zero.version>
+        <mutiny-zero.version>1.2.0</mutiny-zero.version>
         <pulsar-client.version>3.3.0</pulsar-client.version>
         <async-http-client.version>2.12.4</async-http-client.version>
         <!-- keep in-sync, if possible, with Micrometer registry Prometheus -->
