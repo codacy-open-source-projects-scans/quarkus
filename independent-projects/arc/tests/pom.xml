@@ -52,6 +52,11 @@
         </dependency>
 
         <dependency>
+            <groupId>org.vineflower</groupId>
+            <artifactId>vineflower</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
             <artifactId>kotlin-stdlib</artifactId>
             <version>${version.kotlin}</version>
@@ -68,6 +73,18 @@
         <dependency>
             <groupId>org.jetbrains.kotlinx</groupId>
             <artifactId>kotlinx-coroutines-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.smallrye.reactive</groupId>
+            <artifactId>mutiny</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.smallrye.reactive</groupId>
+            <artifactId>mutiny-kotlin</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -122,12 +139,16 @@
                             <!-- Replacing default-compile as it is treated specially by Maven -->
                             <execution>
                                 <id>default-compile</id>
-                                <phase>none</phase>
+                                <configuration>
+                                    <skipMain>true</skipMain>
+                                </configuration>
                             </execution>
                             <!-- Replacing default-testCompile as it is treated specially by Maven -->
                             <execution>
                                 <id>default-testCompile</id>
-                                <phase>none</phase>
+                                <configuration>
+                                    <skip>true</skip>
+                                </configuration>
                             </execution>
                             <execution>
                                 <id>java-compile</id>

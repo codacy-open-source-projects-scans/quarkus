@@ -26,9 +26,9 @@ class AddRoleResourceDecorator extends BaseAddRBACDecorator<Role, RoleBuilder> {
     }
 
     @Override
-    protected void initBuilderWithDefaults(RoleBuilder builder, Void config) {
+    protected void initBuilderWithDefaults(RoleBuilder builder) {
         updateMetadata(builder.editOrNewMetadata(), namespace)
                 .endMetadata()
-                .withRules(rules);
+                .addAllToRules(rules);
     }
 }

@@ -22,6 +22,7 @@ mandatory for contributions.
 - **`QuarkusExtensionTest`** — Used in **deployment module** tests. Creates a
   synthetic application defined in the test. This is the primary way to test
   build-time behavior. Replaces the deprecated `QuarkusUnitTest`.
+   - When writing these tests, if Quarkus configuration needs to be specified, prefer the `overrideConfigKey` and `overrideRuntimeConfigKey` methods of `QuarkusExtensionTest`   
 - **`QuarkusDevModeTest`** — Tests hot reload / dev mode behavior.
 
 ## Test Location
@@ -36,14 +37,15 @@ mandatory for contributions.
 @RegisterExtension
 static final QuarkusExtensionTest config = new QuarkusExtensionTest()
     .withApplicationRoot((jar) -> jar
-        .addClasses(MyResource.class, MyService.class)
-        .addAsResource("application.properties"));
+        .addClasses(MyResource.class, MyService.class));
 
 @Test
 void testFeature() {
     // test with RestAssured or similar
 }
 ```
+
+If the tests have to set Quarkus configuration, then using `QuarkusExtensionTest#overrideConfigKey` for build time configuration and `QuarkusExtensionTest#overrideRuntimeConfigKey` for runtime configuration is preferable. 
 
 ## Running Tests
 
@@ -104,3 +106,4 @@ run the TCKs:
 - Verify that build-time errors produce clear, actionable error messages
 - Container engine (Docker/Podman) is needed for dev-services tests
 - Parallel test execution is not supported
+- When writing a test that verifies a bug has been fixed, ensure that the test has run against the code that does not contain the fix and verify this test fails. This provides some confidence that the test does actually verify the fix; in other words, this addresses the `never trust a test you haven't seen fail` adage

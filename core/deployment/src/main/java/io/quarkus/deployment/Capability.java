@@ -8,6 +8,20 @@ public interface Capability {
     String QUARKUS_PREFIX = "io.quarkus";
 
     /**
+     * A command-line framework that controls command parsing and the
+     * application entry point. Mutually exclusive -- only one CLI
+     * framework extension (e.g. aesh or picocli) can be active.
+     */
+    String COMMAND_LINE = QUARKUS_PREFIX + ".command-line";
+
+    /**
+     * Aesh CLI framework
+     */
+    String AESH = QUARKUS_PREFIX + ".aesh";
+    String AESH_SSH = AESH + ".ssh";
+    String AESH_WEBSOCKET = AESH + ".websocket";
+
+    /**
      * A datasource connection pool implementation
      */
     String AGROAL = QUARKUS_PREFIX + ".agroal";
@@ -78,12 +92,6 @@ public interface Capability {
 
     String JWT = QUARKUS_PREFIX + ".jwt";
 
-    /**
-     * @deprecated Tika has been moved to the Quarkiverse
-     */
-    @Deprecated
-    String TIKA = QUARKUS_PREFIX + ".tika";
-
     String MONGODB_CLIENT = QUARKUS_PREFIX + ".mongodb-client";
     String MONGODB_PANACHE = QUARKUS_PREFIX + ".mongodb.panache";
     String MONGODB_PANACHE_KOTLIN = MONGODB_PANACHE + ".kotlin";
@@ -120,6 +128,8 @@ public interface Capability {
     String OPENTELEMETRY_METRICS = QUARKUS_PREFIX + ".opentelemetry.metrics";
     String OPENTELEMETRY_LOGS = QUARKUS_PREFIX + ".opentelemetry.logs";
 
+    String MICROMETER_OPENTELEMETRY = QUARKUS_PREFIX + ".micrometer.opentelemetry";
+
     String OPENSHIFT = QUARKUS_PREFIX + ".openshift";
     String OPENSHIFT_CLIENT = OPENSHIFT + ".client";
 
@@ -155,11 +165,6 @@ public interface Capability {
 
     String KAFKA = QUARKUS_PREFIX + ".kafka";
 
-    @Deprecated
-    /**
-     * @deprecated use {@link #MESSAGING} instead
-     */
-    String SMALLRYE_REACTIVE_MESSAGING = QUARKUS_PREFIX + ".smallrye.reactive.messaging";
     String MESSAGING = QUARKUS_PREFIX + ".messaging";
     String REDIS_CLIENT = QUARKUS_PREFIX + ".redis";
 
@@ -174,4 +179,6 @@ public interface Capability {
     String GRPC = QUARKUS_PREFIX + ".grpc";
 
     String WEBSOCKETS_NEXT = QUARKUS_PREFIX + ".websockets.next";
+
+    String TLS_REGISTRY = QUARKUS_PREFIX + ".tls.registry";
 }

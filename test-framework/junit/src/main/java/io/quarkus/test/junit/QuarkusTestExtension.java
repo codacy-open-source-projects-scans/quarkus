@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -396,19 +395,9 @@ public class QuarkusTestExtension extends AbstractJvmQuarkusTestExtension
             Map.Entry<Class<?>, ?> tuple = createQuarkusTestMethodContextTuple(context);
             invokeBeforeEachCallbacks(tuple.getKey(), tuple.getValue());
             String endpointPath = getEndpointPath(context, testHttpEndpointProviders);
-            if (runningQuarkusApplication != null) {
-                boolean secure = false;
-                Optional<String> insecureAllowed = runningQuarkusApplication
-                        .getConfigValue("quarkus.http.insecure-requests", String.class);
-                if (insecureAllowed.isPresent()) {
-                    secure = !insecureAllowed.get().toLowerCase(Locale.ENGLISH).equals("enabled");
-                }
-                runningQuarkusApplication.getClassLoader().loadClass(RestAssuredStateManager.class.getName())
-                        .getDeclaredMethod("setURL", boolean.class, String.class).invoke(null, secure, endpointPath);
-                runningQuarkusApplication.getClassLoader().loadClass(TestScopeManager.class.getName())
-                        .getDeclaredMethod("setup", boolean.class).invoke(null, false);
-            }
-
+            ValueRegistry valueRegistry = ValueRegistryInjector.get(context);
+            RestAssuredStateManager.setTestUri(valueRegistry, endpointPath);
+            TestScopeManager.setup(false);
         } else {
             throwBootFailureException();
         }
@@ -433,6 +422,16 @@ public class QuarkusTestExtension extends AbstractJvmQuarkusTestExtension
                 if (clazz == Object.class) {
                     break;
                 }
+            }
+        }
+        if (testHTTPEndpoint == null) {
+            Class<?> enclosing = context.getRequiredTestClass().getEnclosingClass();
+            while (enclosing != null) {
+                testHTTPEndpoint = enclosing.getAnnotation(TestHTTPEndpoint.class);
+                if (testHTTPEndpoint != null) {
+                    break;
+                }
+                enclosing = enclosing.getEnclosingClass();
             }
         }
         if (testHTTPEndpoint != null) {
@@ -602,26 +601,26 @@ public class QuarkusTestExtension extends AbstractJvmQuarkusTestExtension
         }
         boolean isNewApplication = isNewApplication(state, extensionContext.getRequiredTestClass());
 
-        QuarkusClassLoader cl = getClassLoaderFromTestClass(extensionContext.getRequiredTestClass());
+        QuarkusClassLoader incomingClassLoader = getClassLoaderFromTestClass(extensionContext.getRequiredTestClass());
 
-        CuratedApplication curatedApplication = runningQuarkusApplication != null
+        CuratedApplication previousCuratedApplication = runningQuarkusApplication != null
                 ? ((QuarkusClassLoader) runningQuarkusApplication.getClassLoader())
                         .getCuratedApplication()
                 : null;
-        boolean isSameCuratedApplication = cl.getCuratedApplication() == curatedApplication;
+        CuratedApplication incomingCuratedApplication = incomingClassLoader.getCuratedApplication();
+        boolean isSameCuratedApplication = incomingCuratedApplication == previousCuratedApplication;
 
-        if (cl.getCuratedApplication() == null) {
+        if (incomingCuratedApplication == null) {
             throw new IllegalStateException(
-                    "Internal error: ClassLoader " + cl + " does not have a linked curated application.");
+                    "Internal error: ClassLoader " + incomingClassLoader + " does not have a linked curated application.");
         }
-        cl.getCuratedApplication().setEligibleForReuse(isSameCuratedApplication);
 
         // Let's clear the class-based caches of JDK/libraries when we switch to another application
         if (!isSameCuratedApplication) {
             ClearCache.clearCaches();
         }
 
-        if (cl.isClosed()) {
+        if (incomingClassLoader.isClosed()) {
             throw new IllegalStateException(
                     "Internal error. Attempting to run tests using an application which has already been closed. Is a non-default test order being used?");
         }
@@ -791,6 +790,10 @@ public class QuarkusTestExtension extends AbstractJvmQuarkusTestExtension
                 if (outerClass.isInstance(actualTestInstance)) {
                     outerInstances.add(actualTestInstance);
                     actualTestInstance = declaredConstructor.newInstance(actualTestInstance);
+                } else if (outerClass.isInstance(outerInstances.peekLast())) {
+                    // this class is being initialized again, which happens when it has its own tests and also
+                    // encloses a nested class; its outer instance is already the innermost one on the stack
+                    actualTestInstance = declaredConstructor.newInstance(outerInstances.peekLast());
                 } else {
                     Object outerInstance = createActualTestInstance(outerClass, extensionContext, state);
                     invokeAfterConstructCallbacks(Object.class, outerInstance);
@@ -809,8 +812,7 @@ public class QuarkusTestExtension extends AbstractJvmQuarkusTestExtension
         }
     }
 
-    private Object createActualTestInstance(Class<?> testClass, ExtensionContext context, QuarkusTestExtensionState state)
-            throws IllegalAccessException, InvocationTargetException, NoSuchMethodException {
+    private Object createActualTestInstance(Class<?> testClass, ExtensionContext context, QuarkusTestExtensionState state) {
         Object testInstance = runningQuarkusApplication.instance(testClass);
 
         ValueRegistry valueRegistry = runningQuarkusApplication.valueRegistry();
@@ -818,8 +820,7 @@ public class QuarkusTestExtension extends AbstractJvmQuarkusTestExtension
         ValueRegistryInjector.inject(testInstance, valueRegistry);
         ConfigInjector.inject(testInstance, config);
         TestHTTPResourceManager.inject(testInstance, valueRegistry, config, testHttpEndpointProviders);
-
-        state.testResourceManager.getClass().getMethod("inject", Object.class).invoke(state.testResourceManager, testInstance);
+        ((TestResourceManager) state.getTestResourceManager()).inject(valueRegistry, testInstance);
         return testInstance;
     }
 
@@ -1071,7 +1072,8 @@ public class QuarkusTestExtension extends AbstractJvmQuarkusTestExtension
         } finally {
             currentTestClassStack.pop();
             if (!outerInstances.isEmpty()) {
-                actualTestInstance = outerInstances.pop();
+                // outer instances are appended outermost first, so the innermost one is at the end
+                actualTestInstance = outerInstances.removeLast();
             }
         }
     }

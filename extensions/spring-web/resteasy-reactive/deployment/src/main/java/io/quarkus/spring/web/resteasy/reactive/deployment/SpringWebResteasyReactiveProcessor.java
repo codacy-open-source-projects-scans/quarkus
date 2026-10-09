@@ -3,6 +3,7 @@ package io.quarkus.spring.web.resteasy.reactive.deployment;
 import static org.jboss.jandex.AnnotationInstance.create;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.DEFAULT_VALUE;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.REST_COOKIE_PARAM;
+import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.REST_HEADER_PARAM;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.REST_MATRIX_PARAM;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.REST_PATH_PARAM;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.REST_QUERY_PARAM;
@@ -45,11 +46,13 @@ import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.resteasy.reactive.server.spi.AnnotationsTransformerBuildItem;
 import io.quarkus.resteasy.reactive.server.spi.MethodScannerBuildItem;
+import io.quarkus.resteasy.reactive.server.spi.ResponseTypeUnwrapperBuildItem;
 import io.quarkus.resteasy.reactive.spi.AdditionalResourceClassBuildItem;
 import io.quarkus.resteasy.reactive.spi.ExceptionMapperBuildItem;
 import io.quarkus.resteasy.server.common.spi.AdditionalJaxRsResourceMethodParamAnnotations;
 import io.quarkus.spring.web.resteasy.reactive.runtime.ResponseEntityHandler;
 import io.quarkus.spring.web.resteasy.reactive.runtime.ResponseStatusHandler;
+import io.quarkus.spring.web.resteasy.reactive.runtime.SpringHeaderMapParamExtractor;
 import io.quarkus.spring.web.resteasy.reactive.runtime.SpringMapParamExtractor;
 import io.quarkus.spring.web.resteasy.reactive.runtime.SpringMultiValueListParamExtractor;
 import io.quarkus.spring.web.resteasy.reactive.runtime.SpringMultiValueMapParamExtractor;
@@ -89,6 +92,7 @@ public class SpringWebResteasyReactiveProcessor {
 
     private static final DotName HTTP_ENTITY = DotName.createSimple("org.springframework.http.HttpEntity");
     private static final DotName RESPONSE_ENTITY = DotName.createSimple("org.springframework.http.ResponseEntity");
+    private static final DotName REQUEST_ENTITY = DotName.createSimple("org.springframework.http.RequestEntity");
     private static final DotName SPRING_MULTIVALUE_MAP = DotName.createSimple("org.springframework.util.MultiValueMap");
 
     private static final String DEFAULT_NONE = "\n\t\t\n\t\t\n\uE000\uE001\uE002\n\t\t\t\t\n"; // from ValueConstants
@@ -110,6 +114,13 @@ public class SpringWebResteasyReactiveProcessor {
     public void registerStandardExceptionMappers(BuildProducer<ExceptionMapperBuildItem> producer) {
         producer.produce(new ExceptionMapperBuildItem(ResponseStatusExceptionMapper.class.getName(),
                 ResponseStatusException.class.getName(), Priorities.USER, false));
+    }
+
+    @BuildStep
+    public void registerResponseTypeUnwrappers(BuildProducer<ResponseTypeUnwrapperBuildItem> producer) {
+        producer.produce(new ResponseTypeUnwrapperBuildItem(RESPONSE_ENTITY));
+        producer.produce(new ResponseTypeUnwrapperBuildItem(REQUEST_ENTITY));
+        producer.produce(new ResponseTypeUnwrapperBuildItem(HTTP_ENTITY));
     }
 
     @BuildStep
@@ -282,7 +293,7 @@ public class SpringWebResteasyReactiveProcessor {
                             if (annotationName.equals(REQUEST_PARAM)) {
                                 jaxRsAnnotation = REST_QUERY_PARAM;
                             } else if (annotationName.equals(REQUEST_HEADER)) {
-                                jaxRsAnnotation = REST_QUERY_PARAM;
+                                jaxRsAnnotation = REST_HEADER_PARAM;
                             } else if (annotationName.equals(COOKIE_VALUE)) {
                                 jaxRsAnnotation = REST_COOKIE_PARAM;
                             } else {
@@ -458,6 +469,11 @@ public class SpringWebResteasyReactiveProcessor {
                     }
                     if (paramType.name().equals(JAVA_UTIL_MAP)) {
                         return new SpringMapParamExtractor();
+                    }
+                }
+                if (annotations.containsKey(REQUEST_HEADER)) {
+                    if (paramType.name().equals(JAVA_UTIL_MAP)) {
+                        return new SpringHeaderMapParamExtractor();
                     }
                 }
                 return null;

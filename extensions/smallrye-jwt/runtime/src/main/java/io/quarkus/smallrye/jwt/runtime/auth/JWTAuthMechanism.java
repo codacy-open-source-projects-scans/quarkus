@@ -19,6 +19,7 @@ import io.quarkus.security.identity.IdentityProviderManager;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.identity.request.AuthenticationRequest;
 import io.quarkus.security.identity.request.TokenAuthenticationRequest;
+import io.quarkus.vertx.core.runtime.ContextLocalsVertxServiceProvider;
 import io.quarkus.vertx.core.runtime.context.VertxContextSafetyToggle;
 import io.quarkus.vertx.http.runtime.security.ChallengeData;
 import io.quarkus.vertx.http.runtime.security.HttpAuthenticationMechanism;
@@ -75,7 +76,7 @@ public class JWTAuthMechanism implements HttpAuthenticationMechanism {
                 VertxContextSafetyToggle.validateContextIfExists(ERROR_MSG, ERROR_MSG);
                 final var ctx = Vertx.currentContext();
                 final var token = new JsonWebTokenCredential(jwtToken);
-                ctx.putLocal(TokenCredential.class.getName(), token);
+                ContextLocalsVertxServiceProvider.TOKEN_CREDENTIAL_LOCAL.put(ctx, token);
                 return identityProviderManager
                         .authenticate(HttpSecurityUtils.setRoutingContextAttribute(
                                 new TokenAuthenticationRequest(token), context))
@@ -83,7 +84,7 @@ public class JWTAuthMechanism implements HttpAuthenticationMechanism {
                             @Override
                             public void run() {
                                 // remove as we recommend to acquire TokenCredential via CDI
-                                ctx.removeLocal(TokenCredential.class.getName());
+                                ContextLocalsVertxServiceProvider.TOKEN_CREDENTIAL_LOCAL.remove(ctx);
                             }
                         });
             }
@@ -131,7 +132,7 @@ public class JWTAuthMechanism implements HttpAuthenticationMechanism {
         protected String getCookieValue(String cookieName) {
             String cookieHeader = httpExchange.request().headers().get(COOKIE);
 
-            if (cookieHeader != null && httpExchange.cookieCount() == 0) {
+            if (cookieHeader != null && httpExchange.request().cookieCount() == 0) {
                 Set<io.netty.handler.codec.http.cookie.Cookie> nettyCookies = ServerCookieDecoder.STRICT.decode(cookieHeader);
                 for (io.netty.handler.codec.http.cookie.Cookie cookie : nettyCookies) {
                     if (cookie.name().equals(cookieName)) {
@@ -139,7 +140,7 @@ public class JWTAuthMechanism implements HttpAuthenticationMechanism {
                     }
                 }
             }
-            Cookie cookie = httpExchange.getCookie(cookieName);
+            Cookie cookie = httpExchange.request().getCookie(cookieName);
             return cookie != null ? cookie.getValue() : null;
         }
     }

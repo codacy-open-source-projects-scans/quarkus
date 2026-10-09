@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 import org.eclipse.microprofile.rest.client.annotation.RegisterProvider;
+import org.eclipse.microprofile.rest.client.annotation.RegisterProviders;
 import org.jboss.jandex.AnnotationInstance;
 import org.jboss.jandex.ClassInfo;
 import org.jboss.jandex.DotName;
@@ -46,12 +47,6 @@ public class OidcClientFilterBuildStep {
 
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(OidcClientRequestFilter.class));
         reflectiveClass.produce(ReflectiveClassBuildItem.builder(OidcClientRequestFilter.class)
-                .reason(getClass().getName())
-                .methods().fields().build());
-
-        additionalBeans
-                .produce(AdditionalBeanBuildItem.unremovableOf(io.quarkus.oidc.client.filter.OidcClientRequestFilter.class));
-        reflectiveClass.produce(ReflectiveClassBuildItem.builder(io.quarkus.oidc.client.filter.OidcClientRequestFilter.class)
                 .reason(getClass().getName())
                 .methods().fields().build());
 
@@ -139,7 +134,8 @@ public class OidcClientFilterBuildStep {
     void registerDetectUnauthorizedResponseFilterForCustomFilters(BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
             BuildProducer<RestClientPredicateProviderBuildItem> restPredicateProvider, CombinedIndexBuildItem indexBuildItem) {
         var annotatedRestClientNames = detectCustomFiltersThatRequireResponseFilter(AbstractOidcClientRequestFilter.class,
-                RegisterProvider.class, indexBuildItem.getIndex()).stream().map(ClassInfo::name).toList();
+                RegisterProvider.class, RegisterProviders.class, indexBuildItem.getIndex()).stream().map(ClassInfo::name)
+                .toList();
         boolean detectionEnabledForCustomFilters = !annotatedRestClientNames.isEmpty();
         if (detectionEnabledForCustomFilters) {
             // test whether the provider should be added restClientClassInfo

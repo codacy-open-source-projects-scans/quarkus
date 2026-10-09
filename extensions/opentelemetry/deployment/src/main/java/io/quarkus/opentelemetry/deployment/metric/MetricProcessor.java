@@ -11,6 +11,7 @@ import org.jboss.jandex.FieldInfo;
 import org.jboss.jandex.IndexView;
 import org.jboss.jandex.MethodInfo;
 
+import io.opentelemetry.instrumentation.runtimetelemetry.internal.CpuMethods;
 import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import io.opentelemetry.sdk.metrics.export.MetricReader;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
@@ -59,15 +60,15 @@ public class MetricProcessor {
         // Find all known SpanExporters and SpanProcessors
         Collection<String> knownClasses = new HashSet<>();
         knownClasses.add(METRIC_EXPORTER.toString());
-        index.getAllKnownImplementors(METRIC_EXPORTER)
+        index.getAllKnownImplementations(METRIC_EXPORTER)
                 .forEach(classInfo -> knownClasses.add(classInfo.name().toString()));
 
         knownClasses.add(METRIC_READER.toString());
-        index.getAllKnownImplementors(METRIC_READER)
+        index.getAllKnownImplementations(METRIC_READER)
                 .forEach(classInfo -> knownClasses.add(classInfo.name().toString()));
 
         knownClasses.add(METRIC_PROCESSOR.toString());
-        index.getAllKnownImplementors(METRIC_PROCESSOR)
+        index.getAllKnownImplementations(METRIC_PROCESSOR)
                 .forEach(classInfo -> knownClasses.add(classInfo.name().toString()));
 
         Set<String> retainProducers = new HashSet<>();
@@ -105,7 +106,6 @@ public class MetricProcessor {
     @BuildStep
     void runtimeInit(BuildProducer<RuntimeInitializedClassBuildItem> runtimeReinitialized) {
         runtimeReinitialized.produce(
-                new RuntimeInitializedClassBuildItem(
-                        "io.opentelemetry.instrumentation.runtimemetrics.java8.internal.CpuMethods"));
+                new RuntimeInitializedClassBuildItem(CpuMethods.class.getName()));
     }
 }

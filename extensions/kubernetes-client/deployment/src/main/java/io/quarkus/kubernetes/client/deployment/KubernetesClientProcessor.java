@@ -29,6 +29,7 @@ import io.fabric8.kubernetes.client.http.HttpClient;
 import io.fabric8.kubernetes.client.impl.KubernetesClientImpl;
 import io.fabric8.kubernetes.client.utils.OpenIDConnectionUtils;
 import io.fabric8.kubernetes.internal.KubernetesDeserializer;
+import io.fabric8.kubernetes.model.jackson.UnwrappedTypeResolverBuilder;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.Capability;
@@ -173,7 +174,7 @@ public class KubernetesClientProcessor {
         ignoredJsonDeserializationClasses.produce(new IgnoreJsonDeserializeClassBuildItem(KUBERNETES_RESOURCE));
 
         final String[] deserializerClasses = fullIndex
-                .getAllKnownSubclasses(DotName.createSimple("com.fasterxml.jackson.databind.JsonDeserializer"))
+                .getAllKnownSubclasses(DotName.createSimple("tools.jackson.databind.ValueDeserializer"))
                 .stream()
                 .map(c -> c.name().toString())
                 .filter(s -> s.startsWith("io.fabric8.kubernetes"))
@@ -183,7 +184,7 @@ public class KubernetesClientProcessor {
                 .methods().build());
 
         final String[] serializerClasses = fullIndex
-                .getAllKnownSubclasses(DotName.createSimple("com.fasterxml.jackson.databind.JsonSerializer"))
+                .getAllKnownSubclasses(DotName.createSimple("tools.jackson.databind.ValueSerializer"))
                 .stream()
                 .map(c -> c.name().toString())
                 .filter(s -> s.startsWith("io.fabric8.kubernetes"))
@@ -197,7 +198,8 @@ public class KubernetesClientProcessor {
                         .reason(getClass().getName())
                         .methods().fields().build());
         reflectiveClasses.produce(ReflectiveClassBuildItem
-                .builder(AnyType.class, IntOrString.class, KubernetesDeserializer.class)
+                .builder(AnyType.class, IntOrString.class, KubernetesDeserializer.class,
+                        UnwrappedTypeResolverBuilder.class)
                 .reason(getClass().getName())
                 .methods().build());
 

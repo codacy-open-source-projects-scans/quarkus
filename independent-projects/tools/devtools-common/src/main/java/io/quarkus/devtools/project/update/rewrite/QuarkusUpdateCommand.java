@@ -57,6 +57,7 @@ public class QuarkusUpdateCommand {
                 runMavenUpdate(log, baseDir, rewritePluginVersion, recipesGAV, recipe, logFile, dryRun);
                 break;
             case GRADLE:
+            case GRADLE_KOTLIN_DSL:
                 runGradleUpdate(log, baseDir, rewritePluginVersion, recipesGAV, recipe, logFile, dryRun);
                 break;
             default:
@@ -143,7 +144,7 @@ public class QuarkusUpdateCommand {
     }
 
     private static void propagateSystemPropertyIfSet(String name, List<String> command) {
-        if (System.getProperties().containsKey(name)) {
+        if (System.getProperty(name) != null) {
             final StringBuilder buf = new StringBuilder();
             buf.append("-D").append(name);
             final String value = System.getProperty(name);
@@ -158,6 +159,7 @@ public class QuarkusUpdateCommand {
         List<String> command = new ArrayList<>();
         command.add(mvnBinary);
         command.add("-B");
+        command.add("-ntp");
         command.add("-e");
         command.add("process-sources");
         final String mavenSettings = getMavenSettingsArg();
@@ -174,6 +176,7 @@ public class QuarkusUpdateCommand {
         final List<String> command = new ArrayList<>();
         command.add(mvnBinary);
         command.add("-B");
+        command.add("-ntp");
         command.add("-e");
         command.add(
                 String.format("%s:%s:%s:%s", MAVEN_REWRITE_PLUGIN_GROUP, MAVEN_REWRITE_PLUGIN_ARTIFACT, rewritePluginVersion,
@@ -225,12 +228,12 @@ public class QuarkusUpdateCommand {
 
     }
 
-    private static void execute(String name, List<String> command, MessageWriter log, Path logFile, String logInfo) {
+    static void execute(String name, List<String> command, MessageWriter log, Path logFile, String logInfo) {
 
         final List<String> effectiveCommand = prepareCommand(command);
 
-        var pb = ProcessBuilder.newBuilder(command.get(0))
-                .arguments(command.subList(1, command.size()));
+        var pb = ProcessBuilder.newBuilder(effectiveCommand.get(0))
+                .arguments(effectiveCommand.subList(1, effectiveCommand.size()));
 
         try {
             if (logFile != null) {

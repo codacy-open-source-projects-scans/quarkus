@@ -7,6 +7,7 @@ import io.quarkus.security.credential.TokenCredential;
 import io.quarkus.security.identity.IdentityProviderManager;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.identity.request.TokenAuthenticationRequest;
+import io.quarkus.vertx.core.runtime.ContextLocalsVertxServiceProvider;
 import io.quarkus.vertx.core.runtime.context.VertxContextSafetyToggle;
 import io.quarkus.vertx.http.runtime.security.HttpAuthenticationMechanism;
 import io.quarkus.vertx.http.runtime.security.HttpSecurityUtils;
@@ -52,14 +53,14 @@ abstract class AbstractOidcAuthenticationMechanism {
             final var tokenCredential = (token instanceof IdTokenCredential)
                     ? new AccessTokenCredential(context.get(OidcConstants.ACCESS_TOKEN_VALUE))
                     : token;
-            ctx.putLocal(TokenCredential.class.getName(), tokenCredential);
+            ContextLocalsVertxServiceProvider.TOKEN_CREDENTIAL_LOCAL.put(ctx, tokenCredential);
             return identityProviderManager
                     .authenticate(HttpSecurityUtils.setRoutingContextAttribute(new TokenAuthenticationRequest(token), context))
                     .invoke(new Runnable() {
                         @Override
                         public void run() {
                             // remove as we recommend to acquire TokenCredential via CDI
-                            ctx.removeLocal(TokenCredential.class.getName());
+                            ContextLocalsVertxServiceProvider.TOKEN_CREDENTIAL_LOCAL.remove(ctx);
                         }
                     });
         }

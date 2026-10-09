@@ -64,7 +64,12 @@ public final class ValueResolvers {
         }
 
         public boolean appliesTo(EvalContext context) {
-            if (context.getBase() == null) {
+            Object base = context.getBase();
+            if (base == null) {
+                return false;
+            }
+            // Skip Results.NotFound - let the property-not-found-strategy handle it
+            if (Results.isNotFound(base)) {
                 return false;
             }
             String name = context.getName();
@@ -515,6 +520,30 @@ public final class ValueResolvers {
         }
 
         @Override
+        public boolean appliesTo(EvalContext context) {
+            if (super.appliesTo(context)) {
+                return true;
+            }
+            Object base = context.getBase();
+            return base instanceof CharSequence && context.getParams().size() == 1
+                    && appliesToName(context.getName());
+        }
+
+        @Override
+        public CompletionStage<Object> resolve(EvalContext context) {
+            if (context.getBase() instanceof CharSequence) {
+                return context.evaluate(context.getParams().get(0))
+                        .thenCompose(param -> {
+                            if (param == null || Results.isNotFound(param)) {
+                                return Results.notFound(context);
+                            }
+                            return CompletedStage.of(context.getBase().toString() + param.toString());
+                        });
+            }
+            return super.resolve(context);
+        }
+
+        @Override
         protected Object compute(Long op1, Long op2) {
             return op1 + op2;
         }
@@ -735,6 +764,7 @@ public final class ValueResolvers {
                         }
                     });
                 }
+                return Results.notFound(context);
             case ListResolver.TAKE:
                 if (context.getParams().size() == 1) {
                     return context.evaluate(context.getParams().get(0)).thenApply(r -> {
@@ -749,6 +779,7 @@ public final class ValueResolvers {
                         }
                     });
                 }
+                return Results.notFound(context);
             case ListResolver.TAKE_LAST:
                 if (context.getParams().size() == 1) {
                     return context.evaluate(context.getParams().get(0)).thenApply(r -> {
@@ -763,6 +794,7 @@ public final class ValueResolvers {
                         }
                     });
                 }
+                return Results.notFound(context);
             case ListResolver.FIRST:
                 if (list.isEmpty()) {
                     throw new NoSuchElementException();

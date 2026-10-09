@@ -15,8 +15,8 @@ import io.quarkus.mailer.MailTemplate;
 import io.quarkus.mailer.Mailer;
 import io.quarkus.mailer.MailerName;
 import io.quarkus.qute.CheckedTemplate;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.mutiny.core.Vertx;
-import io.vertx.mutiny.core.buffer.Buffer;
 
 @Path("/mail")
 @Produces(MediaType.TEXT_PLAIN)
@@ -25,42 +25,29 @@ public class MailResource {
     @Inject
     Mailer defaultMailer;
 
-    @MailerName("start-tls-legacy")
-    Mailer startTlsLegacyMailer;
-
     @MailerName("start-tls-registry")
     Mailer startTlsRegistryMailer;
 
     @MailerName("start-tls-registry-trust-all")
     Mailer startTlsRegistryMailerWithTrustAll;
 
-    @MailerName("start-tls-legacy-trust-all")
-    Mailer startTlsLegacyMailerWithTrustAll;
-
-    @MailerName("tls-legacy")
-    Mailer tlsLegacyMailer;
-
     @MailerName("tls-registry")
     Mailer tlsRegistryMailer;
 
-    @MailerName("tls-legacy-trust-all")
-    Mailer tlsLegacyMailerWithTrustAll;
-
     @MailerName("tls-registry-trust-all")
     Mailer tlsRegistryMailerWithTrustAll;
+
+    @MailerName("custom-credentials-provider")
+    Mailer mailerWithCustomCredentialsProvider;
 
     private Mailer select(String name) {
         if (name == null) {
             return defaultMailer;
         }
         return switch (name) {
-            case "start-tls-legacy" -> startTlsLegacyMailer;
             case "start-tls-registry" -> startTlsRegistryMailer;
             case "start-tls-registry-trust-all" -> startTlsRegistryMailerWithTrustAll;
-            case "start-tls-legacy-trust-all" -> startTlsLegacyMailerWithTrustAll;
-            case "tls-legacy" -> tlsLegacyMailer;
             case "tls-registry" -> tlsRegistryMailer;
-            case "tls-legacy-trust-all" -> tlsLegacyMailerWithTrustAll;
             case "tls-registry-trust-all" -> tlsRegistryMailerWithTrustAll;
             default -> throw new IllegalArgumentException("Unknown mailer " + name);
         };
@@ -232,4 +219,21 @@ public class MailResource {
         return "ok";
     }
 
+    @Inject
+    ChangingCredentialsProvider credentialsProvider;
+
+    /**
+     * Send a simple text email with a mailer that uses a credentials provider.
+     */
+    @GET
+    @Path("/custom-credentials-provider")
+    public String sendSimpleTextWithChangingCredentials() {
+        mailerWithCustomCredentialsProvider.send(Mail.withText("nobody@quarkus.io",
+                "simple test email",
+                "This is a simple test email.\nRegards,\nRoger the robot"));
+        mailerWithCustomCredentialsProvider.send(Mail.withText("nobody@quarkus.io",
+                "simple test email",
+                "This is a simple test email.\nRegards,\nRoger the robot"));
+        return String.valueOf(credentialsProvider.count());
+    }
 }

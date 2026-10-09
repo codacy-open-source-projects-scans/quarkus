@@ -40,6 +40,8 @@ import org.jboss.jandex.ClassInfo;
 import org.jboss.jandex.DotName;
 import org.jboss.jandex.IndexView;
 
+import io.quarkus.value.registry.ValueRegistry;
+
 /**
  * Manages {@link QuarkusTestResourceLifecycleManager}
  */
@@ -194,12 +196,12 @@ public class TestResourceManager implements Closeable {
         return allProps;
     }
 
-    public void inject(Object testInstance) {
+    public void inject(ValueRegistry valueRegistry, Object testInstance) {
         injectTestContext(testInstance, devServicesContext);
         for (TestResourceStartInfo entry : allTestResources) {
             QuarkusTestResourceLifecycleManager quarkusTestResourceLifecycleManager = entry.getTestResource();
             quarkusTestResourceLifecycleManager.inject(testInstance);
-            quarkusTestResourceLifecycleManager.inject(new DefaultTestInjector(testInstance));
+            quarkusTestResourceLifecycleManager.inject(new DefaultTestInjector(valueRegistry, testInstance));
         }
     }
 
@@ -357,7 +359,12 @@ public class TestResourceManager implements Closeable {
             Method[] annotationAttributes = entry.configAnnotation.annotationType().getDeclaredMethods();
             for (Method annotationAttribute : annotationAttributes) {
                 try {
-                    args.put(annotationAttribute.getName(), annotationAttribute.invoke(entry.configAnnotation));
+                    Object annotationValue = annotationAttribute.invoke(entry.configAnnotation);
+                    if (annotationValue.getClass().isArray()) {
+                        args.put(annotationAttribute.getName(), new TestResourceComparisonInfoArrayValue(annotationValue));
+                    } else {
+                        args.put(annotationAttribute.getName(), annotationValue);
+                    }
                 } catch (Exception e) {
                     throw new RuntimeException("Unable to extract configuration values for annotation "
                             + entry.configAnnotation.annotationType().getName(), e);
@@ -662,6 +669,57 @@ public class TestResourceManager implements Closeable {
 
     }
 
+    /**
+     * Utility record to hold an array value as the value of {@link TestResourceComparisonInfo#args()}. Annotation
+     * values are always static array values, cannot be constants, so they are always a new instance. When comparing
+     * annotations with array values, the comparison will always fail and a reload woudl be forced, even if the values
+     * of the actual arrays are equal.
+     * <p/>
+     * By wrapping arrays, we can perform a correct {@link Object#equals(Object)} comparison.
+     *
+     * @param array The array or null, must be an array instance, else an IllegalArgumentException will be thrown.
+     */
+    private record TestResourceComparisonInfoArrayValue(Object array) {
+        public TestResourceComparisonInfoArrayValue {
+            if (array == null || !array.getClass().isArray()) {
+                throw new IllegalArgumentException("Value needs to be an array");
+            }
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o)
+                return true;
+            if (!(o instanceof TestResourceComparisonInfoArrayValue(Object array1)))
+                return false;
+            return Objects.deepEquals(this.array, array1);
+        }
+
+        @Override
+        public int hashCode() {
+            if (array instanceof Object[] objArray)
+                return Arrays.deepHashCode(objArray);
+            if (array instanceof int[] intArray)
+                return Arrays.hashCode(intArray);
+            if (array instanceof byte[] byteArray)
+                return Arrays.hashCode(byteArray);
+            if (array instanceof boolean[] boolArray)
+                return Arrays.hashCode(boolArray);
+            if (array instanceof long[] longArray)
+                return Arrays.hashCode(longArray);
+            if (array instanceof char[] charArray)
+                return Arrays.hashCode(charArray);
+            if (array instanceof short[] shortArray)
+                return Arrays.hashCode(shortArray);
+            if (array instanceof float[] floatArray)
+                return Arrays.hashCode(floatArray);
+            if (array instanceof double[] doubleArray)
+                return Arrays.hashCode(doubleArray);
+
+            return Objects.hashCode(array);
+        }
+    }
+
     private static class TestResourceRunnable implements Runnable {
         private final List<TestResourceStartInfo> entries;
         private final Map<String, String> allProps;
@@ -730,10 +788,17 @@ public class TestResourceManager implements Closeable {
     static class DefaultTestInjector implements QuarkusTestResourceLifecycleManager.TestInjector {
 
         // visible for testing
+        final ValueRegistry valueRegistry;
         final Object testInstance;
 
-        private DefaultTestInjector(Object testInstance) {
+        private DefaultTestInjector(ValueRegistry valueRegistry, Object testInstance) {
+            this.valueRegistry = valueRegistry;
             this.testInstance = testInstance;
+        }
+
+        @Override
+        public ValueRegistry valueRegistry() {
+            return valueRegistry;
         }
 
         @Override

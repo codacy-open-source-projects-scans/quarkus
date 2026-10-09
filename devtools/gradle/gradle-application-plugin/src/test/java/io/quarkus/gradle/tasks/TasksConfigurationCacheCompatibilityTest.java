@@ -8,6 +8,7 @@ import static io.quarkus.gradle.QuarkusPlugin.QUARKUS_GENERATE_CODE_DEV_TASK_NAM
 import static io.quarkus.gradle.QuarkusPlugin.QUARKUS_GENERATE_CODE_TASK_NAME;
 import static io.quarkus.gradle.QuarkusPlugin.QUARKUS_GENERATE_CODE_TESTS_TASK_NAME;
 import static io.quarkus.gradle.QuarkusPlugin.QUARKUS_SHOW_EFFECTIVE_CONFIG_TASK_NAME;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -72,12 +73,12 @@ public class TasksConfigurationCacheCompatibilityTest {
         FileUtils.copyDirectory(new File(url.toURI()), testProjectDir.toFile());
         FileUtils.copyFile(new File("../gradle.properties"), testProjectDir.resolve("gradle.properties").toFile());
 
-        buildResult(":help", "--configuration-cache");
+        buildResult(":help", "--configuration-cache", "-Dorg.gradle.unsafe.isolated-projects=true");
 
-        BuildResult firstBuild = buildResult(taskName, "-Dorg.gradle.unsafe.isolated-projects=true");
+        BuildResult firstBuild = buildResult(taskName, "--configuration-cache", "-Dorg.gradle.unsafe.isolated-projects=true");
         assertTrue(firstBuild.getOutput().contains("Configuration cache entry stored"));
 
-        BuildResult secondBuild = buildResult(taskName, "-Dorg.gradle.unsafe.isolated-projects=true");
+        BuildResult secondBuild = buildResult(taskName, "--configuration-cache", "-Dorg.gradle.unsafe.isolated-projects=true");
         assertTrue(secondBuild.getOutput().contains("Reusing configuration cache."));
     }
 
@@ -107,6 +108,24 @@ public class TasksConfigurationCacheCompatibilityTest {
 
     }
 
+    /**
+     * The {@code Task.project} accessor is deprecated when invoked at execution time and is scheduled for removal in
+     * Gradle 10. Tasks must therefore not call {@code getProject()} from their {@code @TaskAction} (or anything it
+     * reaches). This guards against reintroducing such a call in the (non configuration cache compatible) deploy task.
+     */
+    @ParameterizedTest
+    @MethodSource("nonCompatibleQuarkusBuildTasks")
+    public void tasksDoNotInvokeTaskProjectAtExecutionTime(String taskName) throws IOException, URISyntaxException {
+        URL url = getClass().getClassLoader().getResource("io/quarkus/gradle/tasks/configurationcache/main");
+        FileUtils.copyDirectory(new File(url.toURI()), testProjectDir.toFile());
+        FileUtils.copyFile(new File("../gradle.properties"), testProjectDir.resolve("gradle.properties").toFile());
+
+        BuildResult build = buildResult(taskName, Arrays.asList("--no-configuration-cache", "--warning-mode", "all"));
+        assertTrue(build.getOutput().contains("BUILD SUCCESSFUL"));
+        assertFalse(build.getOutput().contains("Invocation of Task.project at execution time has been deprecated"),
+                "Tasks must not invoke Task.project at execution time (removed in Gradle 10)");
+    }
+
     @Test
     public void configurationCacheIsReusedWhenUnrelatedSystemPropertyChanges() throws IOException, URISyntaxException {
         URL url = getClass().getClassLoader().getResource("io/quarkus/gradle/tasks/configurationcache/main");
@@ -132,6 +151,10 @@ public class TasksConfigurationCacheCompatibilityTest {
 
     private BuildResult buildResult(String task, String configurationCacheCommand) {
         return buildResult(task, List.of(configurationCacheCommand));
+    }
+
+    private BuildResult buildResult(String task, String firstExtraArg, String secondExtraArg) {
+        return buildResult(task, List.of(firstExtraArg, secondExtraArg));
     }
 
     private BuildResult buildResult(String task, List<String> extraArgs) {

@@ -11,6 +11,7 @@ metadata:
   - "jackson"
   - "rest"
   - "jakarta-rest"
+  guide: "https://quarkus.io/guides/resteasy"
   categories:
   - "web"
   - "serialization"
@@ -20,7 +21,6 @@ metadata:
     languages:
       - "java"
       - "kotlin"
-      - "scala"
     artifact: "io.quarkus:quarkus-project-core-extension-codestarts"
   config:
   - "quarkus.resteasy."

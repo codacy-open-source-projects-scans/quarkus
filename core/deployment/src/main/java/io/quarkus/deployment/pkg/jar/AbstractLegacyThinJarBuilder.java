@@ -24,6 +24,7 @@ import io.quarkus.deployment.builditem.ApplicationArchivesBuildItem;
 import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.MainClassBuildItem;
 import io.quarkus.deployment.builditem.TransformedClassesBuildItem;
 import io.quarkus.deployment.jvm.ResolvedJVMRequirements;
@@ -48,12 +49,14 @@ public abstract class AbstractLegacyThinJarBuilder<T extends BuildItem> extends 
             TransformedClassesBuildItem transformedClasses,
             List<GeneratedClassBuildItem> generatedClasses,
             List<GeneratedResourceBuildItem> generatedResources,
+            List<GeneratedServiceProviderBuildItem> generatedServiceProviders,
             Set<ArtifactKey> removedArtifactKeys,
             ExecutorService executorService,
             ResolvedJVMRequirements jvmRequirements,
             JarTreeShakeBuildItem treeShakeResult) {
         super(curateOutcome, outputTarget, applicationInfo, packageConfig, mainClass, applicationArchives, transformedClasses,
-                generatedClasses, generatedResources, removedArtifactKeys, executorService, jvmRequirements);
+                generatedClasses, generatedResources, generatedServiceProviders, removedArtifactKeys, executorService,
+                jvmRequirements);
         this.treeShakeResult = treeShakeResult;
     }
 
@@ -61,7 +64,7 @@ public abstract class AbstractLegacyThinJarBuilder<T extends BuildItem> extends 
 
     protected void doBuild(Path runnerJar, Path libDir) throws IOException {
         try (ArchiveCreator archiveCreator = new ParallelCommonsCompressArchiveCreator(runnerJar,
-                packageConfig.jar().compress(), packageConfig.outputTimestamp().orElse(null),
+                packageConfig.jar().compress(), packageConfig.outputTimestamp(),
                 executorService)) {
             final StringBuilder classPath = new StringBuilder();
             final Map<String, List<byte[]>> services = new HashMap<>();
@@ -109,35 +112,8 @@ public abstract class AbstractLegacyThinJarBuilder<T extends BuildItem> extends 
                     if (transformedFromThisArchive != null && !transformedFromThisArchive.isEmpty()) {
                         removedEntries.addAll(transformedFromThisArchive);
                     }
-                    // When tree shake level is CLASSES, add non-reachable classes to removal set
-                    if (treeShakeResult != null
-                            && treeShakeResult.isClassesShaken()) {
-                        try (var pathTree = appDep.getContentTree().open()) {
-                            pathTree.walkRaw(visit -> {
-                                String rel = visit.getRelativePath("/");
-                                String classRel = rel;
-                                if (rel.startsWith("META-INF/versions/")) {
-                                    String afterVersions = rel.substring("META-INF/versions/".length());
-                                    int slash = afterVersions.indexOf('/');
-                                    if (slash > 0) {
-                                        classRel = afterVersions.substring(slash + 1);
-                                    } else {
-                                        return;
-                                    }
-                                }
-                                if (classRel.endsWith(".class") && !classRel.equals("module-info.class")) {
-                                    String className = classRel.substring(0, classRel.length() - 6).replace('/', '.');
-                                    if (!treeShakeResult.getReachableClassNames().contains(className)) {
-                                        int dollarIdx = className.indexOf('$');
-                                        if (dollarIdx < 0
-                                                || !treeShakeResult.getReachableClassNames()
-                                                        .contains(className.substring(0, dollarIdx))) {
-                                            removedEntries.add(rel);
-                                        }
-                                    }
-                                }
-                            });
-                        }
+                    if (treeShakeResult != null) {
+                        treeShakeResult.collectUnreachableEntries(appDep, removedEntries);
                     }
                     final String fileName;
                     if (removedEntries.isEmpty()) {

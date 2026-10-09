@@ -10,8 +10,6 @@ import java.util.stream.Stream;
 
 import jakarta.transaction.Status;
 import jakarta.transaction.Synchronization;
-import jakarta.transaction.SystemException;
-import jakarta.transaction.TransactionManager;
 import jakarta.transaction.TransactionSynchronizationRegistry;
 
 import org.bson.BsonDocument;
@@ -36,7 +34,6 @@ import io.quarkus.arc.InstanceHandle;
 import io.quarkus.mongodb.panache.common.MongoEntity;
 import io.quarkus.mongodb.panache.common.binder.NativeQueryBinder;
 import io.quarkus.mongodb.panache.common.binder.PanacheQlQueryBinder;
-import io.quarkus.mongodb.panache.common.transaction.MongoTransactionException;
 import io.quarkus.mongodb.runtime.MongoClientBeanUtil;
 import io.quarkus.panache.common.Parameters;
 import io.quarkus.panache.common.Sort;
@@ -353,7 +350,6 @@ public abstract class MongoOperations<QueryType, UpdateType> {
 
     private ClientSession registerClientSession(MongoEntity mongoEntity,
             TransactionSynchronizationRegistry registry) {
-        TransactionManager transactionManager = Arc.container().instance(TransactionManager.class).get();
         MongoClient client = MongoClientBeanUtil.mongoClient(BeanUtils.beanName(mongoEntity));
         ClientSession clientSession = client.startSession();
         clientSession.startTransaction();//TODO add txoptions from annotation
@@ -364,23 +360,19 @@ public abstract class MongoOperations<QueryType, UpdateType> {
             }
 
             @Override
-            public void afterCompletion(int i) {
-                try {
-                    if (transactionManager.getStatus() == Status.STATUS_ROLLEDBACK) {
-                        try {
-                            clientSession.abortTransaction();
-                        } finally {
-                            clientSession.close();
-                        }
-                    } else {
-                        try {
-                            clientSession.commitTransaction();
-                        } finally {
-                            clientSession.close();
-                        }
+            public void afterCompletion(int status) {
+                if (status == Status.STATUS_COMMITTED) {
+                    try {
+                        clientSession.commitTransaction();
+                    } finally {
+                        clientSession.close();
                     }
-                } catch (SystemException e) {
-                    throw new MongoTransactionException(e);
+                } else {
+                    try {
+                        clientSession.abortTransaction();
+                    } finally {
+                        clientSession.close();
+                    }
                 }
             }
         });
@@ -436,8 +428,7 @@ public abstract class MongoOperations<QueryType, UpdateType> {
     }
 
     public QueryType find(Class<?> entityClass, String query, Sort sort, Object... params) {
-        String bindQuery = bindFilter(entityClass, query, params);
-        Bson docQuery = Document.parse(bindQuery);
+        Bson docQuery = bindFilter(entityClass, query, params);
         Bson docSort = sortToDocument(sort);
         MongoCollection collection = mongoCollection(entityClass);
         ClientSession session = getSession(entityClass);
@@ -448,8 +439,8 @@ public abstract class MongoOperations<QueryType, UpdateType> {
      * We should have a query like <code>{'firstname': ?1, 'lastname': ?2}</code> for native one
      * and like <code>firstname = ?1</code> for PanacheQL one.
      */
-    public String bindFilter(Class<?> clazz, String query, Object[] params) {
-        String bindQuery = bindQuery(clazz, query, params);
+    public Bson bindFilter(Class<?> clazz, String query, Object[] params) {
+        Bson bindQuery = bindQuery(clazz, query, params);
         LOGGER.debug(bindQuery);
         return bindQuery;
     }
@@ -458,8 +449,8 @@ public abstract class MongoOperations<QueryType, UpdateType> {
      * We should have a query like <code>{'firstname': :firstname, 'lastname': :lastname}</code> for native one
      * and like <code>firstname = :firstname and lastname = :lastname</code> for PanacheQL one.
      */
-    public String bindFilter(Class<?> clazz, String query, Map<String, Object> params) {
-        String bindQuery = bindQuery(clazz, query, params);
+    public Bson bindFilter(Class<?> clazz, String query, Map<String, Object> params) {
+        Bson bindQuery = bindQuery(clazz, query, params);
         LOGGER.debug(bindQuery);
         return bindQuery;
     }
@@ -469,10 +460,10 @@ public abstract class MongoOperations<QueryType, UpdateType> {
      * and like <code>firstname = ?1 and lastname = ?2</code> for PanacheQL one.
      * As update document needs an update operator, we add <code>$set</code> if none is provided.
      */
-    String bindUpdate(Class<?> clazz, String query, Object[] params) {
-        String bindUpdate = bindQuery(clazz, query, params);
+    Bson bindUpdate(Class<?> clazz, String query, Object[] params) {
+        Bson bindUpdate = bindUpdateQuery(clazz, query, params);
         if (!containsUpdateOperator(query)) {
-            bindUpdate = "{'$set':" + bindUpdate + "}";
+            bindUpdate = new Document("$set", bindUpdate);
         }
         LOGGER.debug(bindUpdate);
         return bindUpdate;
@@ -483,10 +474,10 @@ public abstract class MongoOperations<QueryType, UpdateType> {
      * and like <code>firstname = :firstname and lastname = :lastname</code> for PanacheQL one.
      * As update document needs an update operator, we add <code>$set</code> if none is provided.
      */
-    String bindUpdate(Class<?> clazz, String query, Map<String, Object> params) {
-        String bindUpdate = bindQuery(clazz, query, params);
+    Bson bindUpdate(Class<?> clazz, String query, Map<String, Object> params) {
+        Bson bindUpdate = bindUpdateQuery(clazz, query, params);
         if (!containsUpdateOperator(query)) {
-            bindUpdate = "{'$set':" + bindUpdate + "}";
+            bindUpdate = new Document("$set", bindUpdate);
         }
         LOGGER.debug(bindUpdate);
         return bindUpdate;
@@ -501,30 +492,48 @@ public abstract class MongoOperations<QueryType, UpdateType> {
         return false;
     }
 
-    private String bindQuery(Class<?> clazz, String query, Object[] params) {
-        String bindQuery = null;
+    private Bson bindQuery(Class<?> clazz, String query, Object[] params) {
         //determine the type of the query
         if (query.charAt(0) == '{') {
             //this is a native query
-            bindQuery = NativeQueryBinder.bindQuery(query, params);
+            return NativeQueryBinder.bindQuery(query, params);
         } else {
             //this is a PanacheQL query
-            bindQuery = PanacheQlQueryBinder.bindQuery(clazz, query, params);
+            return PanacheQlQueryBinder.bindQuery(clazz, query, params);
         }
-        return bindQuery;
     }
 
-    private String bindQuery(Class<?> clazz, String query, Map<String, Object> params) {
-        String bindQuery = null;
+    private Bson bindQuery(Class<?> clazz, String query, Map<String, Object> params) {
         //determine the type of the query
         if (query.charAt(0) == '{') {
             //this is a native query
-            bindQuery = NativeQueryBinder.bindQuery(query, params);
+            return NativeQueryBinder.bindQuery(query, params);
         } else {
             //this is a PanacheQL query
-            bindQuery = PanacheQlQueryBinder.bindQuery(clazz, query, params);
+            return PanacheQlQueryBinder.bindQuery(clazz, query, params);
         }
-        return bindQuery;
+    }
+
+    private Bson bindUpdateQuery(Class<?> clazz, String update, Object[] params) {
+        //determine the type of the update
+        if (update.charAt(0) == '{') {
+            //this is a native update
+            return NativeQueryBinder.bindQuery(update, params);
+        } else {
+            //this is a PanacheQL update
+            return PanacheQlQueryBinder.bindUpdate(clazz, update, params);
+        }
+    }
+
+    private Bson bindUpdateQuery(Class<?> clazz, String update, Map<String, Object> params) {
+        //determine the type of the update
+        if (update.charAt(0) == '{') {
+            //this is a native update
+            return NativeQueryBinder.bindQuery(update, params);
+        } else {
+            //this is a PanacheQL update
+            return PanacheQlQueryBinder.bindUpdate(clazz, update, params);
+        }
     }
 
     public QueryType find(Class<?> entityClass, String query, Map<String, Object> params) {
@@ -532,8 +541,7 @@ public abstract class MongoOperations<QueryType, UpdateType> {
     }
 
     public QueryType find(Class<?> entityClass, String query, Sort sort, Map<String, Object> params) {
-        String bindQuery = bindFilter(entityClass, query, params);
-        Bson docQuery = Document.parse(bindQuery);
+        Bson docQuery = bindFilter(entityClass, query, params);
         Bson docSort = sortToDocument(sort);
         MongoCollection collection = mongoCollection(entityClass);
         ClientSession session = getSession(entityClass);
@@ -684,8 +692,7 @@ public abstract class MongoOperations<QueryType, UpdateType> {
     }
 
     public long count(Class<?> entityClass, String query, Object... params) {
-        String bindQuery = bindFilter(entityClass, query, params);
-        BsonDocument docQuery = BsonDocument.parse(bindQuery);
+        Bson docQuery = bindFilter(entityClass, query, params);
         MongoCollection collection = mongoCollection(entityClass);
 
         ClientSession session = getSession(entityClass);
@@ -693,8 +700,7 @@ public abstract class MongoOperations<QueryType, UpdateType> {
     }
 
     public long count(Class<?> entityClass, String query, Map<String, Object> params) {
-        String bindQuery = bindFilter(entityClass, query, params);
-        BsonDocument docQuery = BsonDocument.parse(bindQuery);
+        Bson docQuery = bindFilter(entityClass, query, params);
         MongoCollection collection = mongoCollection(entityClass);
 
         ClientSession session = getSession(entityClass);
@@ -728,8 +734,7 @@ public abstract class MongoOperations<QueryType, UpdateType> {
     }
 
     public long delete(Class<?> entityClass, String query, Object... params) {
-        String bindQuery = bindFilter(entityClass, query, params);
-        BsonDocument docQuery = BsonDocument.parse(bindQuery);
+        Bson docQuery = bindFilter(entityClass, query, params);
         MongoCollection collection = mongoCollection(entityClass);
         ClientSession session = getSession(entityClass);
         return session == null ? collection.deleteMany(docQuery).getDeletedCount()
@@ -737,8 +742,7 @@ public abstract class MongoOperations<QueryType, UpdateType> {
     }
 
     public long delete(Class<?> entityClass, String query, Map<String, Object> params) {
-        String bindQuery = bindFilter(entityClass, query, params);
-        BsonDocument docQuery = BsonDocument.parse(bindQuery);
+        Bson docQuery = bindFilter(entityClass, query, params);
         MongoCollection collection = mongoCollection(entityClass);
         ClientSession session = getSession(entityClass);
         return session == null ? collection.deleteMany(docQuery).getDeletedCount()
@@ -774,14 +778,12 @@ public abstract class MongoOperations<QueryType, UpdateType> {
     }
 
     private UpdateType executeUpdate(Class<?> entityClass, String update, Object... params) {
-        String bindUpdate = bindUpdate(entityClass, update, params);
-        Bson docUpdate = Document.parse(bindUpdate);
+        Bson docUpdate = bindUpdate(entityClass, update, params);
         return createUpdate(mongoCollection(entityClass), entityClass, docUpdate);
     }
 
     private UpdateType executeUpdate(Class<?> entityClass, String update, Map<String, Object> params) {
-        String bindUpdate = bindUpdate(entityClass, update, params);
-        Bson docUpdate = Document.parse(bindUpdate);
+        Bson docUpdate = bindUpdate(entityClass, update, params);
         return createUpdate(mongoCollection(entityClass), entityClass, docUpdate);
     }
 

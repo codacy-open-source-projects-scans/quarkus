@@ -11,8 +11,10 @@ import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.PreInitBuildItem;
 import io.quarkus.deployment.builditem.PreInitRunnableBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ConstantBootstrapBuildItem;
 import io.quarkus.deployment.pkg.AotJarEnabled;
 import io.quarkus.gizmo.MethodDescriptor;
 import io.quarkus.gizmo2.ClassOutput;
@@ -40,8 +42,11 @@ public class PreInitBuildStep {
     @BuildStep(onlyIf = AotJarEnabled.class)
     PreInitBuildItem executePreInitTasks(List<PreInitRunnableBuildItem> preInitRunnables,
             BuildProducer<GeneratedClassBuildItem> generatedClasses,
-            BuildProducer<GeneratedResourceBuildItem> generatedResources) {
-        ClassOutput output = new GeneratedClassGizmo2Adaptor(generatedClasses, generatedResources, false);
+            BuildProducer<GeneratedResourceBuildItem> generatedResources,
+            BuildProducer<GeneratedServiceProviderBuildItem> generatedServiceProviders,
+            BuildProducer<ConstantBootstrapBuildItem> constantBootstraps) {
+        ClassOutput output = new GeneratedClassGizmo2Adaptor(generatedClasses, generatedResources, generatedServiceProviders,
+                constantBootstraps, false);
         Gizmo gizmo = Gizmo.create(output)
                 .withDebugInfo(false)
                 .withParameters(false);

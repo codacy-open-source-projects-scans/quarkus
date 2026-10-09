@@ -23,7 +23,6 @@ import static org.jboss.resteasy.reactive.common.processor.EndpointIndexer.CDI_W
 import static org.jboss.resteasy.reactive.common.processor.JandexUtil.isImplementorOf;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.APPLICATION;
 import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.BLOCKING;
-import static org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames.REQUEST_SCOPED;
 import static org.jboss.resteasy.reactive.common.processor.scanning.ResteasyReactiveScanner.BUILTIN_HTTP_ANNOTATIONS_TO_METHOD;
 
 import java.lang.annotation.RetentionPolicy;
@@ -55,7 +54,6 @@ import org.jboss.jandex.AnnotationInstance;
 import org.jboss.jandex.AnnotationTarget;
 import org.jboss.jandex.AnnotationValue;
 import org.jboss.jandex.ClassInfo;
-import org.jboss.jandex.CompositeIndex;
 import org.jboss.jandex.DotName;
 import org.jboss.jandex.IndexView;
 import org.jboss.jandex.MethodInfo;
@@ -88,10 +86,13 @@ import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.ExtensionSslNativeSupportBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
+import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.LaunchModeBuildItem;
 import io.quarkus.deployment.builditem.RunTimeConfigBuilderBuildItem;
 import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
 import io.quarkus.deployment.builditem.StaticInitConfigBuilderBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ConstantBootstrapBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ServiceProviderBuildItem;
 import io.quarkus.deployment.execannotations.ExecutionModelAnnotationsAllowedBuildItem;
@@ -134,12 +135,14 @@ class RestClientReactiveProcessor {
     private static final DotName REST_CLIENT = DotName.createSimple(RestClient.class.getName());
     private static final DotName INJECT_MOCK = DotName.createSimple("io.quarkus.test.InjectMock");
     private static final DotName KOTLIN_METADATA_ANNOTATION = DotName.createSimple("kotlin.Metadata");
+    private static final DotName URL = DotName.createSimple("io.quarkus.rest.client.reactive.Url");
 
     private static final String ENABLE_COMPRESSION = "quarkus.http.enable-compression";
     private static final String KOTLIN_INTERFACE_DEFAULT_IMPL_SUFFIX = "$DefaultImpls";
 
     private static final Set<DotName> SKIP_COPYING_ANNOTATIONS_TO_GENERATED_CLASS = Set.of(
             REGISTER_REST_CLIENT,
+            REST_CLIENT,
             REGISTER_PROVIDER,
             REGISTER_PROVIDERS,
             CLIENT_HEADER_PARAM,
@@ -241,7 +244,7 @@ class RestClientReactiveProcessor {
         enrichers.produce(new JaxrsClientReactiveEnricherBuildItem(new MicroProfileRestClientEnricher()));
     }
 
-    private void searchForJaxRsMethods(List<MethodInfo> listOfKnownMethods, ClassInfo startingInterface, CompositeIndex index) {
+    private void searchForJaxRsMethods(List<MethodInfo> listOfKnownMethods, ClassInfo startingInterface, IndexView index) {
         for (MethodInfo method : startingInterface.methods()) {
             if (isRestMethod(method)) {
                 listOfKnownMethods.add(method);
@@ -310,6 +313,8 @@ class RestClientReactiveProcessor {
             List<ClientResponseFilterBuildItem> clientResponseFilters,
             BuildProducer<GeneratedBeanBuildItem> generatedBeansProducer,
             BuildProducer<GeneratedClassBuildItem> generatedClassesProducer,
+            BuildProducer<GeneratedResourceBuildItem> generatedResourcesProducer,
+            BuildProducer<ConstantBootstrapBuildItem> constantBootstraps,
             BuildProducer<UnremovableBeanBuildItem> unremovableBeansProducer,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClassesProducer,
             BuildProducer<ExecutionModelAnnotationsAllowedBuildItem> executionModelAnnotationsAllowedProducer,
@@ -366,7 +371,8 @@ class RestClientReactiveProcessor {
 
         MultivaluedMap<String, GeneratedClassResult> generatedProviders = new QuarkusMultivaluedHashMap<>();
         Gizmo classGizmo = Gizmo
-                .create(new GeneratedClassGizmo2Adaptor(generatedClassesProducer, null, true));
+                .create(new GeneratedClassGizmo2Adaptor(generatedClassesProducer, generatedResourcesProducer,
+                        null, constantBootstraps, true));
         populateClientExceptionMapperFromAnnotations(index, classGizmo, reflectiveClassesProducer,
                 executionModelAnnotationsAllowedProducer)
                 .forEach(generatedProviders::add);
@@ -549,10 +555,10 @@ class RestClientReactiveProcessor {
             CombinedIndexBuildItem combinedIndexBuildItem,
             RestClientsBuildTimeConfig clientsConfig,
             BuildProducer<RegisteredRestClientBuildItem> producer) {
-        CompositeIndex index = CompositeIndex.create(combinedIndexBuildItem.getIndex());
+        IndexView index = combinedIndexBuildItem.getIndex();
         Set<DotName> seen = new HashSet<>();
 
-        List<AnnotationInstance> actualInstances = index.getAnnotations(REGISTER_REST_CLIENT);
+        Collection<AnnotationInstance> actualInstances = index.getAnnotations(REGISTER_REST_CLIENT);
         for (AnnotationInstance instance : actualInstances) {
             AnnotationTarget annotationTarget = instance.target();
             ClassInfo classInfo = annotationTarget.asClass();
@@ -596,11 +602,13 @@ class RestClientReactiveProcessor {
     void generateRestClientConfigBuilder(
             List<RegisteredRestClientBuildItem> restClients,
             BuildProducer<GeneratedClassBuildItem> generatedClass,
+            BuildProducer<GeneratedResourceBuildItem> generatedResource,
+            BuildProducer<GeneratedServiceProviderBuildItem> generatedServiceProvider,
             BuildProducer<StaticInitConfigBuilderBuildItem> staticInitConfigBuilder,
             BuildProducer<RunTimeConfigBuilderBuildItem> runTimeConfigBuilder) {
 
         RestClientConfigUtils.generateRestClientConfigBuilder(toRegisteredRestClients(restClients), generatedClass,
-                staticInitConfigBuilder, runTimeConfigBuilder);
+                generatedResource, generatedServiceProvider, staticInitConfigBuilder, runTimeConfigBuilder);
     }
 
     @BuildStep
@@ -617,7 +625,7 @@ class RestClientReactiveProcessor {
             RestClientRecorder recorder,
             ShutdownContextBuildItem shutdown) {
 
-        CompositeIndex index = CompositeIndex.create(combinedIndexBuildItem.getIndex());
+        IndexView index = combinedIndexBuildItem.getIndex();
 
         Set<DotName> requestedRestClientMocks = Collections.emptySet();
         if (launchMode.getLaunchMode() == LaunchMode.TEST) {
@@ -668,8 +676,7 @@ class RestClientReactiveProcessor {
                     .orElse(BuiltinScope.APPLICATION).getInfo();
 
             Optional<String> baseUri = registerRestClient.getDefaultBaseUri();
-            boolean lazyDelegate = scope.getDotName().equals(REQUEST_SCOPED)
-                    || requestedRestClientMocks.contains(jaxrsInterface.name());
+            boolean lazyDelegate = requestedRestClientMocks.contains(jaxrsInterface.name());
 
             final String configKeyValue = configKey.orElse(null);
             final String baseUriValue = baseUri.orElse("");
@@ -820,6 +827,15 @@ class RestClientReactiveProcessor {
         }
 
         recorder.setBlockingClassNames(blockingClassNames);
+
+        Set<String> interfacesWithUrlParam = new HashSet<>();
+        for (AnnotationInstance urlAnnotation : index.getAnnotations(URL)) {
+            if (urlAnnotation.target().kind() == AnnotationTarget.Kind.METHOD_PARAMETER) {
+                interfacesWithUrlParam.add(
+                        urlAnnotation.target().asMethodParameter().method().declaringClass().name().toString());
+            }
+        }
+        recorder.setInterfacesWithUrlParam(interfacesWithUrlParam);
 
         if (LaunchMode.current() == LaunchMode.DEVELOPMENT) {
             recorder.setConfigKeys(configKeys);

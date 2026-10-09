@@ -70,6 +70,12 @@ If you change a runtime module, rebuild its deployment module too.
 | `-Dincremental` | Only build changed modules |
 | `-Dtest-containers -Dstart-containers` | Auto-start containers for tests (always use when running tests) |
 
+**Do NOT run tests from multiple modules in parallel.** The Quarkus core
+repository does not support parallel testing — there will be port conflicts.
+Do not use Maven's parallel build flags (`-T`, `-T1C`, `--threads`) when
+running tests, and do not launch multiple `./mvnw` test invocations
+concurrently. Run test modules sequentially.
+
 **Do NOT use `-Dno-format`** to skip formatting checks. Formatting and
 import sorting are applied automatically during compilation — there is no
 need for a separate step. Let the build fix formatting for you.
@@ -102,13 +108,17 @@ need for a separate step. Let the build fix formatting for you.
 Detailed guidance is available in `.agents/skills/` for specific tasks.
 Consult the relevant skill when you are about to do that type of work:
 
-| Skill | When to use |
-|-------|-------------|
-| `writing-build-steps` | Creating or modifying `@BuildStep` methods, build items, or recorders |
-| `writing-tests` | Creating or modifying tests for Quarkus extensions |
-| `working-with-config` | Creating or modifying `@ConfigMapping` configuration interfaces |
+| Skill | When to use                                                                           |
+|-------|---------------------------------------------------------------------------------------|
+| `writing-build-steps` | Creating or modifying `@BuildStep` methods, build items, or recorders                 |
+| `writing-tests` | Creating or modifying tests for Quarkus extensions                                    |
+| `working-with-config` | Creating or modifying `@ConfigMapping` configuration interfaces                       |
 | `classloading-and-runtime-dev` | Working with runtime-dev modules, conditional dependencies, or debugging classloading |
-| `creating-extensions` | Creating a new extension or understanding the full module layout |
-| `coding-style` | Code formatting, visibility, naming conventions, and logging |
-| `building-and-testing` | Maven build commands, flags, incremental builds, and build rules |
-| `pull-requests` | PR title/description conventions, commit hygiene, labels, and contribution rules |
+| `creating-extensions` | Creating a new extension or understanding the full module layout                      |
+| `coding-style` | Code formatting, visibility, naming conventions, and logging                          |
+| `building-and-testing` | Maven build commands, flags, incremental builds, and build rules                      |
+| `pull-requests` | PR title/description conventions, commit hygiene, labels, and contribution rules      |
+| `writing-extension-devui` | Writing a Dev UI for a Quarkus extension                                              |
+| `building-docs` | Building, previewing, or testing documentation changes locally                        |
+| `manage-deprecations` | Removing code deprecated for over 12 months, adding missed `@Deprecated` annotations, or applying a new deprecation |
+| `converting-recorders-to-services` | Converting extensions from `@Record`/`@Recorder` to `ServiceRegistrar` services          |

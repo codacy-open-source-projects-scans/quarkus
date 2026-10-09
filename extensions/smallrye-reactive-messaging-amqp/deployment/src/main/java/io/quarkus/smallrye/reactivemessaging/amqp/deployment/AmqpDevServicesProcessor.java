@@ -29,13 +29,14 @@ import io.quarkus.deployment.dev.devservices.RunningContainer;
 import io.quarkus.devservices.common.ComposeLocator;
 import io.quarkus.devservices.common.ConfigureUtil;
 import io.quarkus.devservices.common.ContainerLocator;
+import io.quarkus.devservices.common.DevServicesHostUtil;
 import io.quarkus.runtime.LaunchMode;
 import io.quarkus.runtime.configuration.ConfigUtils;
 
 /**
  * Starts a AMQP 1.0 broker as dev service if needed.
- * It uses <a href="https://quay.io/repository/artemiscloud/activemq-artemis-broker">activemq-artemis-broker</a> as image.
- * See <a href="https://artemiscloud.io/">Artemis Cloud</a> for details.
+ * It uses <a href="https://quay.io/repository/arkmq-org/arkmq-org-broker">arkmq-org-broker</a> as image.
+ * See <a href="https://arkmq.org/">ArkMQ (formerly Artemis Cloud)</a> for details.
  */
 @BuildSteps(onlyIf = { IsDevServicesSupportedByLaunchMode.class, DevServicesConfig.Enabled.class })
 public class AmqpDevServicesProcessor {
@@ -51,7 +52,9 @@ public class AmqpDevServicesProcessor {
     private static final int AMQP_PORT = 5672;
     private static final int AMQP_CONSOLE_PORT = 8161;
 
-    private static final ContainerLocator amqpContainerLocator = locateContainerWithLabels(AMQP_PORT, DEV_SERVICE_LABEL);
+    private static final ContainerLocator amqpContainerLocator = locateContainerWithLabels(AMQP_PORT, true,
+            DEV_SERVICE_LABEL);
+
     private static final String AMQP_HOST_PROP = "amqp-host";
     private static final String AMQP_PORT_PROP = "amqp-port";
     private static final String AMQP_MAPPED_PORT_PROP = "amqp-mapped-port";
@@ -92,7 +95,9 @@ public class AmqpDevServicesProcessor {
                             .feature(Feature.MESSAGING_AMQP)
                             .containerId(containerAddress.getId())
                             .config(Map.of(
-                                    AMQP_HOST_PROP, containerAddress.getHost(),
+                                    AMQP_HOST_PROP,
+                                    DevServicesHostUtil.resolvePublishedPortHost(containerAddress.getId(),
+                                            containerAddress.getHost()),
                                     AMQP_PORT_PROP, String.valueOf(containerAddress.getPort()),
                                     AMQP_MAPPED_PORT_PROP,
                                     String.valueOf(container.getPortMapping(AMQP_CONSOLE_PORT).orElse(0)),
@@ -105,10 +110,11 @@ public class AmqpDevServicesProcessor {
                 })
                 .orElseGet(() -> DevServicesResultBuildItem.owned()
                         .feature(Feature.MESSAGING_AMQP)
+                        .serviceName(config.serviceName())
                         .serviceConfig(config)
                         .startable(() -> new ArtemisContainer(
                                 DockerImageName.parse(config.imageName().orElse(getDefaultImageNameFor("amqp")))
-                                        .asCompatibleSubstituteFor("artemiscloud/activemq-artemis-broker"),
+                                        .asCompatibleSubstituteFor("arkmq-org/arkmq-org-broker"),
                                 config.extraArgs(),
                                 config.port().orElse(0),
                                 launchMode.getLaunchMode() == LaunchMode.DEVELOPMENT ? config.serviceName() : null,
@@ -120,6 +126,7 @@ public class AmqpDevServicesProcessor {
                         .config(Map.of(
                                 AMQP_USER_PROP, DEFAULT_USER,
                                 AMQP_PASSWORD_PROP, DEFAULT_PASSWORD))
+                        // keep the deprecated call until we remove it entirely
                         .configProvider(Map.of(
                                 AMQP_HOST_PROP, ArtemisContainer::getEffectiveHost,
                                 AMQP_PORT_PROP, s -> String.valueOf(s.getPort()),
@@ -207,11 +214,11 @@ public class AmqpDevServicesProcessor {
                 withLabel(DEV_SERVICE_LABEL, serviceName);
                 withLabel(QUARKUS_DEV_SERVICE, serviceName);
             }
-            if (dockerImageName.getRepository().endsWith("artemiscloud/activemq-artemis-broker")) {
+            if (dockerImageName.getRepository().endsWith("arkmq-org/arkmq-org-broker")) {
                 waitingFor(Wait.forLogMessage(".*AMQ241004.*", 1)); // Artemis console available.
             } else {
                 log.infof(
-                        "Detected a different image (%s) for the Dev Service for AMQP. Ensure it's compatible with artemiscloud/activemq-artemis-broker. "
+                        "Detected a different image (%s) for the Dev Service for AMQP. Ensure it's compatible with arkmq-org/arkmq-org-broker. "
                                 +
                                 "Refer to https://quarkus.io/guides/amqp-dev-services#configuring-the-image for details.",
                         dockerImageName);
@@ -230,7 +237,7 @@ public class AmqpDevServicesProcessor {
 
         @Override
         public String getConnectionInfo() {
-            return String.format("amqp://%s:%d", getEffectiveHost(), getPort());
+            return DevServicesHostUtil.formatPrefixedAuthority("amqp", getEffectiveHost(), getPort());
         }
 
         @Override
@@ -243,7 +250,7 @@ public class AmqpDevServicesProcessor {
         }
 
         public String getEffectiveHost() {
-            return useSharedNetwork ? hostName : getHost();
+            return DevServicesHostUtil.publishedPortHost(getContainerId(), useSharedNetwork, hostName, getHost());
         }
 
         public int getMappedConsolePort() {

@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import jakarta.enterprise.inject.Instance;
@@ -31,10 +32,10 @@ import io.quarkus.runtime.ShutdownContext;
 import io.quarkus.runtime.annotations.Recorder;
 import io.quarkus.tls.TlsConfigurationRegistry;
 import io.vertx.mutiny.core.Vertx;
-import io.vertx.mutiny.redis.client.Command;
 import io.vertx.mutiny.redis.client.Redis;
 import io.vertx.mutiny.redis.client.RedisAPI;
-import io.vertx.mutiny.redis.client.Request;
+import io.vertx.redis.client.Command;
+import io.vertx.redis.client.Request;
 
 @Recorder
 public class RedisClientRecorder {
@@ -80,8 +81,17 @@ public class RedisClientRecorder {
         for (String name : names) {
             if (checkActive(name).get().value()) {
                 RedisClientConfig redisClientConfig = runtimeConfig.getValue().clients().get(name);
-                clients.putIfAbsent(name, new RedisClientAndApi(name,
-                        VertxRedisClientFactory.create(name, vertx, redisClientConfig, tlsRegistry, proxyRegistry), metrics));
+                // Must stay idempotent per name: both the client and the data source build steps call
+                // initialize() for the same names, and putIfAbsent would build a second, unclosed client.
+                clients.computeIfAbsent(name, new Function<String, RedisClientAndApi>() {
+                    @Override
+                    public RedisClientAndApi apply(String clientName) {
+                        return new RedisClientAndApi(clientName,
+                                VertxRedisClientFactory.create(clientName, vertx, redisClientConfig, tlsRegistry,
+                                        proxyRegistry),
+                                metrics);
+                    }
+                });
             }
         }
     }

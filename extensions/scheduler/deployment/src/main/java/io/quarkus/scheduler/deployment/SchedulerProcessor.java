@@ -70,6 +70,8 @@ import io.quarkus.deployment.builditem.AnnotationProxyBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ConstantBootstrapBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.metrics.MetricsCapabilityBuildItem;
 import io.quarkus.gizmo2.ClassOutput;
@@ -374,6 +376,8 @@ public class SchedulerProcessor {
             List<ScheduledBusinessMethodItem> scheduledMethods,
             BuildProducer<GeneratedClassBuildItem> generatedClasses,
             BuildProducer<GeneratedResourceBuildItem> generatedResources,
+            BuildProducer<GeneratedServiceProviderBuildItem> generatedServiceProviders,
+            BuildProducer<ConstantBootstrapBuildItem> constantBootstraps,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
             AnnotationProxyBuildItem annotationProxy,
             List<ForceStartSchedulerBuildItem> schedulerForcedStartItems,
@@ -401,7 +405,8 @@ public class SchedulerProcessor {
                 .constructors(false)
                 .build());
 
-        ClassOutput classOutput = new GeneratedClassGizmo2Adaptor(generatedClasses, generatedResources, generatedToBaseNameFun);
+        ClassOutput classOutput = new GeneratedClassGizmo2Adaptor(generatedClasses, generatedResources,
+                generatedServiceProviders, constantBootstraps, generatedToBaseNameFun);
         Gizmo gizmo = Gizmo.create(classOutput)
                 .withDebugInfo(false)
                 .withParameters(false);
@@ -732,6 +737,17 @@ public class SchedulerProcessor {
                                 .build());
                     }
                 }
+            }
+        }
+
+        AnnotationValue descriptionValue = schedule.value("description");
+        if (descriptionValue != null) {
+            String description = descriptionValue.asString().trim();
+            if (!description.isEmpty() && !SchedulerUtils.isConfigValue(description)
+                    && description.length() > Scheduled.DESCRIPTION_MAX_LENGTH) {
+                return new IllegalStateException(
+                        errorMessage("description() must not exceed " + Scheduled.DESCRIPTION_MAX_LENGTH
+                                + " characters, found " + description.length(), schedule, method));
             }
         }
 

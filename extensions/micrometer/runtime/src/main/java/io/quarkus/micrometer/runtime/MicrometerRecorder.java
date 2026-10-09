@@ -33,11 +33,11 @@ import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import io.micrometer.core.instrument.config.MeterFilter;
 import io.quarkus.arc.Arc;
 import io.quarkus.micrometer.runtime.binder.HttpBinderConfiguration;
+import io.quarkus.micrometer.runtime.binder.HttpCommonTags;
 import io.quarkus.micrometer.runtime.binder.JVMInfoBinder;
 import io.quarkus.micrometer.runtime.config.MicrometerConfig;
 import io.quarkus.micrometer.runtime.config.runtime.HttpClientConfig;
 import io.quarkus.micrometer.runtime.config.runtime.HttpServerConfig;
-import io.quarkus.micrometer.runtime.config.runtime.VertxConfig;
 import io.quarkus.runtime.ImageMode;
 import io.quarkus.runtime.LaunchMode;
 import io.quarkus.runtime.RuntimeValue;
@@ -58,17 +58,14 @@ public class MicrometerRecorder {
     private final MicrometerConfig config;
     private final RuntimeValue<HttpServerConfig> httpServerConfig;
     private final RuntimeValue<HttpClientConfig> httpClientConfig;
-    private final RuntimeValue<VertxConfig> vertxConfig;
 
     public MicrometerRecorder(
             final MicrometerConfig config,
             final RuntimeValue<HttpServerConfig> httpServerConfig,
-            final RuntimeValue<HttpClientConfig> clientConfig,
-            final RuntimeValue<VertxConfig> vertxConfig) {
+            final RuntimeValue<HttpClientConfig> clientConfig) {
         this.config = config;
         this.httpServerConfig = httpServerConfig;
         this.httpClientConfig = clientConfig;
-        this.vertxConfig = vertxConfig;
     }
 
     @StaticInit
@@ -284,8 +281,10 @@ public class MicrometerRecorder {
     @RuntimeInit
     public RuntimeValue<HttpBinderConfiguration> configureHttpMetrics(boolean httpServerMetricsEnabled,
             boolean httpClientMetricsEnabled) {
+        config.binder().http().additionalMethods()
+                .ifPresent(HttpCommonTags::setAdditionalHttpMethods);
         return new RuntimeValue<HttpBinderConfiguration>(
                 new HttpBinderConfiguration(httpServerMetricsEnabled, httpClientMetricsEnabled, httpServerConfig.getValue(),
-                        httpClientConfig.getValue(), vertxConfig.getValue()));
+                        httpClientConfig.getValue()));
     }
 }

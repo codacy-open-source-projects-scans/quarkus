@@ -20,7 +20,7 @@ public class WebSocketClientRecorder {
             public Object get() {
                 Context context = Vertx.currentContext();
                 if (context != null && VertxContext.isDuplicatedContext(context)) {
-                    Object connection = context.getLocal(ContextSupport.WEB_SOCKET_CONN_KEY);
+                    Object connection = ContextSupport.WebSocketContextLocalsProvider.WEB_SOCKET_CONN_LOCAL.get(context);
                     if (connection != null) {
                         return connection;
                     }

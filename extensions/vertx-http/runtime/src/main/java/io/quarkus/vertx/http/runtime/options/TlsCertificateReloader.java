@@ -1,5 +1,6 @@
 package io.quarkus.vertx.http.runtime.options;
 
+import static io.quarkus.vertx.http.runtime.options.HttpServerOptionsUtils.createServerSslOptions;
 import static io.quarkus.vertx.http.runtime.options.HttpServerOptionsUtils.getFileContent;
 
 import java.io.IOException;
@@ -12,6 +13,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -25,12 +27,13 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.ClientAuth;
 import io.vertx.core.http.HttpServer;
-import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.http.HttpServerConfig;
 import io.vertx.core.net.KeyStoreOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.PemTrustOptions;
-import io.vertx.core.net.SSLOptions;
+import io.vertx.core.net.ServerSSLOptions;
 
 /**
  * Utility class to handle TLS certificate reloading.
@@ -48,11 +51,13 @@ public class TlsCertificateReloader {
      * @throws IllegalArgumentException if any of the configuration is invalid
      */
     public static long initCertReloadingAction(Vertx vertx, HttpServer server,
-            HttpServerOptions options, ServerSslConfig sslConfig,
-            TlsConfigurationRegistry registry, Optional<String> tlsConfigurationName) {
+            HttpServerConfig httpServerConfig, ServerSSLOptions sslOptions,
+            ServerSslConfig sslConfig,
+            TlsConfigurationRegistry registry, Optional<String> tlsConfigurationName, ClientAuth clientAuth) {
 
-        if (options == null) {
-            throw new IllegalArgumentException("Unable to configure TLS reloading - The HTTP server options were not provided");
+        if (httpServerConfig == null) {
+            throw new IllegalArgumentException(
+                    "Unable to configure TLS reloading - The HTTP server configuration was not provided");
         }
 
         boolean useRegistry = false;
@@ -62,13 +67,13 @@ public class TlsCertificateReloader {
             useRegistry = true;
         }
 
-        SSLOptions ssl = null;
+        AtomicReference<ServerSSLOptions> currentSslOptions = new AtomicReference<>(null);
         TlsConfiguration tlsConfiguration = null;
         if (!useRegistry) {
-            ssl = options.getSslOptions();
-            if (ssl == null) {
+            if (sslOptions == null) {
                 throw new IllegalArgumentException("Unable to configure TLS reloading - TLS/SSL is not enabled on the server");
             }
+            currentSslOptions.set(sslOptions);
         } else {
             if (tlsConfigurationName.isPresent()) {
                 tlsConfiguration = registry.get(tlsConfigurationName.get()).orElseThrow();
@@ -91,41 +96,45 @@ public class TlsCertificateReloader {
 
         boolean reloadFromRegistry = useRegistry;
         TlsConfiguration registryConfiguration = tlsConfiguration;
-        SSLOptions nonRegistryOptions = ssl;
-        Supplier<CompletionStage<Boolean>> task = new Supplier<CompletionStage<Boolean>>() {
+        Supplier<CompletionStage<Boolean>> task = new Supplier<>() {
             @Override
             public CompletionStage<Boolean> get() {
 
                 // We are reading files - must be done on a worker thread.
-                Future<Boolean> future = vertx.executeBlocking(new Callable<SSLOptions>() {
+                Future<Boolean> future = vertx.executeBlocking(new Callable<ServerSSLOptions>() {
                     @Override
-                    public SSLOptions call() throws Exception {
+                    public ServerSSLOptions call() throws Exception {
                         if (reloadFromRegistry) {
                             if (registryConfiguration.reload()) {
-                                return registryConfiguration.getSSLOptions();
+                                return createServerSslOptions(registryConfiguration, clientAuth);
                             } else {
                                 return null;
                             }
                         } else {
-                            var c = reloadFileContent(nonRegistryOptions, sslConfig);
-                            if (c.equals(nonRegistryOptions)) { // No change, skip the update
+                            var c = reloadFileContent(currentSslOptions.get(), sslConfig);
+                            if (c.equals(currentSslOptions.get())) { // No change, skip the update
                                 return null;
                             }
                             return c;
                         }
                     }
                 }, true)
-                        .flatMap(new Function<SSLOptions, Future<Boolean>>() {
+                        .flatMap(new Function<ServerSSLOptions, Future<Boolean>>() {
                             @Override
-                            public Future<Boolean> apply(SSLOptions res) {
+                            public Future<Boolean> apply(ServerSSLOptions res) {
                                 if (res != null) {
-                                    return server.updateSSLOptions(res);
+                                    return server.updateSSLOptions(res).onSuccess(new Handler<>() {
+                                        @Override
+                                        public void handle(Boolean event) {
+                                            currentSslOptions.set(res);
+                                        }
+                                    });
                                 } else {
                                     return Future.succeededFuture(false);
                                 }
                             }
                         })
-                        .onComplete(new Handler<AsyncResult<Boolean>>() {
+                        .onComplete(new Handler<>() {
                             @Override
                             public void handle(AsyncResult<Boolean> ar) {
                                 if (ar.failed()) {
@@ -143,7 +152,7 @@ public class TlsCertificateReloader {
             }
         };
 
-        long id = vertx.setPeriodic(period, new Handler<Long>() {
+        long id = vertx.setPeriodic(period, new Handler<>() {
             @Override
             public void handle(Long id) {
                 task.get();
@@ -180,8 +189,8 @@ public class TlsCertificateReloader {
         return CompletableFuture.allOf(futures);
     }
 
-    private static SSLOptions reloadFileContent(SSLOptions ssl, ServerSslConfig sslConfig) throws IOException {
-        var copy = new SSLOptions(ssl);
+    private static ServerSSLOptions reloadFileContent(ServerSSLOptions ssl, ServerSslConfig sslConfig) throws IOException {
+        var copy = new ServerSSLOptions(ssl);
 
         final List<Path> keys = new ArrayList<>();
         final List<Path> certificates = new ArrayList<>();

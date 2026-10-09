@@ -42,12 +42,14 @@ import io.quarkus.bootstrap.logging.QuarkusDelayedHandler;
 import io.quarkus.deployment.dev.testing.LogCapturingOutputFilter;
 import io.quarkus.dev.console.QuarkusConsole;
 import io.quarkus.dev.testing.TracingHandler;
+import io.quarkus.runtime.ValueRegistryImpl;
 import io.quarkus.runtime.configuration.ConfigSourceOrdinal;
 import io.quarkus.test.common.TestResourceManager;
 import io.quarkus.test.junit.main.Launch;
 import io.quarkus.test.junit.main.LaunchResult;
 import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 import io.quarkus.test.junit.main.QuarkusMainLauncher;
+import io.quarkus.value.registry.ValueRegistry;
 
 public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
         implements InvocationInterceptor, BeforeEachCallback, AfterEachCallback, ParameterResolver, BeforeAllCallback,
@@ -62,6 +64,12 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
      */
     LaunchResult result;
 
+    /**
+     * The AeshLauncher created for the current test method (if any).
+     * Stored so it can be auto-closed in {@link #afterEach}.
+     */
+    AutoCloseable aeshLauncher;
+
     @Override
     public void beforeEach(ExtensionContext context) throws Exception {
         if (isIntegrationTest(context.getRequiredTestClass())) {
@@ -75,6 +83,9 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
         QuarkusTestExtensionState state = getState(extensionContext);
         // we reload the test resources if we changed test class and if we had or will have per-test test resources
         boolean isNewTestClass = !Objects.equals(extensionContext.getRequiredTestClass(), currentJUnitTestClass);
+        if (isNewTestClass) {
+            currentJUnitTestClass = extensionContext.getRequiredTestClass();
+        }
         if (isWrongProfile(extensionContext) || (isNewTestClass && TestResourceUtil.testResourcesRequireReload(state,
                 extensionContext.getRequiredTestClass(), getQuarkusTestProfile(extensionContext)))) {
             if (state != null) {
@@ -158,6 +169,14 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
     @Override
     public void afterEach(ExtensionContext context) throws Exception {
         result = null;
+        if (aeshLauncher != null) {
+            try {
+                aeshLauncher.close();
+            } catch (Exception e) {
+                // ignore cleanup errors
+            }
+            aeshLauncher = null;
+        }
     }
 
     private static Handler ORIGINAL_QUARKUS_CONSOLE_HANDLER = null;
@@ -244,8 +263,8 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
             startupAction.overrideConfig(properties);
 
             testResourceManager.getClass()
-                    .getMethod("inject", Object.class)
-                    .invoke(testResourceManager, context.getRequiredTestInstance());
+                    .getMethod("inject", ValueRegistry.class, Object.class)
+                    .invoke(testResourceManager, ValueRegistryImpl.builder().build(), context.getRequiredTestInstance());
 
             var result = startupAction.runMainClassBlocking(arguments);
             flushAllLoggers();
@@ -272,6 +291,8 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
         }
     }
 
+    private static final String AESH_LAUNCHER_CLASS = "io.quarkus.test.aesh.AeshLauncher";
+
     @Override
     public boolean supportsParameter(ParameterContext parameterContext, ExtensionContext extensionContext)
             throws ParameterResolutionException {
@@ -280,7 +301,8 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
         }
         Class<?> type = parameterContext.getParameter()
                 .getType();
-        return type == LaunchResult.class || type == QuarkusMainLauncher.class;
+        return type == LaunchResult.class || type == QuarkusMainLauncher.class
+                || AESH_LAUNCHER_CLASS.equals(type.getName());
     }
 
     @Override
@@ -299,18 +321,47 @@ public class QuarkusMainTestExtension extends AbstractJvmQuarkusTestExtension
 
             return result;
         } else if (type == QuarkusMainLauncher.class) {
-            return new QuarkusMainLauncher() {
-                @Override
-                public LaunchResult launch(String... args) {
-                    try {
-                        return doLaunch(extensionContext, args);
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            };
+            return createMainLauncher(extensionContext);
+        } else if (AESH_LAUNCHER_CLASS.equals(type.getName())) {
+            return createAeshLauncher(extensionContext);
         } else {
             throw new RuntimeException("Parameter type not supported");
+        }
+    }
+
+    private QuarkusMainLauncher createMainLauncher(ExtensionContext extensionContext) {
+        return new QuarkusMainLauncher() {
+            @Override
+            public LaunchResult launch(String... args) {
+                try {
+                    return doLaunch(extensionContext, args);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        };
+    }
+
+    /**
+     * Creates an AeshLauncher instance via reflection to avoid a compile-time
+     * dependency on quarkus-test-aesh.
+     */
+    private Object createAeshLauncher(ExtensionContext extensionContext) {
+        try {
+            QuarkusMainLauncher mainLauncher = createMainLauncher(extensionContext);
+            Class<?> implClass = Thread.currentThread().getContextClassLoader()
+                    .loadClass("io.quarkus.test.aesh.AeshLauncherImpl");
+            Object instance = implClass.getDeclaredConstructor(QuarkusMainLauncher.class).newInstance(mainLauncher);
+            // Store for auto-close in afterEach()
+            aeshLauncher = (AutoCloseable) instance;
+            return instance;
+        } catch (ClassNotFoundException e) {
+            throw new ParameterResolutionException(
+                    "AeshLauncher requested but quarkus-test-aesh is not on the classpath. "
+                            + "Add io.quarkus:quarkus-test-aesh as a test dependency.",
+                    e);
+        } catch (ReflectiveOperationException e) {
+            throw new ParameterResolutionException("Failed to create AeshLauncher", e);
         }
     }
 

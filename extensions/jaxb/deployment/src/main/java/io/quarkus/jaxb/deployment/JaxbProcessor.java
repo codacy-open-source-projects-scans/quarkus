@@ -13,6 +13,7 @@ import java.util.stream.Stream;
 
 import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.xml.bind.JAXBContext;
+import jakarta.xml.bind.JAXBContextFactory;
 import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.annotation.XmlAccessOrder;
 import jakarta.xml.bind.annotation.XmlAccessType;
@@ -73,7 +74,6 @@ import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageProxyDefinitionBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBundleBuildItem;
-import io.quarkus.deployment.builditem.nativeimage.NativeImageResourcePatternsBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageSystemPropertyBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveHierarchyBuildItem;
@@ -338,7 +338,10 @@ public class JaxbProcessor {
 
         providerItem
                 .produce(new ServiceProviderBuildItem(JAXBContext.class.getName(),
-                        "org.glassfish.jaxb.runtime.v2.ContextFactory"));
+                        org.glassfish.jaxb.runtime.v2.ContextFactory.class.getName()));
+        providerItem
+                .produce(new ServiceProviderBuildItem(JAXBContextFactory.class.getName(),
+                        org.glassfish.jaxb.runtime.v2.JAXBContextFactory.class.getName()));
     }
 
     @BuildStep
@@ -439,7 +442,7 @@ public class JaxbProcessor {
     private void iterateResources(ApplicationArchivesBuildItem applicationArchivesBuildItem, String path,
             BuildProducer<NativeImageResourceBuildItem> resource, BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
             List<String> classesToBeBound) {
-        for (ApplicationArchive archive : applicationArchivesBuildItem.getAllApplicationArchives()) {
+        for (ApplicationArchive archive : applicationArchivesBuildItem.getAllArchives()) {
             archive.accept(tree -> {
                 var arch = tree.getPath(path);
                 if (arch != null && Files.isDirectory(arch)) {
@@ -551,11 +554,5 @@ public class JaxbProcessor {
         }
 
         return XmlAccessType.valueOf(xmlAccessorTypeAi.value().asEnum());
-    }
-
-    @BuildStep
-    void jaxbIndex(final BuildProducer<NativeImageResourcePatternsBuildItem> resource) {
-        LOG.debug("adding jaxb.index to native image resources");
-        resource.produce(NativeImageResourcePatternsBuildItem.builder().includeGlob("**/jaxb.index").build());
     }
 }

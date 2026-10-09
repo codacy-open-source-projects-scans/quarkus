@@ -6,11 +6,26 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.UUID;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.model.MailingList;
 import org.apache.maven.model.Model;
 import org.cyclonedx.Format;
@@ -29,6 +44,7 @@ import org.cyclonedx.model.Metadata;
 import org.cyclonedx.model.Pedigree;
 import org.cyclonedx.model.Property;
 import org.cyclonedx.model.Tool;
+import org.cyclonedx.model.component.evidence.Identity;
 import org.cyclonedx.model.component.evidence.Occurrence;
 import org.cyclonedx.model.metadata.ToolInformation;
 import org.cyclonedx.util.BomUtils;
@@ -37,14 +53,16 @@ import org.jboss.logging.Logger;
 
 import com.github.packageurl.MalformedPackageURLException;
 import com.github.packageurl.PackageURL;
-import com.github.packageurl.PackageURLBuilder;
 
 import io.quarkus.bootstrap.app.SbomResult;
 import io.quarkus.bootstrap.resolver.maven.EffectiveModelResolver;
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.paths.PathTree;
-import io.quarkus.sbom.ApplicationComponent;
-import io.quarkus.sbom.ApplicationManifest;
+import io.quarkus.sbom.ComponentDependencies;
+import io.quarkus.sbom.ComponentDescriptor;
+import io.quarkus.sbom.LicenseInfo;
+import io.quarkus.sbom.Purl;
+import io.quarkus.sbom.SbomContribution;
 
 public class CycloneDxSbomGenerator {
 
@@ -52,26 +70,6 @@ public class CycloneDxSbomGenerator {
 
     private static final String QUARKUS_COMPONENT_SCOPE = "quarkus:component:scope";
     private static final String QUARKUS_COMPONENT_LOCATION = "quarkus:component:location";
-
-    private static final Comparator<ArtifactCoords> ARTIFACT_COORDS_COMPARATOR = (c1, c2) -> {
-        var i = c1.getGroupId().compareTo(c2.getGroupId());
-        if (i != 0) {
-            return i;
-        }
-        i = c1.getArtifactId().compareTo(c2.getArtifactId());
-        if (i != 0) {
-            return i;
-        }
-        i = c1.getVersion().compareTo(c2.getVersion());
-        if (i != 0) {
-            return i;
-        }
-        i = c1.getClassifier().compareTo(c2.getClassifier());
-        if (i != 0) {
-            return i;
-        }
-        return c1.getType().compareTo(c2.getType());
-    };
 
     private static final String CLASSIFIER_CYCLONEDX = "cyclonedx";
     private static final String FORMAT_ALL = "all";
@@ -82,7 +80,6 @@ public class CycloneDxSbomGenerator {
     }
 
     private boolean generated;
-    private ApplicationManifest manifest;
     private Path outputDir;
     private Path outputFile;
     private String schemaVersion;
@@ -90,16 +87,19 @@ public class CycloneDxSbomGenerator {
     private EffectiveModelResolver modelResolver;
     private boolean includeLicenseText;
     private boolean prettyPrint;
+    private boolean librariesOnly;
+    private boolean runtimeOnly;
+    private boolean includeQuarkusComponentScope;
+    private Instant outputTimestamp;
+    private List<SbomContribution> contributions = List.of();
 
     private Version effectiveSchemaVersion;
 
-    private CycloneDxSbomGenerator() {
-    }
+    // resolved from contributions at generation time
+    private String mainComponentBomRef;
+    private Path runnerPath;
 
-    public CycloneDxSbomGenerator setManifest(ApplicationManifest manifest) {
-        ensureNotGenerated();
-        this.manifest = manifest;
-        return this;
+    private CycloneDxSbomGenerator() {
     }
 
     public CycloneDxSbomGenerator setOutputDirectory(Path outputDir) {
@@ -144,6 +144,57 @@ public class CycloneDxSbomGenerator {
         return this;
     }
 
+    public CycloneDxSbomGenerator setLibrariesOnly(boolean librariesOnly) {
+        ensureNotGenerated();
+        this.librariesOnly = librariesOnly;
+        return this;
+    }
+
+    public CycloneDxSbomGenerator setRuntimeOnly(boolean runtimeOnly) {
+        ensureNotGenerated();
+        this.runtimeOnly = runtimeOnly;
+        return this;
+    }
+
+    public CycloneDxSbomGenerator setIncludeQuarkusComponentScope(boolean includeQuarkusComponentScope) {
+        ensureNotGenerated();
+        this.includeQuarkusComponentScope = includeQuarkusComponentScope;
+        return this;
+    }
+
+    /**
+     * Sets a reproducible timestamp for the BOM metadata.
+     * <p>
+     * When set, this timestamp replaces the auto-initialized {@code new Date()} in
+     * {@link org.cyclonedx.model.Metadata}, making the entire BOM — including its
+     * {@link org.cyclonedx.model.Bom#hashCode() hashCode} — deterministic. This
+     * enables the serial number to be derived from the full BOM content hash.
+     * <p>
+     * Typically sourced from {@code project.build.outputTimestamp} in Maven builds.
+     *
+     * @param outputTimestamp the reproducible build timestamp, or {@code null} to
+     *        use the current time (default behavior)
+     * @return this generator for fluent chaining
+     */
+    public CycloneDxSbomGenerator setOutputTimestamp(Instant outputTimestamp) {
+        ensureNotGenerated();
+        this.outputTimestamp = outputTimestamp;
+        return this;
+    }
+
+    /**
+     * Sets the list of SBOM contributions to include in the generated SBOM.
+     * A null value is treated as an empty list.
+     *
+     * @param contributions the SBOM contributions, or null
+     * @return this generator for fluent chaining
+     */
+    public CycloneDxSbomGenerator setContributions(List<SbomContribution> contributions) {
+        ensureNotGenerated();
+        this.contributions = contributions == null ? List.of() : contributions;
+        return this;
+    }
+
     public List<String> generateText() {
         final Bom bom = createSbom();
         if (FORMAT_ALL.equalsIgnoreCase(format)) {
@@ -181,113 +232,551 @@ public class CycloneDxSbomGenerator {
 
     private Bom createSbom() {
         ensureNotGenerated();
-        Objects.requireNonNull(manifest, "Manifest is null");
         generated = true;
+
+        // Resolve metadata from contributions
+        resolveContributionMetadata();
 
         var bom = new Bom();
         bom.setMetadata(new Metadata());
+        if (outputTimestamp != null) {
+            bom.getMetadata().setTimestamp(Date.from(outputTimestamp));
+        }
         addToolInfo(bom);
 
-        addApplicationComponent(bom, manifest.getMainComponent());
-        for (var c : manifest.getComponents()) {
-            addComponent(bom, c);
+        // Collect all components and dependencies from contributions
+        final List<ComponentDescriptor> allDescriptors = new ArrayList<>();
+        final List<ComponentDependencies> allDependencies = new ArrayList<>();
+        for (SbomContribution contribution : contributions) {
+            allDescriptors.addAll(contribution.components());
+            allDependencies.addAll(contribution.dependencies());
         }
-        return bom;
-    }
 
-    private void addComponent(Bom bom, ApplicationComponent component) {
-        final org.cyclonedx.model.Component c = getComponent(component);
-        bom.addComponent(c);
-        recordDependencies(bom, component, c);
-    }
+        // Filter out components based on librariesOnly and runtimeOnly settings
+        final Set<String> excludedBomRefs;
+        if (librariesOnly || runtimeOnly) {
+            excludedBomRefs = new HashSet<>();
+            allDescriptors.removeIf(d -> {
+                if (d.getBomRef().equals(mainComponentBomRef)) {
+                    return false;
+                }
+                if (librariesOnly && isFileComponent(d)) {
+                    excludedBomRefs.add(d.getBomRef());
+                    return true;
+                }
+                if (runtimeOnly && ComponentDescriptor.SCOPE_DEVELOPMENT.equals(d.getScope())) {
+                    excludedBomRefs.add(d.getBomRef());
+                    return true;
+                }
+                return false;
+            });
+            allDependencies.removeIf(d -> excludedBomRefs.contains(d.getBomRef()));
+        } else {
+            excludedBomRefs = Set.of();
+        }
 
-    private static void recordDependencies(Bom bom, ApplicationComponent component, Component c) {
-        if (!component.getDependencies().isEmpty()) {
-            final Dependency d = new Dependency(c.getBomRef());
-            for (var depCoords : sortAlphabetically(component.getDependencies())) {
-                d.addDependency(new Dependency(getPurl(depCoords).toString()));
+        // Sort for consistent ordering across builds
+        allDescriptors.sort(Comparator.comparing(ComponentDescriptor::getBomRef));
+        allDependencies.sort(Comparator.comparing(ComponentDependencies::getBomRef));
+
+        // Render components
+        for (ComponentDescriptor descriptor : allDescriptors) {
+            if (descriptor.getBomRef().equals(mainComponentBomRef)) {
+                renderMainComponent(bom, descriptor);
+            } else {
+                renderComponent(bom, descriptor);
+            }
+        }
+
+        // Apply the project license to FILE components that have none,
+        // since these are files generated by the project itself
+        applyProjectLicenseToFiles(bom);
+
+        // Record dependency relationships
+        final boolean providesSupported = getSchemaVersion().getVersion() >= 1.6;
+        final Map<String, Dependency> dependencyMap = new LinkedHashMap<>();
+        for (ComponentDependencies dep : allDependencies) {
+            // "provides" is a CycloneDX 1.6 construct; on older schema versions the provided refs
+            // are represented as plain dependsOn relationships instead.
+            boolean provides = providesSupported && !dep.getProvides().isEmpty();
+            if (provides) {
+                ProvidesDependency d = new ProvidesDependency(dep.getBomRef());
+                addDependsOn(d, dep.getDependsOn(), excludedBomRefs);
+                addProvides(d, dep.getProvides(), excludedBomRefs);
+                dependencyMap.put(dep.getBomRef(), d);
+            } else {
+                Dependency d = new Dependency(dep.getBomRef());
+                addDependsOn(d, dep.getDependsOn(), excludedBomRefs);
+                addDependsOn(d, dep.getProvides(), excludedBomRefs);
+                dependencyMap.put(dep.getBomRef(), d);
+            }
+        }
+
+        // Link top-level extension components to the main component
+        if (mainComponentBomRef != null) {
+            addTopLevelDependencies(allDescriptors, dependencyMap);
+        }
+
+        // Ensure every component has a dependency entry, even leaf nodes with no dependencies
+        for (ComponentDescriptor descriptor : allDescriptors) {
+            dependencyMap.computeIfAbsent(descriptor.getBomRef(), Dependency::new);
+        }
+
+        for (Dependency d : dependencyMap.values()) {
+            // sort the merged relationships so refs accumulated from multiple sources
+            // (e.g. the main component's dependsOn) end up in a stable, sorted order
+            if (d.getDependencies() != null) {
+                d.getDependencies().sort(Comparator.comparing(Dependency::getRef));
+            }
+            if (d instanceof ProvidesDependency pd) {
+                pd.getProvides().sort(Comparator.naturalOrder());
             }
             bom.addDependency(d);
         }
+
+        bom.setSerialNumber(generateSerialNumber(bom));
+
+        return bom;
     }
 
-    private void addApplicationComponent(Bom bom, ApplicationComponent component) {
-        var c = getComponent(component);
-        c.setType(org.cyclonedx.model.Component.Type.APPLICATION);
-        bom.getMetadata().setComponent(c);
-        bom.addComponent(c);
-        recordDependencies(bom, component, c);
-    }
-
-    private org.cyclonedx.model.Component getComponent(ApplicationComponent component) {
-        final org.cyclonedx.model.Component c = new org.cyclonedx.model.Component();
-        var dep = component.getResolvedDependency();
-        if (dep != null) {
-            initMavenComponent(dep, c);
-        } else if (component.getDistributionPath() != null || component.getPath() != null) {
-            initGenericComponent(component, c);
-        } else {
-            throw new RuntimeException("Component is not associated with any file system path");
-        }
-
-        final List<Property> props = new ArrayList<>(2);
-        String quarkusScope = component.getScope();
-        if (quarkusScope == null) {
-            quarkusScope = dep == null || dep.isRuntimeCp() ? ApplicationComponent.SCOPE_RUNTIME
-                    : ApplicationComponent.SCOPE_DEVELOPMENT;
-        }
-        addProperty(props, QUARKUS_COMPONENT_SCOPE, quarkusScope);
-        if (component.getDistributionPath() != null) {
-            if (getSchemaVersion().getVersion() >= 1.5) {
-                var occurence = new Occurrence();
-                occurence.setLocation(component.getDistributionPath());
-                var evidence = new Evidence();
-                evidence.setOccurrences(List.of(occurence));
-                c.setEvidence(evidence);
-            } else {
-                addProperty(props, QUARKUS_COMPONENT_LOCATION, component.getDistributionPath());
+    /**
+     * Adds the given bom-refs to a dependency node as {@code dependsOn} relationships,
+     * skipping excluded refs. The refs are sorted later, once merged, by the caller.
+     *
+     * @param d the dependency node to populate
+     * @param refs the bom-refs to add
+     * @param excludedBomRefs refs that must not appear in the output
+     */
+    private static void addDependsOn(Dependency d, Collection<String> refs, Set<String> excludedBomRefs) {
+        for (String ref : refs) {
+            if (!excludedBomRefs.contains(ref)) {
+                d.addDependency(new Dependency(ref));
             }
         }
-        c.setProperties(props);
+    }
 
-        if (component.getPedigree() != null) {
+    /**
+     * Adds the given bom-refs to a dependency node as {@code provides} relationships,
+     * skipping excluded refs. The refs are sorted later, once merged, by the caller.
+     *
+     * @param d the dependency node to populate
+     * @param refs the bom-refs to add
+     * @param excludedBomRefs refs that must not appear in the output
+     */
+    private static void addProvides(ProvidesDependency d, Collection<String> refs, Set<String> excludedBomRefs) {
+        for (String ref : refs) {
+            if (!excludedBomRefs.contains(ref)) {
+                d.addProvides(ref);
+            }
+        }
+    }
+
+    private void resolveContributionMetadata() {
+        for (SbomContribution contribution : contributions) {
+            if (contribution.mainComponentBomRef() != null) {
+                mainComponentBomRef = contribution.mainComponentBomRef();
+                runnerPath = contribution.runnerPath();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Adds top-level extension components as dependencies of the main
+     * application component.
+     * <p>
+     * Components marked as {@link ComponentDescriptor#isTopLevel() topLevel}
+     * are added to the main component's dependency entry. If the main
+     * component already has a dependency entry (from the core contribution),
+     * the top-level refs are merged into it. Otherwise a new entry is created.
+     *
+     * @param allDescriptors all component descriptors across contributions
+     * @param dependencyMap the mutable dependency map keyed by bom-ref
+     */
+    private void addTopLevelDependencies(List<ComponentDescriptor> allDescriptors,
+            Map<String, Dependency> dependencyMap) {
+        List<String> topLevelRefs = collectTopLevelBomRefs(allDescriptors);
+        if (topLevelRefs.isEmpty()) {
+            return;
+        }
+        Dependency mainDep = dependencyMap.computeIfAbsent(mainComponentBomRef, Dependency::new);
+        Set<String> existingRefs = collectExistingDependencyRefs(mainDep);
+        for (String ref : topLevelRefs) {
+            if (!existingRefs.contains(ref)) {
+                mainDep.addDependency(new Dependency(ref));
+            }
+        }
+    }
+
+    /**
+     * Collects bom-refs of all top-level components. The refs are sorted later, once merged
+     * into the main component's dependency node.
+     */
+    private static List<String> collectTopLevelBomRefs(List<ComponentDescriptor> descriptors) {
+        List<String> refs = new ArrayList<>();
+        for (ComponentDescriptor d : descriptors) {
+            if (d.isTopLevel()) {
+                refs.add(d.getBomRef());
+            }
+        }
+        return refs;
+    }
+
+    /**
+     * Collects the set of existing dependency refs from a Dependency node.
+     */
+    private static Set<String> collectExistingDependencyRefs(Dependency dep) {
+        List<Dependency> deps = dep.getDependencies();
+        if (deps == null) {
+            return Set.of();
+        }
+        Set<String> refs = new HashSet<>(deps.size());
+        for (Dependency d : deps) {
+            refs.add(d.getRef());
+        }
+        return refs;
+    }
+
+    private static boolean isFileComponent(ComponentDescriptor descriptor) {
+        Purl purl = descriptor.getPurl();
+        return Purl.TYPE_GENERIC.equals(purl.getType())
+                && (descriptor.getPath() != null || descriptor.getDistributionPath() != null);
+    }
+
+    private static PackageURL toCycloneDxPurl(Purl purl) {
+        try {
+            TreeMap<String, String> qualifiers = purl.getQualifiers().isEmpty()
+                    ? null
+                    : new TreeMap<>(purl.getQualifiers());
+            return new PackageURL(purl.getType(), purl.getNamespace(), purl.getName(),
+                    purl.getVersion(), qualifiers, purl.getSubpath());
+        } catch (MalformedPackageURLException e) {
+            throw new RuntimeException("Failed to convert Purl to PackageURL: " + purl, e);
+        }
+    }
+
+    private static ArtifactCoords toArtifactCoords(Purl purl) {
+        return ArtifactCoords.of(
+                purl.getNamespace(),
+                purl.getName(),
+                purl.getQualifiers().getOrDefault("classifier", ArtifactCoords.DEFAULT_CLASSIFIER),
+                purl.getQualifiers().getOrDefault("type", ArtifactCoords.TYPE_JAR),
+                purl.getVersion());
+    }
+
+    /**
+     * Generates a serial number for the BOM in {@code urn:uuid:} format.
+     * <p>
+     * The UUID is derived from the serialized BOM, not from {@link Bom#hashCode() Bom.hashCode()}.
+     * The latter folds in the identity hash codes of the {@link Component.Type} and
+     * {@link Component.Scope} enum constants, and those are drawn from a per-thread PRNG, so they
+     * differ between builds even when the BOM content is identical. Serializing to a compact JSON
+     * form keeps the serial number a pure function of the BOM content, independent of the
+     * configured output format and of {@code prettyPrint}. Combined with a reproducible
+     * {@link #setOutputTimestamp(Instant) output timestamp}, the serial number is then stable
+     * across identical builds.
+     * <p>
+     * Must be called after the BOM is fully assembled and before the serial number itself is set,
+     * so that the serialized form it hashes does not yet contain one.
+     *
+     * @param bom the fully assembled BOM (with serial number still {@code null})
+     * @return a {@code urn:uuid:} serial number string
+     */
+    private String generateSerialNumber(Bom bom) {
+        final String content;
+        try {
+            content = new ProvidesAwareBomJsonGenerator(bom, getSchemaVersion()).toJsonString(false);
+        } catch (Throwable e) {
+            throw new RuntimeException("Failed to serialize the SBOM to compute its serial number", e);
+        }
+        return "urn:uuid:" + UUID.nameUUIDFromBytes(content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void renderMainComponent(Bom bom, ComponentDescriptor descriptor) {
+        Component c = renderComponentCore(descriptor);
+        c.setType(Component.Type.APPLICATION);
+        bom.getMetadata().setComponent(c);
+        bom.addComponent(c);
+    }
+
+    /**
+     * Applies the project's own license to the main application component
+     * and to FILE components that have none. The main component may use a
+     * generic PURL (e.g. {@code pkg:generic/quarkus-run.jar}) which bypasses
+     * Maven POM resolution, so its license must be resolved separately.
+     * FILE components represent files generated by the project itself
+     * (e.g. {@code appmodel.dat}, {@code build-system.properties}), so they
+     * inherit the project license.
+     * <p>
+     * The project license is resolved from the application artifact's POM
+     * via the model resolver. If no model resolver is configured or the POM
+     * cannot be resolved, this method is a no-op.
+     */
+    private void applyProjectLicenseToFiles(Bom bom) {
+        if (bom.getComponents() == null) {
+            return;
+        }
+        LicenseChoice projectLicenses = resolveProjectLicenses(bom);
+        if (projectLicenses == null) {
+            return;
+        }
+        Component main = bom.getMetadata() != null ? bom.getMetadata().getComponent() : null;
+        if (main != null && !hasLicenses(main)) {
+            main.setLicenses(projectLicenses);
+        }
+        for (Component c : bom.getComponents()) {
+            if (c.getType() == Component.Type.FILE && !hasLicenses(c)) {
+                c.setLicenses(projectLicenses);
+            }
+        }
+    }
+
+    /**
+     * Resolves the project's own license for use on generated file components.
+     *
+     * <p>
+     * Checks the main component first — when the main PURL is Maven-typed,
+     * its licenses will already have been resolved via
+     * {@link #addPomMetadata(ArtifactCoords, Component, boolean) addPomMetadata}.
+     * When the main component uses a generic PURL (e.g. for a runner JAR or
+     * native image), it has no Maven coordinates and therefore no POM-resolved
+     * licenses. In that case, the method resolves the license from the
+     * application artifact's POM using the
+     * {@link SbomContribution#appArtifact() appArtifact} coordinates
+     * provided by the core contribution.
+     * </p>
+     *
+     * @param bom the fully rendered BOM
+     * @return the project's license choice, or {@code null} if none could be resolved
+     */
+    private LicenseChoice resolveProjectLicenses(Bom bom) {
+        Component main = bom.getMetadata() != null ? bom.getMetadata().getComponent() : null;
+        if (main != null && hasLicenses(main)) {
+            return main.getLicenses();
+        }
+        if (modelResolver != null) {
+            for (SbomContribution contribution : contributions) {
+                ArtifactCoords appArtifact = contribution.appArtifact();
+                if (appArtifact != null) {
+                    Component temp = new Component();
+                    addPomMetadata(appArtifact, temp, false);
+                    if (hasLicenses(temp)) {
+                        return temp.getLicenses();
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns {@code true} if the component has at least one license entry.
+     *
+     * @param c the component to check
+     * @return whether the component carries license information
+     */
+    private static boolean hasLicenses(Component c) {
+        return c.getLicenses() != null
+                && c.getLicenses().getLicenses() != null
+                && !c.getLicenses().getLicenses().isEmpty();
+    }
+
+    private void renderComponent(Bom bom, ComponentDescriptor descriptor) {
+        bom.addComponent(renderComponentCore(descriptor));
+    }
+
+    private Component renderComponentCore(ComponentDescriptor descriptor) {
+        return renderComponentCore(descriptor, false);
+    }
+
+    private static Component.Type toComponentType(String componentType) {
+        return switch (componentType.toLowerCase(Locale.ROOT)) {
+            case "framework" -> Component.Type.FRAMEWORK;
+            case "application" -> Component.Type.APPLICATION;
+            case "file" -> Component.Type.FILE;
+            default -> Component.Type.LIBRARY;
+        };
+    }
+
+    private Component renderComponentCore(ComponentDescriptor descriptor, boolean bundled) {
+        Component c = new Component();
+
+        // Identity from Purl
+        Purl purl = descriptor.getPurl();
+        PackageURL cdxPurl = toCycloneDxPurl(purl);
+        c.setPurl(cdxPurl);
+        c.setBomRef(descriptor.getBomRef());
+        c.setName(descriptor.getName());
+        c.setVersion(descriptor.getVersion());
+        if (purl.getNamespace() != null) {
+            c.setGroup(purl.getNamespace());
+        }
+
+        // Component type: explicit override wins, else file/library classification
+        if (descriptor.getComponentType() != null) {
+            c.setType(toComponentType(descriptor.getComponentType()));
+        } else if (isFileComponent(descriptor)) {
+            c.setType(Component.Type.FILE);
+        } else {
+            c.setType(Component.Type.LIBRARY);
+        }
+
+        // Scope
+        List<Property> props = new ArrayList<>(2);
+        String scope = descriptor.getScope() != null ? descriptor.getScope() : ComponentDescriptor.SCOPE_RUNTIME;
+        if (includeQuarkusComponentScope) {
+            addProperty(props, QUARKUS_COMPONENT_SCOPE, scope);
+        }
+        if (ComponentDescriptor.SCOPE_DEVELOPMENT.equals(scope)
+                || ComponentDescriptor.SCOPE_EXCLUDED.equals(scope)) {
+            c.setScope(Component.Scope.EXCLUDED);
+        }
+
+        // CPE identity (Common Platform Enumeration)
+        if (descriptor.getCpe() != null) {
+            c.setCpe(descriptor.getCpe());
+            // evidence.identities[].field=cpe is a CycloneDX 1.6 construct
+            if (getSchemaVersion().getVersion() >= 1.6) {
+                Identity identity = new Identity();
+                identity.setField(Identity.Field.CPE);
+                identity.setConcludedValue(descriptor.getCpe());
+                Evidence evidence = c.getEvidence();
+                if (evidence == null) {
+                    evidence = new Evidence();
+                    c.setEvidence(evidence);
+                }
+                List<Identity> identities = evidence.getIdentities();
+                if (identities == null) {
+                    identities = new ArrayList<>(1);
+                }
+                identities.add(identity);
+                evidence.setIdentities(identities);
+            }
+        }
+
+        // Explicit descriptor metadata (description, licenses) takes precedence over POM-derived
+        // metadata, so set it before resolving the POM; the POM values are only used as a fallback
+        // when the descriptor provides none (see extractComponentMetadata).
+        if (descriptor.getDescription() != null) {
+            c.setDescription(descriptor.getDescription());
+        }
+        if (!descriptor.getLicenses().isEmpty()) {
+            c.setLicenses(resolveDescriptorLicenses(descriptor.getLicenses()));
+        }
+
+        // POM metadata for Maven components
+        if (Purl.TYPE_MAVEN.equals(purl.getType())) {
+            addPomMetadata(toArtifactCoords(purl), c, bundled);
+        }
+
+        // Evidence/occurrence from distribution path
+        if (descriptor.getDistributionPath() != null) {
+            if (getSchemaVersion().getVersion() >= 1.5) {
+                Occurrence occurrence = new Occurrence();
+                occurrence.setLocation(descriptor.getDistributionPath());
+                Evidence evidence = c.getEvidence();
+                if (evidence == null) {
+                    evidence = new Evidence();
+                }
+                evidence.setOccurrences(List.of(occurrence));
+                c.setEvidence(evidence);
+            } else {
+                addProperty(props, QUARKUS_COMPONENT_LOCATION, descriptor.getDistributionPath());
+            }
+        }
+
+        // Pedigree
+        if (descriptor.getPedigree() != null) {
             var pedigree = new Pedigree();
-            pedigree.setNotes(component.getPedigree());
+            pedigree.setNotes(descriptor.getPedigree());
             c.setPedigree(pedigree);
         }
 
-        if (component.getPath() != null) {
+        // File hashes from path
+        if (descriptor.getPath() != null) {
             try {
-                c.setHashes(BomUtils.calculateHashes(component.getPath().toFile(), getSchemaVersion()));
+                c.setHashes(BomUtils.calculateHashes(descriptor.getPath().toFile(), getSchemaVersion()));
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
         }
+
+        // SRI integrity hash (only if no file hashes were set)
+        if (descriptor.getIntegrity() != null) {
+            Hash hash = parseSriHash(descriptor.getIntegrity());
+            if (hash != null && (c.getHashes() == null || c.getHashes().isEmpty())) {
+                c.setHashes(List.of(hash));
+            }
+        }
+
+        // Nested (bundled) components
+        for (ComponentDescriptor nested : descriptor.getComponents()) {
+            c.addComponent(renderComponentCore(nested, true));
+        }
+
+        c.setProperties(props);
         return c;
     }
 
-    private static void initGenericComponent(ApplicationComponent component, Component c) {
-        c.setName(component.getPath().getFileName().toString());
-        c.setVersion(component.getVersion());
-        c.setType(Component.Type.FILE);
-        PackageURL purl = getGenericPurl(c.getName(), component.getVersion());
-        c.setPurl(purl);
-        c.setBomRef(purl.toString());
+    private static Hash parseSriHash(String integrity) {
+        int dashIndex = integrity.indexOf('-');
+        if (dashIndex < 0) {
+            return null;
+        }
+        String algorithmStr = integrity.substring(0, dashIndex);
+        String base64Value = integrity.substring(dashIndex + 1);
+
+        Hash.Algorithm algorithm;
+        switch (algorithmStr) {
+            case "sha1" -> algorithm = Hash.Algorithm.SHA1;
+            case "sha256" -> algorithm = Hash.Algorithm.SHA_256;
+            case "sha384" -> algorithm = Hash.Algorithm.SHA_384;
+            case "sha512" -> algorithm = Hash.Algorithm.SHA_512;
+            default -> {
+                return null;
+            }
+        }
+
+        byte[] decoded = Base64.getDecoder().decode(base64Value);
+        StringBuilder hex = new StringBuilder(decoded.length * 2);
+        for (byte b : decoded) {
+            appendHexDigit(hex, b >> 4);
+            appendHexDigit(hex, b);
+        }
+        return new Hash(algorithm, hex.toString());
     }
 
-    private void initMavenComponent(ArtifactCoords coords, Component c) {
-        addPomMetadata(coords, c);
-        c.setGroup(coords.getGroupId());
-        c.setName(coords.getArtifactId());
-        c.setVersion(coords.getVersion());
-        final PackageURL purl = getPurl(coords);
-        c.setPurl(purl);
-        c.setBomRef(purl.toString());
-        c.setType(Component.Type.LIBRARY);
+    private static void appendHexDigit(StringBuilder sb, int digit) {
+        digit &= 0xf;
+        sb.append((char) (digit < 10 ? '0' + digit : 'a' + digit - 10));
     }
 
     private void addPomMetadata(ArtifactCoords dep, org.cyclonedx.model.Component component) {
-        var model = modelResolver == null ? null : modelResolver.resolveEffectiveModel(dep);
+        addPomMetadata(dep, component, false);
+    }
+
+    private void addPomMetadata(ArtifactCoords dep, org.cyclonedx.model.Component component, boolean bundled) {
+        if (modelResolver == null) {
+            return;
+        }
+        final Model model;
+        if (bundled) {
+            // Bundled (shaded) components are discovered from pom.properties entries found inside JARs.
+            // Their POMs may not be available in any configured repository (e.g. build-time-only artifacts
+            // that were shaded into a published JAR), so a resolution failure must not fail the build.
+            try {
+                model = modelResolver.resolveEffectiveModel(dep);
+            } catch (Exception e) {
+                log.warnf(
+                        "Failed to resolve the effective model of the bundled component %s; "
+                                + "SBOM will omit POM metadata for this component",
+                        dep.toCompactCoords());
+                log.debug("Failed to resolve the effective model of the bundled component " + dep.toCompactCoords(), e);
+                return;
+            }
+        } else {
+            model = modelResolver.resolveEffectiveModel(dep);
+        }
         if (model != null) {
             extractComponentMetadata(model, component);
         }
@@ -295,21 +784,17 @@ public class CycloneDxSbomGenerator {
 
     private void extractComponentMetadata(Model model, org.cyclonedx.model.Component component) {
         if (component.getPublisher() == null) {
-            // If we don't already have publisher information, retrieve it.
             if (model.getOrganization() != null) {
                 component.setPublisher(model.getOrganization().getName());
             }
         }
         if (component.getDescription() == null) {
-            // If we don't already have description information, retrieve it.
             component.setDescription(model.getDescription());
         }
         var schemaVersion = getSchemaVersion();
-        if (component.getLicenseChoice() == null || component.getLicenseChoice().getLicenses() == null
-                || component.getLicenseChoice().getLicenses().isEmpty()) {
-            // If we don't already have license information, retrieve it.
+        if (component.getLicenses() == null || component.getLicenses().getLicenses().isEmpty()) {
             if (model.getLicenses() != null) {
-                component.setLicenseChoice(resolveMavenLicenses(model.getLicenses(), schemaVersion, includeLicenseText));
+                component.setLicenses(resolveMavenLicenses(model.getLicenses(), schemaVersion, includeLicenseText));
             }
         }
         if (Version.VERSION_10 != schemaVersion) {
@@ -360,7 +845,7 @@ public class CycloneDxSbomGenerator {
             if (artifactLicense.getName() != null && !resolved) {
                 final License license = new License();
                 license.setName(artifactLicense.getName().trim());
-                if (StringUtils.isNotBlank(artifactLicense.getUrl())) {
+                if (isNotBlank(artifactLicense.getUrl())) {
                     try {
                         final URI uri = new URI(artifactLicense.getUrl().trim());
                         license.setUrl(uri.toString());
@@ -374,27 +859,51 @@ public class CycloneDxSbomGenerator {
         return licenseChoice;
     }
 
+    private LicenseChoice resolveDescriptorLicenses(List<LicenseInfo> licenses) {
+        final LicenseChoice licenseChoice = new LicenseChoice();
+        for (LicenseInfo info : licenses) {
+            addLicenseInfo(licenseChoice, info);
+        }
+        return licenseChoice;
+    }
+
+    private void addLicenseInfo(LicenseChoice licenseChoice, LicenseInfo info) {
+        final Version schemaVersion = getSchemaVersion();
+        final LicenseChoice resolvedByName = LicenseResolver.resolve(info.name(), includeLicenseText);
+        boolean resolved = resolveLicenseInfo(licenseChoice, resolvedByName, schemaVersion);
+        if (info.url() != null && !resolved) {
+            final LicenseChoice resolvedByUrl = LicenseResolver.resolve(info.url(), includeLicenseText);
+            resolved = resolveLicenseInfo(licenseChoice, resolvedByUrl, schemaVersion);
+        }
+        if (!resolved) {
+            final License license = new License();
+            license.setName(info.name().trim());
+            if (isNotBlank(info.url())) {
+                try {
+                    final URI uri = new URI(info.url().trim());
+                    license.setUrl(uri.toString());
+                } catch (URISyntaxException e) {
+                    // throw it away
+                }
+            }
+            licenseChoice.addLicense(license);
+        }
+    }
+
+    private static boolean isNotBlank(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
     private boolean resolveLicenseInfo(final LicenseChoice licenseChoice, final LicenseChoice licenseChoiceToResolve,
             final Version schemaVersion) {
         if (licenseChoiceToResolve != null) {
             if (licenseChoiceToResolve.getLicenses() != null && !licenseChoiceToResolve.getLicenses().isEmpty()) {
                 licenseChoice.addLicense(licenseChoiceToResolve.getLicenses().get(0));
                 return true;
-            } else if (licenseChoiceToResolve.getExpression() != null && Version.VERSION_10 != schemaVersion) {
+            }
+            if (licenseChoiceToResolve.getExpression() != null && Version.VERSION_10 != schemaVersion) {
                 licenseChoice.setExpression(licenseChoiceToResolve.getExpression());
                 return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean doesComponentHaveExternalReference(final org.cyclonedx.model.Component component,
-            final ExternalReference.Type type) {
-        if (component.getExternalReferences() != null && !component.getExternalReferences().isEmpty()) {
-            for (final ExternalReference ref : component.getExternalReferences()) {
-                if (type == ref.getType()) {
-                    return true;
-                }
             }
         }
         return false;
@@ -416,53 +925,11 @@ public class CycloneDxSbomGenerator {
         }
     }
 
-    private static PackageURL getGenericPurl(String name, String version) {
-        Objects.requireNonNull(name, "name must not be null");
-        if (version == null) {
-            log.warn("Component " + name + " does not have a version. Please report this issue for quarkus-cyclonedx.");
-        }
-        try {
-            return PackageURLBuilder.aPackageURL()
-                    .withType(PackageURL.StandardTypes.GENERIC)
-                    .withName(name)
-                    .withVersion(version)
-                    .build();
-        } catch (MalformedPackageURLException e) {
-            throw new RuntimeException(
-                    "Failed to create a generic PURL for component with name " + name + " and version " + version, e);
-        }
-    }
-
-    private static PackageURL getPurl(ArtifactCoords dep) {
-        final TreeMap<String, String> qualifiers = new TreeMap<>();
-        qualifiers.put("type", dep.getType());
-        if (!dep.getClassifier().isEmpty()) {
-            qualifiers.put("classifier", dep.getClassifier());
-        }
-        final PackageURL purl;
-        try {
-            purl = new PackageURL(PackageURL.StandardTypes.MAVEN,
-                    dep.getGroupId(),
-                    dep.getArtifactId(),
-                    dep.getVersion(),
-                    qualifiers, null);
-        } catch (MalformedPackageURLException e) {
-            throw new RuntimeException("Failed to generate PURL for " + dep.toCompactCoords(), e);
-        }
-        return purl;
-    }
-
     static void addProperty(List<Property> props, String name, String value) {
         var prop = new Property();
         prop.setName(name);
         prop.setValue(value);
         props.add(prop);
-    }
-
-    private static List<ArtifactCoords> sortAlphabetically(Collection<ArtifactCoords> col) {
-        var list = new ArrayList<>(col);
-        list.sort(ARTIFACT_COORDS_COMPARATOR);
-        return list;
     }
 
     private SbomResult persistSbom(Bom bom, Path sbomFile, String format) {
@@ -485,8 +952,7 @@ public class CycloneDxSbomGenerator {
             throw new UncheckedIOException("Failed to write to " + sbomFile, e);
         }
 
-        return new SbomResult(sbomFile, "CycloneDX", bom.getSpecVersion(), format, CLASSIFIER_CYCLONEDX,
-                manifest.getRunnerPath());
+        return new SbomResult(sbomFile, "CycloneDX", bom.getSpecVersion(), format, CLASSIFIER_CYCLONEDX, runnerPath);
     }
 
     private String formatSbom(Bom bom, String format) {
@@ -494,13 +960,13 @@ public class CycloneDxSbomGenerator {
         final String sbomContent;
         if (format.equalsIgnoreCase("json")) {
             try {
-                sbomContent = BomGeneratorFactory.createJson(specVersion, bom).toJsonString(prettyPrint);
+                sbomContent = new ProvidesAwareBomJsonGenerator(bom, specVersion).toJsonString(prettyPrint);
             } catch (Throwable e) {
                 throw new RuntimeException("Failed to generate an SBOM in JSON format", e);
             }
         } else if (format.equalsIgnoreCase("xml")) {
             try {
-                sbomContent = BomGeneratorFactory.createXml(specVersion, bom).toXmlString();
+                sbomContent = BomGeneratorFactory.createXml(specVersion, bom).toXmlString(prettyPrint);
             } catch (GeneratorException e) {
                 throw new RuntimeException("Failed to generate an SBOM in XML format", e);
             }
@@ -518,7 +984,11 @@ public class CycloneDxSbomGenerator {
 
     private Path getOutputFile(String defaultFormat) {
         if (outputFile == null) {
-            var fileName = toSbomFileName(manifest.getRunnerPath().getFileName().toString(), defaultFormat);
+            if (runnerPath == null) {
+                throw new IllegalArgumentException(
+                        "Cannot determine output file name: no runner path set and no output file specified");
+            }
+            String fileName = toSbomFileName(runnerPath.getFileName().toString(), defaultFormat);
             return outputDir == null ? Path.of(fileName) : outputDir.resolve(fileName);
         }
         return outputFile;
@@ -593,20 +1063,16 @@ public class CycloneDxSbomGenerator {
             log.warn("skipping tool hashing because " + toolLocation + " appears to be a directory");
         }
 
+        ArtifactCoords coords = findToolCoords(toolLocation);
+
         if (getSchemaVersion().getVersion() >= 1.5) {
             final ToolInformation toolInfo = new ToolInformation();
             final Component toolComponent = new Component();
             toolComponent.setType(Component.Type.LIBRARY);
-            final ApplicationComponent appComponent = findApplicationComponent(toolLocation);
-            if (appComponent != null && appComponent.getResolvedDependency() != null) {
-                initMavenComponent(appComponent.getResolvedDependency(), toolComponent);
+            if (coords != null) {
+                initMavenToolComponent(coords, toolComponent);
             } else {
-                var coords = getMavenArtifact(toolLocation);
-                if (coords != null) {
-                    initMavenComponent(coords, toolComponent);
-                } else {
-                    toolComponent.setName(toolLocation.getFileName().toString());
-                }
+                toolComponent.setName(toolLocation.getFileName().toString());
             }
             if (hashes != null) {
                 toolComponent.setHashes(hashes);
@@ -615,20 +1081,12 @@ public class CycloneDxSbomGenerator {
             bom.getMetadata().setToolChoice(toolInfo);
         } else {
             var tool = new Tool();
-            final ApplicationComponent appComponent = findApplicationComponent(toolLocation);
-            if (appComponent != null && appComponent.getResolvedDependency() != null) {
-                tool.setVendor(appComponent.getResolvedDependency().getGroupId());
-                tool.setName(appComponent.getResolvedDependency().getArtifactId());
-                tool.setVersion(appComponent.getResolvedDependency().getVersion());
+            if (coords != null) {
+                tool.setVendor(coords.getGroupId());
+                tool.setName(coords.getArtifactId());
+                tool.setVersion(coords.getVersion());
             } else {
-                var coords = getMavenArtifact(toolLocation);
-                if (coords != null) {
-                    tool.setVendor(coords.getGroupId());
-                    tool.setName(coords.getArtifactId());
-                    tool.setVersion(coords.getVersion());
-                } else {
-                    tool.setName(toolLocation.getFileName().toString());
-                }
+                tool.setName(toolLocation.getFileName().toString());
             }
             if (hashes != null) {
                 tool.setHashes(hashes);
@@ -637,13 +1095,30 @@ public class CycloneDxSbomGenerator {
         }
     }
 
-    private ApplicationComponent findApplicationComponent(Path path) {
-        for (var c : manifest.getComponents()) {
-            if (c.getResolvedDependency().getResolvedPaths().contains(path)) {
-                return c;
+    private ArtifactCoords findToolCoords(Path toolLocation) {
+        // Try to find the tool among contributed components by path
+        for (SbomContribution contribution : contributions) {
+            for (ComponentDescriptor desc : contribution.components()) {
+                if (desc.getPath() != null && desc.getPath().equals(toolLocation)
+                        && Purl.TYPE_MAVEN.equals(desc.getPurl().getType())) {
+                    return toArtifactCoords(desc.getPurl());
+                }
             }
         }
-        return null;
+        // Fall back to reading pom.properties from the jar
+        return getMavenArtifact(toolLocation);
+    }
+
+    private void initMavenToolComponent(ArtifactCoords coords, Component c) {
+        addPomMetadata(coords, c);
+        c.setGroup(coords.getGroupId());
+        c.setName(coords.getArtifactId());
+        c.setVersion(coords.getVersion());
+        PackageURL purl = toCycloneDxPurl(Purl.maven(coords.getGroupId(), coords.getArtifactId(), coords.getVersion(),
+                coords.getType(), coords.getClassifier().isEmpty() ? null : coords.getClassifier()));
+        c.setPurl(purl);
+        c.setBomRef(purl.toString());
+        c.setType(Component.Type.LIBRARY);
     }
 
     private static ArtifactCoords getMavenArtifact(Path toolLocation) {

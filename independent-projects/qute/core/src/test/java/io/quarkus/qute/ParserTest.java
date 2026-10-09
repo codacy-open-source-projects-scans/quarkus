@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.Reader;
 import java.io.StringReader;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -206,6 +207,38 @@ public class ParserTest {
     }
 
     @Test
+    public void testSourceUriInTemplateException() {
+        URI sourceUri = URI.create("file:///path/to/foo.html");
+        Engine engine = Engine.builder().addDefaultSectionHelpers().addLocator(id -> Optional.of(new TemplateLocation() {
+
+            @Override
+            public Reader read() {
+                return new StringReader("{#if}");
+            }
+
+            @Override
+            public Optional<Variant> getVariant() {
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<URI> getSource() {
+                return Optional.of(sourceUri);
+            }
+        })).build();
+        try {
+            engine.getTemplate("foo.html");
+            fail("No parser error found");
+        } catch (TemplateException expected) {
+            assertEquals(
+                    "Parser error in template [file:///path/to/foo.html:1]: mandatory section parameters not declared for {#if}: [condition]",
+                    expected.getMessage());
+            assertNotNull(expected.getOrigin());
+            assertEquals(sourceUri, expected.getOrigin().getSourceUri().orElse(null));
+        }
+    }
+
+    @Test
     public void testSectionParameters() {
         assertParams("item.active || item.sold", "item.active", "||", "item.sold");
         assertParams("!(item.active || item.sold) || true", "!(item.active || item.sold)", "||", "true");
@@ -247,6 +280,20 @@ public class ParserTest {
                 + "|}").data("name", "world").render());
         assertEquals("Hello world <strong>", engine.parse("Hello {name} {|<strong>|}").data("name", "world").render());
         assertEquals("Hello {name} world", engine.parse("Hello{| {name} |}{name}").data("name", "world").render());
+
+        // Multi-pipe CDATA: 4 pipes
+        assertEquals("hello", engine.parse("{||||hello||||}").render());
+        // Multi-pipe CDATA: 3 pipes
+        assertEquals("text", engine.parse("{|||text|||}").render());
+        // Multi-pipe CDATA: content with |} inside is safe
+        assertEquals("hello |}world", engine.parse("{||||hello |}world||||}").render());
+        // Multi-pipe CDATA: content with ||} inside is safe
+        assertEquals("x |||}y", engine.parse("{||||x |||}y||||}").render());
+        // Multi-pipe CDATA alongside regular expressions
+        assertEquals("Hello world safe|}end",
+                engine.parse("Hello {name} {||||safe|}end||||}").data("name", "world").render());
+        // Multi-pipe CDATA: content with Qute expressions is not parsed
+        assertEquals("{name}", engine.parse("{|||{name}|||}").render());
     }
 
     @Test
@@ -529,7 +576,7 @@ public class ParserTest {
     }
 
     static void assertParserError(String template, ErrorCode code, String message, int line) {
-        Engine engine = Engine.builder().addDefaultSectionHelpers().build();
+        Engine engine = Engine.builder().addDefaultSectionHelpers().addSectionHelper(new EvalSectionHelper.Factory()).build();
         try {
             engine.parse(template);
             fail("No parser error found");

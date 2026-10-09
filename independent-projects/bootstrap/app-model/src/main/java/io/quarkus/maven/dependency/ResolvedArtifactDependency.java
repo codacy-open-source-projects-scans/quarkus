@@ -22,6 +22,7 @@ public class ResolvedArtifactDependency extends ArtifactDependency implements Re
     private final Collection<ArtifactCoords> deps;
     private final Collection<Dependency> directDeps;
     private volatile transient PathTree contentTree;
+    private transient String moduleName;
 
     public ResolvedArtifactDependency(ArtifactCoords coords) {
         this(coords, (PathCollection) null);
@@ -90,6 +91,14 @@ public class ResolvedArtifactDependency extends ArtifactDependency implements Re
         return directDeps;
     }
 
+    public String getModuleName() {
+        String moduleName = this.moduleName;
+        if (moduleName == null) {
+            moduleName = this.moduleName = ResolvedDependency.computeModuleName(this);
+        }
+        return moduleName;
+    }
+
     @Override
     public Map<String, Object> asMap(MappableCollectionFactory factory) {
         final Map<String, Object> map = factory.newMap();
@@ -119,7 +128,10 @@ public class ResolvedArtifactDependency extends ArtifactDependency implements Re
     @Override
     public String toString() {
         final StringBuilder buf = new StringBuilder();
-        buf.append(toGACTVString()).append(paths);
+        buf.append(toGACTVString());
+        if (paths != null) {
+            buf.append(paths);
+        }
         if (module != null) {
             buf.append(" ").append(module);
         }

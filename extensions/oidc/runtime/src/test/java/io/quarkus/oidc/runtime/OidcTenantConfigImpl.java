@@ -20,10 +20,6 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
         this.tenantId = null;
     }
 
-    OidcTenantConfigImpl(String tenantId) {
-        this.tenantId = tenantId;
-    }
-
     enum ConfigMappingMethods {
         AUTH_SERVER_URL,
         DISCOVERY_PATH,
@@ -36,24 +32,8 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
         MAX_POOL_SIZE,
         FOLLOW_REDIRECTS,
         PROXY,
-        PROXY_HOST,
-        PROXY_PORT,
-        PROXY_USERNAME,
-        PROXY_PASSWORD,
         TLS,
         TLS_CONFIGURATION,
-        TLS_VERIFICATION,
-        TLS_KEYSTORE_FILE,
-        TLS_KEYSTORE_FILE_TYPE,
-        TLS_KEYSTORE_PROVIDER,
-        TLS_KEYSTORE_PASSWORD,
-        TLS_KEYSTORE_KEY_ALIAS,
-        TLS_KEYSTORE_KEY_PASSWORD,
-        TLS_TRUSTSTORE_PASSWORD,
-        TLS_TRUSTSTORE_FILE,
-        TLS_TRUSTSTORE_CERT_ALIAS,
-        TLS_TRUSTSTORE_FILE_TYPE,
-        TLS_TRUSTSTORE_PROVIDER,
         TOKEN_PATH,
         REVOKE_PATH,
         CLIENT_ID,
@@ -86,6 +66,7 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
         CREDENTIALS_JWT_SIGNATURE_ALGORITHM,
         CREDENTIALS_JWT_LIFESPAN,
         CREDENTIALS_JWT_ASSERTION,
+        CREDENTIALS_FOR_ALL_ENDPOINTS,
         CREDENTIALS_JWT_AUDIENCE,
         CREDENTIALS_JWT_KEEP_AUDIENCE_TRAILING_SLASH,
         CREDENTIALS_JWT_TOKEN_ID,
@@ -156,7 +137,6 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
         AUTHENTICATION_ID_TOKEN_REQUIRED,
         AUTHENTICATION_INTERNAL_ID_TOKEN_LIFESPAN,
         AUTHENTICATION_PKCE_REQUIRED,
-        AUTHENTICATION_PKCE_SECRET,
         AUTHENTICATION_STATE_SECRET,
         CERTIFICATION_CHAIN_LEAF_CERTIFICATE_NAME,
         CERTIFICATION_CHAIN_TRUST_STORE_FILE,
@@ -168,6 +148,10 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
         RESOURCE_METADATA_SCOPES,
         RESOURCE_METADATA_AUTHORIZATION_SERVER,
         RESOURCE_METADATA_FORCE_HTTPS_SCHEME,
+        CLIENT_ID_METADATA,
+        CLIENT_ID_METADATA_FORCE_HTTPS_SCHEME,
+        DPOP,
+        DPOP_PROOF_AGE,
         LOGOUT_PATH,
         LOGOUT_POST_LOGOUT_PATH,
         LOGOUT_POST_LOGOUT_URI_PARAM,
@@ -200,6 +184,7 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
         TOKEN_DECRYPTION_KEY_LOCATION,
         TOKEN_DECRYPT_ID_TOKEN,
         TOKEN_DECRYPT_ACCESS_TOKEN,
+        TOKEN_DECRYPTION_ALGORITHM,
         TOKEN_ALLOW_JWT_INTROSPECTION,
         TOKEN_REQUIRE_JWT_INTROSPECTION_ONLY,
         TOKEN_ALLOW_OPAQUE_TOKEN_INTROSPECTION,
@@ -222,6 +207,7 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
         RAR_SIMPLE,
         RAR_ARRAY,
         RAR_TYPE,
+        REFRESH_TOKEN_CACHE_TIME_TO_LIVE,
         PAR_PATH
     }
 
@@ -406,6 +392,12 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
             }
 
             @Override
+            public Duration refreshTokenCacheTimeToLive() {
+                invocationsRecorder.put(ConfigMappingMethods.REFRESH_TOKEN_CACHE_TIME_TO_LIVE, true);
+                return null;
+            }
+
+            @Override
             public Duration forcedJwkRefreshInterval() {
                 invocationsRecorder.put(ConfigMappingMethods.TOKEN_FORCED_JWK_REFRESH_INTERNAL, true);
                 return null;
@@ -445,6 +437,12 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
             public boolean decryptAccessToken() {
                 invocationsRecorder.put(ConfigMappingMethods.TOKEN_DECRYPT_ACCESS_TOKEN, true);
                 return false;
+            }
+
+            @Override
+            public Optional<DecryptionAlgorithm> decryptionAlgorithm() {
+                invocationsRecorder.put(ConfigMappingMethods.TOKEN_DECRYPTION_ALGORITHM, true);
+                return Optional.empty();
             }
 
             @Override
@@ -619,6 +617,18 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
     }
 
     @Override
+    public Dpop dpop() {
+        invocationsRecorder.put(ConfigMappingMethods.DPOP, true);
+        return new Dpop() {
+            @Override
+            public Duration proofAge() {
+                invocationsRecorder.put(ConfigMappingMethods.DPOP_PROOF_AGE, true);
+                return Duration.ofMinutes(2);
+            }
+        };
+    }
+
+    @Override
     public ResourceMetadata resourceMetadata() {
         invocationsRecorder.put(ConfigMappingMethods.RESOURCE_METADATA, true);
         return new ResourceMetadata() {
@@ -650,6 +660,18 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
             public boolean forceHttpsScheme() {
                 invocationsRecorder.put(ConfigMappingMethods.RESOURCE_METADATA_FORCE_HTTPS_SCHEME, true);
                 return false;
+            }
+        };
+    }
+
+    @Override
+    public ClientIdMetadata clientIdMetadata() {
+        invocationsRecorder.put(ConfigMappingMethods.CLIENT_ID_METADATA, true);
+        return new ClientIdMetadata() {
+            @Override
+            public boolean forceHttpsScheme() {
+                invocationsRecorder.put(ConfigMappingMethods.CLIENT_ID_METADATA_FORCE_HTTPS_SCHEME, true);
+                return true;
             }
         };
     }
@@ -847,12 +869,6 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
             @Override
             public Optional<Boolean> pkceRequired() {
                 invocationsRecorder.put(ConfigMappingMethods.AUTHENTICATION_PKCE_REQUIRED, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> pkceSecret() {
-                invocationsRecorder.put(ConfigMappingMethods.AUTHENTICATION_PKCE_SECRET, true);
                 return Optional.empty();
             }
 
@@ -1182,6 +1198,16 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
                     }
 
                     @Override
+                    public Optional<String> publicKey() {
+                        return Optional.empty();
+                    }
+
+                    @Override
+                    public Optional<String> publicKeyFile() {
+                        return Optional.empty();
+                    }
+
+                    @Override
                     public Optional<String> audience() {
                         invocationsRecorder.put(ConfigMappingMethods.CREDENTIALS_JWT_AUDIENCE, true);
                         return Optional.empty();
@@ -1235,6 +1261,12 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
                         return false;
                     }
                 };
+            }
+
+            @Override
+            public boolean forAllEndpoints() {
+                invocationsRecorder.put(ConfigMappingMethods.CREDENTIALS_FOR_ALL_ENDPOINTS, true);
+                return false;
             }
         };
     }
@@ -1308,30 +1340,6 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
                 invocationsRecorder.put(ConfigMappingMethods.PROXY_CONFIGURATION_NAME, true);
                 return Optional.empty();
             }
-
-            @Override
-            public Optional<String> host() {
-                invocationsRecorder.put(ConfigMappingMethods.PROXY_HOST, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public int port() {
-                invocationsRecorder.put(ConfigMappingMethods.PROXY_PORT, true);
-                return 0;
-            }
-
-            @Override
-            public Optional<String> username() {
-                invocationsRecorder.put(ConfigMappingMethods.PROXY_USERNAME, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> password() {
-                invocationsRecorder.put(ConfigMappingMethods.PROXY_PASSWORD, true);
-                return Optional.empty();
-            }
         };
     }
 
@@ -1342,78 +1350,6 @@ final class OidcTenantConfigImpl implements OidcTenantConfig {
             @Override
             public Optional<String> tlsConfigurationName() {
                 invocationsRecorder.put(ConfigMappingMethods.TLS_CONFIGURATION, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<Verification> verification() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_VERIFICATION, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<Path> keyStoreFile() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_KEYSTORE_FILE, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> keyStoreFileType() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_KEYSTORE_FILE_TYPE, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> keyStoreProvider() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_KEYSTORE_PROVIDER, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> keyStorePassword() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_KEYSTORE_PASSWORD, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> keyStoreKeyAlias() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_KEYSTORE_KEY_ALIAS, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> keyStoreKeyPassword() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_KEYSTORE_KEY_PASSWORD, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<Path> trustStoreFile() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_TRUSTSTORE_FILE, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> trustStorePassword() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_TRUSTSTORE_PASSWORD, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> trustStoreCertAlias() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_TRUSTSTORE_CERT_ALIAS, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> trustStoreFileType() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_TRUSTSTORE_FILE_TYPE, true);
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<String> trustStoreProvider() {
-                invocationsRecorder.put(ConfigMappingMethods.TLS_TRUSTSTORE_PROVIDER, true);
                 return Optional.empty();
             }
         };

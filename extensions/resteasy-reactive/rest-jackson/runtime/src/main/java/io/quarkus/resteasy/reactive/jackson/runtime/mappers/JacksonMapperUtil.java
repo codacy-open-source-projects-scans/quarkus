@@ -1,32 +1,153 @@
 package io.quarkus.resteasy.reactive.jackson.runtime.mappers;
 
-import java.io.IOException;
 import java.lang.reflect.Array;
+import java.lang.reflect.Method;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAccessor;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TimeZone;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.SerializableString;
-import com.fasterxml.jackson.databind.BeanProperty;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.JsonSerializer;
-import com.fasterxml.jackson.databind.ObjectWriter;
-import com.fasterxml.jackson.databind.PropertyNamingStrategy;
-import com.fasterxml.jackson.databind.SerializerProvider;
-import com.fasterxml.jackson.databind.util.NameTransformer;
 
 import io.quarkus.arc.Arc;
 import io.quarkus.arc.ArcContainer;
 import io.quarkus.arc.InstanceHandle;
 import io.quarkus.resteasy.reactive.jackson.runtime.security.RolesAllowedConfigExpStorage;
 import io.quarkus.security.identity.SecurityIdentity;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.SerializableString;
+import tools.jackson.core.filter.FilteringGeneratorDelegate;
+import tools.jackson.core.filter.TokenFilter;
+import tools.jackson.core.sym.PropertyNameMatcher;
+import tools.jackson.databind.BeanProperty;
+import tools.jackson.databind.DatabindException;
+import tools.jackson.databind.DeserializationContext;
+import tools.jackson.databind.JavaType;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectWriter;
+import tools.jackson.databind.PropertyNamingStrategy;
+import tools.jackson.databind.SerializationContext;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.ValueSerializer;
+import tools.jackson.databind.introspect.AnnotatedMethod;
+import tools.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.util.NameTransformer;
 
 public class JacksonMapperUtil {
+
+    private static final AnnotatedMethod VISIBILITY_TEST_METHOD;
+    static {
+        try {
+            Method m = Object.class.getMethod("getClass");
+            VISIBILITY_TEST_METHOD = new AnnotatedMethod(null, m, null, null);
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static boolean isPublicGetterVisible(SerializationContext context) {
+        return context.getConfig().getDefaultVisibilityChecker()
+                .isGetterVisible(VISIBILITY_TEST_METHOD);
+    }
+
+    public static boolean isPublicIsGetterVisible(SerializationContext context) {
+        return context.getConfig().getDefaultVisibilityChecker()
+                .isIsGetterVisible(VISIBILITY_TEST_METHOD);
+    }
+
+    public static void serializeBooleanAsNumber(boolean value, JsonGenerator generator) {
+        generator.writeNumber(value ? 1 : 0);
+    }
+
+    public static void serializeDateAsTimestamp(Date value, JsonGenerator generator) {
+        if (value == null) {
+            generator.writeNull();
+            return;
+        }
+        generator.writeNumber(value.getTime());
+    }
+
+    public static void serializeFormattedDate(Object value, String pattern, String timezone,
+            JsonGenerator generator) {
+        if (value == null) {
+            generator.writeNull();
+            return;
+        }
+        SimpleDateFormat sdf = new SimpleDateFormat(pattern);
+        if (timezone != null) {
+            sdf.setTimeZone(TimeZone.getTimeZone(timezone));
+        }
+        generator.writeString(sdf.format(value));
+    }
+
+    public static void serializeDefaultFormatDate(Object value, String timezone, JsonGenerator generator,
+            SerializationContext context) {
+        if (value == null) {
+            generator.writeNull();
+            return;
+        }
+        // mirrors Jackson's DateSerializer: the configured date format (StdDateFormat unless overridden),
+        // re-zoned to the timezone from the @JsonFormat annotation, if any
+        DateFormat dateFormat = (DateFormat) context.getConfig().getDateFormat().clone();
+        if (timezone != null) {
+            dateFormat.setTimeZone(TimeZone.getTimeZone(timezone));
+        }
+        generator.writeString(dateFormat.format(value));
+    }
+
+    public static void serializeFormattedTemporal(Object value, String pattern, String timezone,
+            JsonGenerator generator) {
+        if (value == null) {
+            generator.writeNull();
+            return;
+        }
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern);
+        if (timezone != null) {
+            formatter = formatter.withZone(ZoneId.of(timezone));
+        }
+        generator.writeString(formatter.format((TemporalAccessor) value));
+    }
+
+    public static void serializeTemporalAsTimestamp(Object value, JsonGenerator generator) {
+        if (value == null) {
+            generator.writeNull();
+        } else if (value instanceof Instant i) {
+            generator.writeNumber(toBigDecimal(i.getEpochSecond(), i.getNano()));
+        } else if (value instanceof ZonedDateTime zdt) {
+            Instant inst = zdt.toInstant();
+            generator.writeNumber(toBigDecimal(inst.getEpochSecond(), inst.getNano()));
+        } else if (value instanceof OffsetDateTime odt) {
+            Instant inst = odt.toInstant();
+            generator.writeNumber(toBigDecimal(inst.getEpochSecond(), inst.getNano()));
+        } else if (value instanceof Duration d) {
+            generator.writeNumber(toBigDecimal(d.getSeconds(), d.getNano()));
+        } else {
+            generator.writeString(value.toString());
+        }
+    }
+
+    private static BigDecimal toBigDecimal(long seconds, int nanoseconds) {
+        if (nanoseconds == 0) {
+            return BigDecimal.valueOf(seconds);
+        }
+        return new BigDecimal(seconds + "." + String.format("%09d", nanoseconds));
+    }
 
     public static boolean isViewIncluded(Class<?> activeView, Class<?>[] viewClasses) {
         if (activeView == null) {
@@ -40,8 +161,8 @@ public class JacksonMapperUtil {
         return false;
     }
 
-    public static boolean includeSecureField(SerializerProvider serializerProvider, String[] rolesAllowed) {
-        return serializerProvider.getConfig().getFilterProvider() == null || includeSecureField(rolesAllowed);
+    public static boolean includeSecureField(SerializationContext serializationContext, String[] rolesAllowed) {
+        return serializationContext.getFilterProvider() == null || includeSecureField(rolesAllowed);
     }
 
     public static boolean includeSecureField(String[] rolesAllowed) {
@@ -78,12 +199,32 @@ public class JacksonMapperUtil {
      * When no strategy is set, the pre-encoded {@code defaultName} is used for zero overhead.
      */
     public static void writeFieldName(JsonGenerator gen, PropertyNamingStrategy strategy,
-            String javaFieldName, SerializableString defaultName) throws IOException {
+            String javaFieldName, SerializableString defaultName) {
         if (strategy == null) {
-            gen.writeFieldName(defaultName);
+            gen.writeName(defaultName);
         } else {
-            gen.writeFieldName(strategy.nameForField(null, null, javaFieldName));
+            gen.writeName(strategy.nameForField(null, null, javaFieldName));
         }
+    }
+
+    /**
+     * Matches a JSON field name against a pre-built {@link PropertyNameMatcher}, falling back
+     * to on-demand translation through the naming strategy when the direct match fails.
+     *
+     * @return the matched index (≥ 0 on match, &lt; 0 on miss)
+     */
+    public static int matchFieldName(PropertyNameMatcher matcher, String name,
+            PropertyNamingStrategy strategy, String[] translatableFieldNames) {
+        int ix = matcher.matchName(name);
+        if (ix >= 0 || strategy == null) {
+            return ix;
+        }
+        for (String javaName : translatableFieldNames) {
+            if (name.equals(strategy.nameForField(null, null, javaName))) {
+                return matcher.matchName(javaName);
+            }
+        }
+        return ix;
     }
 
     /**
@@ -168,44 +309,117 @@ public class JacksonMapperUtil {
         return valueTypes;
     }
 
-    public static void serializePojo(Object value, JsonGenerator generator, SerializerProvider serializerProvider)
-            throws IOException {
+    public static void serializePojo(Object value, JsonGenerator generator, SerializationContext serializationContext) {
+        serializePojo(value, null, generator, serializationContext);
+    }
+
+    public static void serializePojo(Object value, Object bean, JsonGenerator generator,
+            SerializationContext serializationContext) {
         if (value == null || value instanceof Map) {
             generator.writePOJO(value);
             return;
         }
-        JsonSerializer<Object> serializer = serializerProvider.findTypedValueSerializer(value.getClass(), true, null);
+        if (value == bean && handleSelfReference(bean, generator, serializationContext)) {
+            return;
+        }
+        ValueSerializer<Object> serializer = serializationContext.findTypedValueSerializer(value.getClass(), true);
         if (serializer != null) {
-            serializer.serialize(value, generator, serializerProvider);
+            serializer.serialize(value, generator, serializationContext);
         } else {
             generator.writePOJO(value);
         }
     }
 
+    private static boolean handleSelfReference(Object bean, JsonGenerator generator,
+            SerializationContext serializationContext) {
+        if (!serializationContext.isEnabled(SerializationFeature.FAIL_ON_SELF_REFERENCES)) {
+            return false;
+        }
+        if (serializationContext.isEnabled(SerializationFeature.WRITE_SELF_REFERENCES_AS_NULL)) {
+            generator.writeNull();
+            return true;
+        }
+        throw DatabindException.from(generator,
+                "Direct self-reference leading to cycle (through reference chain: " + bean.getClass().getName() + ")");
+    }
+
     @SuppressWarnings("unchecked")
     public static void serializeCollection(Object value, Class<?> collectionClass, Class<?> elementClass,
-            JsonGenerator generator, SerializerProvider serializerProvider) throws IOException {
+            JsonGenerator generator, SerializationContext serializationContext) {
         if (value == null) {
             generator.writeNull();
             return;
         }
-        JavaType collectionType = serializerProvider.getTypeFactory()
+        JavaType collectionType = serializationContext.getTypeFactory()
                 .constructCollectionType((Class<? extends Collection>) collectionClass, elementClass);
-        JsonSerializer<Object> serializer = serializerProvider.findValueSerializer(collectionType);
-        serializer.serialize(value, generator, serializerProvider);
+        ValueSerializer<Object> serializer = serializationContext.findValueSerializer(collectionType);
+        serializer.serialize(value, generator, serializationContext);
     }
 
     public static void serializeUnwrapped(Object value, JsonGenerator generator,
-            SerializerProvider serializerProvider) throws IOException {
+            SerializationContext serializationContext, Set<String> ignoredProperties,
+            String prefix, String suffix) {
         if (value == null) {
             return;
         }
-        JsonSerializer<Object> serializer = serializerProvider.findValueSerializer(value.getClass());
+        if (!ignoredProperties.isEmpty()) {
+            generator = new FilteringGeneratorDelegate(generator, new TokenFilter() {
+                @Override
+                public TokenFilter includeProperty(String name) {
+                    return ignoredProperties.contains(name) ? null : TokenFilter.INCLUDE_ALL;
+                }
+            }, TokenFilter.Inclusion.INCLUDE_ALL_AND_PATH, true);
+        }
+        boolean hasTransform = !prefix.isEmpty() || !suffix.isEmpty();
+        if (hasTransform) {
+            generator = new PrefixSuffixGeneratorDelegate(generator, prefix, suffix);
+        }
+        ValueSerializer<Object> serializer = serializationContext.findValueSerializer(value.getClass());
         if (serializer instanceof GeneratedSerializer gs) {
-            gs.serializeContent(value, generator, serializerProvider);
+            gs.serializeContent(value, generator, serializationContext);
         } else {
-            serializer.unwrappingSerializer(NameTransformer.NOP)
-                    .serialize(value, generator, serializerProvider);
+            NameTransformer transformer = hasTransform
+                    ? NameTransformer.simpleTransformer(prefix, suffix)
+                    : NameTransformer.NOP;
+            serializer.unwrappingSerializer(transformer)
+                    .serialize(value, generator, serializationContext);
+        }
+    }
+
+    public static void collectUnwrappedFields(JsonNode root, String fieldName, String prefix, String suffix) {
+        if (!(root instanceof ObjectNode objectNode)) {
+            return;
+        }
+        ObjectNode inner = objectNode.objectNode();
+        List<String> toRemove = new ArrayList<>();
+        for (String name : objectNode.propertyNames()) {
+            if (name.startsWith(prefix) && name.endsWith(suffix)) {
+                String stripped = name.substring(prefix.length(), name.length() - suffix.length());
+                if (!stripped.isEmpty()) {
+                    inner.set(stripped, objectNode.get(name));
+                    toRemove.add(name);
+                }
+            }
+        }
+        if (!inner.isEmpty()) {
+            toRemove.forEach(objectNode::remove);
+            objectNode.set(fieldName, inner);
+        }
+    }
+
+    public static void serializeAnyGetterMap(Map<?, ?> map, JsonGenerator generator,
+            SerializationContext serializationContext) {
+        if (map == null) {
+            return;
+        }
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            generator.writeName(String.valueOf(entry.getKey()));
+            Object value = entry.getValue();
+            if (value == null) {
+                generator.writeNull();
+            } else {
+                serializePojo(value, null, generator, serializationContext);
+            }
         }
     }
 
@@ -216,8 +430,9 @@ public class JacksonMapperUtil {
         NON_ABSENT,
         NON_EMPTY;
 
-        public static SerializationInclude decode(Object object, SerializerProvider serializerProvider) {
-            JsonInclude.Include include = serializerProvider.getDefaultPropertyInclusion(object.getClass()).getValueInclusion();
+        public static SerializationInclude decode(Object object, SerializationContext serializationContext) {
+            JsonInclude.Include include = serializationContext.getDefaultPropertyInclusion(object.getClass())
+                    .getValueInclusion();
             return switch (include) {
                 case NON_EMPTY -> NON_EMPTY;
                 case NON_NULL -> NON_NULL;

@@ -118,6 +118,8 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
          */
         public Jwt jwt = new Jwt();
 
+        private boolean forAllEndpoints = false;
+
         public Optional<String> getSecret() {
             return secret;
         }
@@ -146,6 +148,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
             secret = mapping.secret();
             clientSecret.addConfigMappingValues(mapping.clientSecret());
             jwt.addConfigMappingValues(mapping.jwt());
+            forAllEndpoints = mapping.forAllEndpoints();
         }
 
         @Override
@@ -161,6 +164,11 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
         @Override
         public io.quarkus.oidc.common.runtime.config.OidcClientCommonConfig.Credentials.Jwt jwt() {
             return jwt;
+        }
+
+        @Override
+        public boolean forAllEndpoints() {
+            return forAllEndpoints;
         }
 
         /**
@@ -326,6 +334,16 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
             }
 
             @Override
+            public Optional<String> publicKey() {
+                return publicKey;
+            }
+
+            @Override
+            public Optional<String> publicKeyFile() {
+                return publicKeyFile;
+            }
+
+            @Override
             public Optional<String> audience() {
                 return audience;
             }
@@ -380,7 +398,7 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
                 // This option is only supported by the OIDC client extension.
                 BEARER,
                 // SPIFFE SVID token is used as a client assertion
-                SPIFFE
+                SPIFFE_JWT
             }
 
             /**
@@ -434,6 +452,16 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
              * The private key password.
              */
             public Optional<String> keyPassword;
+
+            /**
+             * String representation of a public key in PEM format.
+             */
+            public Optional<String> publicKey = Optional.empty();
+
+            /**
+             * Path to a file containing the public key in PEM format.
+             */
+            public Optional<String> publicKeyFile = Optional.empty();
 
             /**
              * The JWT audience (`aud`) claim value.
@@ -586,6 +614,8 @@ public abstract class OidcClientCommonConfig extends OidcCommonConfig
                 keyStorePassword = mapping.keyStorePassword();
                 keyId = mapping.keyId();
                 keyPassword = mapping.keyPassword();
+                publicKey = mapping.publicKey();
+                publicKeyFile = mapping.publicKeyFile();
                 audience = mapping.audience();
                 keepAudienceTrailingSlash = mapping.keepAudienceTrailingSlash();
                 tokenKeyId = mapping.tokenKeyId();

@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.hibernate.action.queue.internal.support.ActionQueueFactoryServiceInitiator;
 import org.hibernate.boot.registry.BootstrapServiceRegistry;
 import org.hibernate.boot.registry.StandardServiceInitiator;
 import org.hibernate.boot.registry.classloading.spi.ClassLoaderService;
@@ -34,6 +35,7 @@ import org.hibernate.reactive.provider.service.ReactiveSessionFactoryBuilderInit
 import org.hibernate.reactive.provider.service.ReactiveSqmMultiTableMutationStrategyProviderInitiator;
 import org.hibernate.reactive.provider.service.ReactiveValuesMappingProducerProviderInitiator;
 import org.hibernate.resource.transaction.internal.TransactionCoordinatorBuilderInitiator;
+import org.hibernate.service.internal.ChangesetCoordinatorInitiator;
 import org.hibernate.service.internal.ProvidedService;
 import org.hibernate.service.internal.SessionFactoryServiceRegistryFactoryInitiator;
 import org.hibernate.tool.schema.internal.SchemaManagementToolInitiator;
@@ -53,6 +55,7 @@ import io.quarkus.hibernate.orm.runtime.service.QuarkusRuntimeInitDialectFactory
 import io.quarkus.hibernate.orm.runtime.service.QuarkusRuntimeInitDialectResolverInitiator;
 import io.quarkus.hibernate.orm.runtime.service.bytecodeprovider.QuarkusRuntimeBytecodeProviderInitiator;
 import io.quarkus.hibernate.orm.runtime.service.internalcache.QuarkusInternalCacheFactoryInitiator;
+import io.quarkus.hibernate.orm.runtime.service.propertyaccessor.QuarkusPropertyAccessorServiceInitiator;
 import io.quarkus.hibernate.reactive.runtime.customized.CheckingVertxContextInitiator;
 import io.quarkus.hibernate.reactive.runtime.customized.QuarkusNoJdbcConnectionProviderInitiator;
 
@@ -158,7 +161,7 @@ public class PreconfiguredReactiveServiceRegistryBuilder {
         // Definitely exclusive to Hibernate Reactive, as it marks the registry as Reactive:
         serviceInitiators.add(ReactiveMarkerServiceInitiator.INSTANCE);
 
-        // Custom to Quarkus: Hibernate Reactive upstream would use org.hibernate.reactive.context.impl.VertxContextInitiator
+        // Custom to Quarkus: Hibernate Reactive upstream would use org.hibernate.reactive.context.internal.VertxContextInitiator
         serviceInitiators.add(CheckingVertxContextInitiator.INSTANCE);
 
         //Custom for Hibernate Reactive:
@@ -182,6 +185,9 @@ public class PreconfiguredReactiveServiceRegistryBuilder {
 
         // TODO (optional): assume entities are already enhanced?
         serviceInitiators.add(PropertyAccessStrategyResolverInitiator.INSTANCE);
+
+        // Default implementation
+        serviceInitiators.add(QuarkusPropertyAccessorServiceInitiator.INSTANCE);
 
         // Custom one!
         serviceInitiators.add(QuarkusImportSqlCommandExtractorInitiator.INSTANCE);
@@ -252,6 +258,12 @@ public class PreconfiguredReactiveServiceRegistryBuilder {
 
         // Custom Quarkus implementation: overrides the internal cache to leverage Caffeine
         serviceInitiators.add(QuarkusInternalCacheFactoryInitiator.INSTANCE);
+
+        // Default implementation
+        serviceInitiators.add(ChangesetCoordinatorInitiator.INSTANCE);
+
+        // Default implementation
+        serviceInitiators.add(ActionQueueFactoryServiceInitiator.INSTANCE);
 
         serviceInitiators.trimToSize();
         return serviceInitiators;

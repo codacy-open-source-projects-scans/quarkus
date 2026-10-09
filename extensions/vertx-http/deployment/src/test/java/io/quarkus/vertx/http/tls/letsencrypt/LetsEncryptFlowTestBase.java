@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.net.URL;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.SSLHandshakeException;
 
@@ -45,7 +47,7 @@ public abstract class LetsEncryptFlowTestBase {
     private String tlsConfigurationName;
 
     static <T> T await(Future<T> future) {
-        return future.toCompletionStage().toCompletableFuture().join();
+        return future.await();
     }
 
     public void initFlow(Vertx vertx, String tlsConfigurationName) {
@@ -63,7 +65,7 @@ public abstract class LetsEncryptFlowTestBase {
 
     abstract String getChallengeEndpoint();
 
-    void testLetsEncryptFlow() throws IOException {
+    void testLetsEncryptFlow() throws IOException, TimeoutException {
         WebClientOptions options = new WebClientOptions().setSsl(true)
                 .setTrustOptions(new PemTrustOptions().addCertPath(SELF_SIGNED_CA.getAbsolutePath()));
         WebClient client = WebClient.create(vertx, options);
@@ -181,14 +183,16 @@ public abstract class LetsEncryptFlowTestBase {
         // Verify the application is serving the new certificate
         // We should not use the WebClient as the connection are still established with the old certificate.
         URL url = new URL(getApplicationEndpoint());
-        assertThatThrownBy(() -> vertx.createHttpClient(
+        var httpClient = vertx.createHttpClient(
                 new HttpClientOptions().setSsl(true).setDefaultPort(url.getPort())
-                        .setTrustOptions(new PemTrustOptions().addCertPath(SELF_SIGNED_CA.getAbsolutePath())))
+                        .setTrustOptions(new PemTrustOptions().addCertPath(SELF_SIGNED_CA.getAbsolutePath())));
+        assertThatThrownBy(() -> httpClient
                 .request(HttpMethod.GET, "/tls")
                 .flatMap(HttpClientRequest::send)
                 .flatMap(HttpClientResponse::body)
                 .map(Buffer::toString)
-                .toCompletionStage().toCompletableFuture().join()).hasCauseInstanceOf(SSLHandshakeException.class);
+                .await()).hasCauseInstanceOf(SSLHandshakeException.class);
+        httpClient.close().await(5, TimeUnit.SECONDS);
 
         WebClient newWebClient = WebClient.create(vertx,
                 options.setTrustOptions(new PemTrustOptions().addCertPath(ACME_CA.getAbsolutePath())));

@@ -3,6 +3,7 @@ package io.quarkus.hibernate.reactive.runtime.boot.registry;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.hibernate.action.queue.internal.support.ActionQueueFactoryServiceInitiator;
 import org.hibernate.boot.cfgxml.internal.CfgXmlAccessServiceInitiator;
 import org.hibernate.boot.registry.StandardServiceInitiator;
 import org.hibernate.engine.config.internal.ConfigurationServiceInitiator;
@@ -26,6 +27,7 @@ import org.hibernate.reactive.provider.service.ReactiveSessionFactoryBuilderInit
 import org.hibernate.reactive.provider.service.ReactiveSqmMultiTableMutationStrategyProviderInitiator;
 import org.hibernate.reactive.provider.service.ReactiveValuesMappingProducerProviderInitiator;
 import org.hibernate.resource.transaction.internal.TransactionCoordinatorBuilderInitiator;
+import org.hibernate.service.internal.ChangesetCoordinatorInitiator;
 import org.hibernate.service.internal.SessionFactoryServiceRegistryFactoryInitiator;
 
 import io.quarkus.hibernate.orm.runtime.cdi.QuarkusManagedBeanRegistryInitiator;
@@ -37,6 +39,7 @@ import io.quarkus.hibernate.orm.runtime.service.QuarkusRegionFactoryInitiator;
 import io.quarkus.hibernate.orm.runtime.service.QuarkusStaticInitDialectFactoryInitiator;
 import io.quarkus.hibernate.orm.runtime.service.StandardHibernateORMInitiatorListProvider;
 import io.quarkus.hibernate.orm.runtime.service.internalcache.QuarkusInternalCacheFactoryInitiator;
+import io.quarkus.hibernate.orm.runtime.service.propertyaccessor.QuarkusPropertyAccessorServiceInitiator;
 import io.quarkus.hibernate.reactive.runtime.customized.QuarkusNoJdbcConnectionProviderInitiator;
 
 /**
@@ -68,6 +71,9 @@ public final class ReactiveHibernateInitiatorListProvider implements InitialInit
         serviceInitiators.add(CfgXmlAccessServiceInitiator.INSTANCE);
         serviceInitiators.add(ConfigurationServiceInitiator.INSTANCE);
         serviceInitiators.add(PropertyAccessStrategyResolverInitiator.INSTANCE);
+
+        // Default implementation
+        serviceInitiators.add(QuarkusPropertyAccessorServiceInitiator.INSTANCE);
 
         serviceInitiators.add(QuarkusImportSqlCommandExtractorInitiator.INSTANCE);
 
@@ -126,6 +132,12 @@ public final class ReactiveHibernateInitiatorListProvider implements InitialInit
 
         // Custom Quarkus implementation: overrides the internal cache to leverage Caffeine
         serviceInitiators.add(QuarkusInternalCacheFactoryInitiator.INSTANCE);
+
+        // Default implementation: temporal entity / audit changeset coordination
+        serviceInitiators.add(ChangesetCoordinatorInitiator.INSTANCE);
+
+        // Default implementation
+        serviceInitiators.add(ActionQueueFactoryServiceInitiator.INSTANCE);
 
         serviceInitiators.trimToSize();
         return serviceInitiators;

@@ -260,7 +260,22 @@
             </dependency>
             <dependency>
                 <groupId>org.apache.maven.resolver</groupId>
-                <artifactId>maven-resolver-transport-wagon</artifactId>
+                <artifactId>maven-resolver-transport-http</artifactId>
+                <version>${maven-resolver.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-api</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>jcl-over-slf4j</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.maven.resolver</groupId>
+                <artifactId>maven-resolver-transport-file</artifactId>
                 <version>${maven-resolver.version}</version>
                 <exclusions>
                     <exclusion>
@@ -508,6 +523,11 @@
                 <version>${smallrye-common.version}</version>
                 <scope>import</scope>
                 <type>pom</type>
+            </dependency>
+            <dependency>
+                <groupId>io.smallrye.classfile</groupId>
+                <artifactId>jdk-classfile-backport</artifactId>
+                <version>${smallrye-classfile.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -22,18 +23,17 @@ import org.gradle.api.GradleException;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ModuleVersionIdentifier;
 import org.gradle.api.artifacts.ResolvedArtifact;
+import org.gradle.api.file.FileCollection;
 import org.gradle.api.tasks.Classpath;
+import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.InputFiles;
+import org.gradle.api.tasks.Optional;
+import org.gradle.api.tasks.OutputFile;
+import org.gradle.api.tasks.PathSensitive;
+import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskAction;
-
-import com.fasterxml.jackson.core.util.DefaultIndenter;
-import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import org.gradle.work.DisableCachingByDefault;
 
 import io.quarkus.bootstrap.BootstrapConstants;
 import io.quarkus.bootstrap.model.ApplicationModelBuilder;
@@ -45,16 +45,27 @@ import io.quarkus.fs.util.ZipUtils;
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.maven.dependency.ArtifactKey;
 import io.quarkus.maven.dependency.GACT;
+import io.quarkus.platform.tools.ExtensionMetadataValidator;
+import tools.jackson.core.util.DefaultIndenter;
+import tools.jackson.core.util.DefaultPrettyPrinter;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 /**
  * Task that generates extension descriptor files.
  */
+@DisableCachingByDefault(because = "Not cacheable")
 public class ExtensionDescriptorTask extends DefaultTask {
 
     private final QuarkusExtensionConfiguration quarkusExtensionConfiguration;
     private final Configuration classpath;
+    private final FileCollection inputResourcesDirs;
     private final File outputResourcesDir;
-    private final String inputResourcesDir;
 
     private static final String GROUP_ID = "group-id";
     private static final String ARTIFACT_ID = "artifact-id";
@@ -71,7 +82,7 @@ public class ExtensionDescriptorTask extends DefaultTask {
 
         this.quarkusExtensionConfiguration = quarkusExtensionConfiguration;
         this.outputResourcesDir = mainSourceSet.getOutput().getResourcesDir();
-        this.inputResourcesDir = mainSourceSet.getResources().getSourceDirectories().getAsPath();
+        this.inputResourcesDirs = mainSourceSet.getResources().getSourceDirectories();
         this.classpath = runtimeClasspath;
 
         // Calling this method tells Gradle that it should not fail the build. Side effect is that the configuration
@@ -92,28 +103,126 @@ public class ExtensionDescriptorTask extends DefaultTask {
         return classpath;
     }
 
+    @InputFiles
+    @PathSensitive(PathSensitivity.RELATIVE)
+    public FileCollection getInputResourcesDirs() {
+        return inputResourcesDirs;
+    }
+
+    @OutputFile
+    public File getExtensionPropertiesFile() {
+        return outputResourcesDir.toPath()
+                .resolve(BootstrapConstants.META_INF)
+                .resolve(BootstrapConstants.DESCRIPTOR_FILE_NAME)
+                .toFile();
+    }
+
+    @OutputFile
+    public File getExtensionDescriptorFile() {
+        return outputResourcesDir.toPath()
+                .resolve(BootstrapConstants.EXTENSION_METADATA_PATH)
+                .toFile();
+    }
+
+    @OutputFile
+    public File getExtensionJsonDescriptorFile() {
+        return outputResourcesDir.toPath()
+                .resolve(BootstrapConstants.EXTENSION_JSON_METADATA_PATH)
+                .toFile();
+    }
+
+    @Input
+    public Map<String, String> getProjectInfo() {
+        return projectInfo;
+    }
+
+    @Input
+    @Optional
+    public String getRequiresQuarkusCore() {
+        return quarkusExtensionConfiguration.getRequiresQuarkusCore().getOrNull();
+    }
+
+    @Input
+    public String getDeploymentArtifact() {
+        return quarkusExtensionConfiguration.getDeploymentArtifact()
+                .getOrElse(quarkusExtensionConfiguration.getDefaultDeployementArtifactName());
+    }
+
+    @Input
+    public List<String> getConditionalDependencies() {
+        return quarkusExtensionConfiguration.getConditionalDependencies().get();
+    }
+
+    @Input
+    public List<String> getConditionalDevDependencies() {
+        return quarkusExtensionConfiguration.getConditionalDevDependencies().get();
+    }
+
+    @Input
+    public List<String> getDependencyConditions() {
+        return quarkusExtensionConfiguration.getDependencyConditions().get();
+    }
+
+    @Input
+    public List<String> getParentFirstArtifacts() {
+        return quarkusExtensionConfiguration.getParentFirstArtifacts().get();
+    }
+
+    @Input
+    public List<String> getRunnerParentFirstArtifacts() {
+        return quarkusExtensionConfiguration.getRunnerParentFirstArtifacts().get();
+    }
+
+    @Input
+    public List<String> getExcludedArtifacts() {
+        return quarkusExtensionConfiguration.getExcludedArtifacts().get();
+    }
+
+    @Input
+    public List<String> getLesserPriorityArtifacts() {
+        return quarkusExtensionConfiguration.getLesserPriorityArtifacts().get();
+    }
+
+    @Input
+    public List<String> getProvidedCapabilities() {
+        return capabilityInputs(quarkusExtensionConfiguration.getProvidedCapabilities());
+    }
+
+    @Input
+    public List<String> getRequiredCapabilities() {
+        return capabilityInputs(quarkusExtensionConfiguration.getRequiredCapabilities());
+    }
+
+    @Input
+    public List<String> getRemovedResources() {
+        List<String> removedResources = new ArrayList<>();
+        for (RemovedResource removedResource : quarkusExtensionConfiguration.getRemoveResources()) {
+            removedResources.add(removedResource.getArtifactName() + "="
+                    + String.join(",", removedResource.getRemovedResources()));
+        }
+        return removedResources;
+    }
+
     @TaskAction
     public void generateExtensionDescriptor() throws IOException {
         Path outputMetaInfDir = outputResourcesDir.toPath().resolve(BootstrapConstants.META_INF);
-        Path inputMetaInfDif = Path.of(inputResourcesDir).resolve(BootstrapConstants.META_INF);
 
         generateQuarkusExtensionProperties(outputMetaInfDir);
-        generateQuarkusExtensionDescriptor(inputMetaInfDif, outputMetaInfDir);
+        generateQuarkusExtensionDescriptor(outputMetaInfDir);
     }
 
     private void generateQuarkusExtensionProperties(Path metaInfDir) {
         final Properties props = new Properties();
-        String deploymentArtifact = quarkusExtensionConfiguration.getDeploymentArtifact()
-                .getOrElse(quarkusExtensionConfiguration.getDefaultDeployementArtifactName());
+        String deploymentArtifact = getDeploymentArtifact();
 
         props.setProperty(BootstrapConstants.PROP_DEPLOYMENT_ARTIFACT, deploymentArtifact);
 
         setConditionalDepsProperty(BootstrapConstants.CONDITIONAL_DEPENDENCIES,
-                quarkusExtensionConfiguration.getConditionalDependencies().get(), props);
+                getConditionalDependencies(), props);
         setConditionalDepsProperty(BootstrapConstants.CONDITIONAL_DEV_DEPENDENCIES,
-                quarkusExtensionConfiguration.getConditionalDevDependencies().get(), props);
+                getConditionalDevDependencies(), props);
 
-        List<String> dependencyConditions = quarkusExtensionConfiguration.getDependencyConditions().get();
+        List<String> dependencyConditions = getDependencyConditions();
         if (dependencyConditions != null && !dependencyConditions.isEmpty()) {
             final StringBuilder buf = new StringBuilder();
             int i = 0;
@@ -124,25 +233,25 @@ public class ExtensionDescriptorTask extends DefaultTask {
             props.setProperty(BootstrapConstants.DEPENDENCY_CONDITION, buf.toString());
         }
 
-        List<String> parentFirstArtifacts = quarkusExtensionConfiguration.getParentFirstArtifacts().get();
+        List<String> parentFirstArtifacts = getParentFirstArtifacts();
         if (parentFirstArtifacts != null && !parentFirstArtifacts.isEmpty()) {
             String val = String.join(",", parentFirstArtifacts);
             props.put(ApplicationModelBuilder.PARENT_FIRST_ARTIFACTS, val);
         }
 
-        List<String> runnerParentFirstArtifacts = quarkusExtensionConfiguration.getRunnerParentFirstArtifacts().get();
+        List<String> runnerParentFirstArtifacts = getRunnerParentFirstArtifacts();
         if (runnerParentFirstArtifacts != null && !runnerParentFirstArtifacts.isEmpty()) {
             String val = String.join(",", runnerParentFirstArtifacts);
             props.put(ApplicationModelBuilder.RUNNER_PARENT_FIRST_ARTIFACTS, val);
         }
 
-        List<String> excludedArtifacts = quarkusExtensionConfiguration.getExcludedArtifacts().get();
+        List<String> excludedArtifacts = getExcludedArtifacts();
         if (excludedArtifacts != null && !excludedArtifacts.isEmpty()) {
             String val = String.join(",", excludedArtifacts);
             props.put(ApplicationModelBuilder.EXCLUDED_ARTIFACTS, val);
         }
 
-        List<String> lesserPriorityArtifacts = quarkusExtensionConfiguration.getLesserPriorityArtifacts().get();
+        List<String> lesserPriorityArtifacts = getLesserPriorityArtifacts();
         if (lesserPriorityArtifacts != null && !lesserPriorityArtifacts.isEmpty()) {
             String val = String.join(",", lesserPriorityArtifacts);
             props.put(ApplicationModelBuilder.LESSER_PRIORITY_ARTIFACTS, val);
@@ -202,6 +311,11 @@ public class ExtensionDescriptorTask extends DefaultTask {
             }
         }
 
+        final String requiresQuarkusVersion = getRequiresQuarkusVersionRange();
+        if (requiresQuarkusVersion != null) {
+            props.setProperty(BootstrapConstants.PROP_REQUIRES_QUARKUS_VERSION, requiresQuarkusVersion);
+        }
+
         try {
             Files.createDirectories(metaInfDir);
             try (BufferedWriter writer = Files
@@ -227,13 +341,13 @@ public class ExtensionDescriptorTask extends DefaultTask {
         }
     }
 
-    private void generateQuarkusExtensionDescriptor(Path inputMetaInfDirectory, Path outputMetaInfDirectory)
+    private void generateQuarkusExtensionDescriptor(Path outputMetaInfDirectory)
             throws IOException {
-        File extensionFile = new File(inputMetaInfDirectory.toFile(), BootstrapConstants.QUARKUS_EXTENSION_FILE_NAME);
+        File extensionFile = getInputExtensionDescriptorFile();
 
         ObjectMapper mapper = getMapper();
         ObjectNode extObject;
-        if (extensionFile.exists()) {
+        if (extensionFile != null && extensionFile.exists()) {
             extObject = readExtensionFile(extensionFile.toPath(), mapper);
         } else {
             extObject = mapper.createObjectNode();
@@ -249,15 +363,32 @@ public class ExtensionDescriptorTask extends DefaultTask {
             extObject.put("description", projectInfo.get("description"));
         }
 
+        try {
+            ExtensionMetadataValidator.validate(extObject);
+        } catch (IOException e) {
+            throw new GradleException(e.getMessage(), e.getCause());
+        }
+
         final DefaultPrettyPrinter prettyPrinter = new DefaultPrettyPrinter();
         prettyPrinter.indentArraysWith(DefaultIndenter.SYSTEM_LINEFEED_INSTANCE);
 
         try (BufferedWriter bw = Files
                 .newBufferedWriter(outputMetaInfDirectory.resolve(BootstrapConstants.QUARKUS_EXTENSION_FILE_NAME))) {
-            bw.write(getMapper().writer(prettyPrinter).writeValueAsString(extObject));
+            bw.write(getMapper().writer().with(prettyPrinter).writeValueAsString(extObject));
         } catch (IOException e) {
             throw new GradleException(
                     "Failed to persist " + outputMetaInfDirectory.resolve(BootstrapConstants.QUARKUS_EXTENSION_FILE_NAME), e);
+        }
+
+        ObjectMapper jsonMapper = getJsonMapper();
+        try (BufferedWriter bw = Files
+                .newBufferedWriter(outputMetaInfDirectory.resolve(BootstrapConstants.QUARKUS_EXTENSION_JSON_FILE_NAME))) {
+            bw.write(jsonMapper.writer().with(prettyPrinter).writeValueAsString(extObject));
+        } catch (IOException e) {
+            throw new GradleException(
+                    "Failed to persist "
+                            + outputMetaInfDirectory.resolve(BootstrapConstants.QUARKUS_EXTENSION_JSON_FILE_NAME),
+                    e);
         }
     }
 
@@ -267,7 +398,7 @@ public class ExtensionDescriptorTask extends DefaultTask {
                 extObject.put("name", projectInfo.get("name"));
             } else {
                 JsonNode node = extObject.get(ARTIFACT_ID);
-                String defaultName = node.asText();
+                String defaultName = node.asString();
                 int i = 0;
                 if (defaultName.startsWith("quarkus-")) {
                     i = "quarkus-".length();
@@ -289,8 +420,8 @@ public class ExtensionDescriptorTask extends DefaultTask {
                     }
                 }
                 defaultName = buf.toString();
-                getLogger().warn("Extension name has not been provided for " + extObject.get(GROUP_ID).asText("") + ":"
-                        + extObject.get(ARTIFACT_ID).asText("") + "! Using '" + defaultName
+                getLogger().warn("Extension name has not been provided for " + extObject.get(GROUP_ID).asString("") + ":"
+                        + extObject.get(ARTIFACT_ID).asString("") + "! Using '" + defaultName
                         + "' as the default one.");
                 extObject.put("name", defaultName);
             }
@@ -304,11 +435,11 @@ public class ExtensionDescriptorTask extends DefaultTask {
         final JsonNode artifactNode = extObject.get("artifact");
 
         if (artifactNode == null) {
-            groupId = extObject.has("groupId") ? extObject.get("groupId").asText() : null;
-            artifactId = extObject.has("artifactId") ? extObject.get("artifactId").asText() : null;
-            version = extObject.has("version") ? extObject.get("version").asText() : null;
+            groupId = extObject.has("groupId") ? extObject.get("groupId").asString() : null;
+            artifactId = extObject.has("artifactId") ? extObject.get("artifactId").asString() : null;
+            version = extObject.has("version") ? extObject.get("version").asString() : null;
         } else {
-            final String[] coordsArr = artifactNode.asText().split(":");
+            final String[] coordsArr = artifactNode.asString().split(":");
             if (coordsArr.length > 0) {
                 groupId = coordsArr[0];
                 if (coordsArr.length > 1) {
@@ -346,6 +477,33 @@ public class ExtensionDescriptorTask extends DefaultTask {
             ObjectNode metadata = getMetadataNode(extObject);
             metadata.put("built-with-quarkus-core", coreVersion);
         }
+        String versionRange = getRequiresQuarkusVersionRange();
+        if (versionRange != null) {
+            ObjectNode metadata = getMetadataNode(extObject);
+            if (!metadata.has("requires-quarkus-core")) {
+                metadata.put("requires-quarkus-core", versionRange);
+            }
+        }
+    }
+
+    private String getRequiresQuarkusVersionRange() {
+        final String explicitRange = getRequiresQuarkusCore();
+        return explicitRange != null ? explicitRange : toVersionRange(getQuarkusCoreVersionOrNull());
+    }
+
+    private static String toVersionRange(String version) {
+        if (version == null) {
+            return null;
+        }
+        String[] versionItems = version.split("\\.");
+
+        // Pre-release qualifier e.g. 4.0.0.Beta1: use the full version as the lower bound
+        // because Maven considers pre-release versions lower than the release (4.0.0.Beta1 < 4.0)
+        if (!versionItems[versionItems.length - 1].chars().allMatch(Character::isDigit)) {
+            return "[" + version + ",)";
+        }
+
+        return "[" + versionItems[0] + "." + (versionItems.length > 1 ? versionItems[1] : "0") + ",)";
     }
 
     private static void appendCapability(Capability capability, StringBuilder buf) {
@@ -360,6 +518,29 @@ public class ExtensionDescriptorTask extends DefaultTask {
                 buf.append("?!").append(onlyIfNot);
             }
         }
+    }
+
+    private static List<String> capabilityInputs(List<Capability> capabilities) {
+        List<String> inputs = new ArrayList<>(capabilities.size());
+        for (Capability capability : capabilities) {
+            StringBuilder input = new StringBuilder();
+            appendCapability(capability, input);
+            inputs.add(input.toString());
+        }
+        return inputs;
+    }
+
+    private File getInputExtensionDescriptorFile() {
+        for (File inputResourcesDir : getInputResourcesDirs().getFiles()) {
+            File extensionDescriptor = inputResourcesDir.toPath()
+                    .resolve(BootstrapConstants.META_INF)
+                    .resolve(BootstrapConstants.QUARKUS_EXTENSION_FILE_NAME)
+                    .toFile();
+            if (extensionDescriptor.exists()) {
+                return extensionDescriptor;
+            }
+        }
+        return null;
     }
 
     private void computeQuarkusExtensions(ObjectNode extObject) {
@@ -406,9 +587,15 @@ public class ExtensionDescriptorTask extends DefaultTask {
     }
 
     private ObjectMapper getMapper() {
-        YAMLFactory yf = new YAMLFactory();
-        return new ObjectMapper(yf)
-                .setPropertyNamingStrategy(PropertyNamingStrategies.KEBAB_CASE);
+        return YAMLMapper.builder()
+                .propertyNamingStrategy(PropertyNamingStrategies.KEBAB_CASE)
+                .build();
+    }
+
+    private ObjectMapper getJsonMapper() {
+        return JsonMapper.builder()
+                .propertyNamingStrategy(PropertyNamingStrategies.KEBAB_CASE)
+                .build();
     }
 
     private ObjectNode getMetadataNode(ObjectNode extObject) {

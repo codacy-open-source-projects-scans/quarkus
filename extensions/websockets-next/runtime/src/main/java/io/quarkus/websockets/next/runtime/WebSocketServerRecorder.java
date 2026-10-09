@@ -76,7 +76,7 @@ public class WebSocketServerRecorder {
             public Object get() {
                 Context context = Vertx.currentContext();
                 if (context != null && VertxContext.isDuplicatedContext(context)) {
-                    Object connection = context.getLocal(ContextSupport.WEB_SOCKET_CONN_KEY);
+                    Object connection = ContextSupport.WebSocketContextLocalsProvider.WEB_SOCKET_CONN_LOCAL.get(context);
                     if (connection != null) {
                         return connection;
                     }
@@ -154,7 +154,7 @@ public class WebSocketServerRecorder {
                             runtimeConfig.getValue().autoPingInterval(), connection.securitySupport(),
                             runtimeConfig.getValue().unhandledFailureStrategy(), trafficLogger,
                             () -> connectionManager.remove(generatedEndpointClass, connection), activateRequestContext,
-                            activateSessionContext, telemetrySupport);
+                            activateSessionContext, telemetrySupport, runtimeConfig.getValue().maxPendingMessages());
                 });
             }
 

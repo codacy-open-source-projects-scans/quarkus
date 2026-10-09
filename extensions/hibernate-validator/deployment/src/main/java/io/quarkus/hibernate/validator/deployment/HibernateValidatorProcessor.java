@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
@@ -85,15 +86,18 @@ import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.BytecodeTransformerBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
-import io.quarkus.deployment.builditem.ConfigClassBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
+import io.quarkus.deployment.builditem.GeneratedConfigClassBuildItem;
+import io.quarkus.deployment.builditem.GeneratedConfigClassBuildItem.ConfigClassImplementation;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.HotDeploymentWatchedFileBuildItem;
 import io.quarkus.deployment.builditem.NativeImageFeatureBuildItem;
 import io.quarkus.deployment.builditem.RunTimeConfigBuilderBuildItem;
 import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
 import io.quarkus.deployment.builditem.StaticInitConfigBuilderBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ConstantBootstrapBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBundleBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveFieldBuildItem;
@@ -249,29 +253,27 @@ class HibernateValidatorProcessor {
     @BuildStep
     void configValidator(
             CombinedIndexBuildItem combinedIndex,
-            List<ConfigClassBuildItem> configClasses,
+            List<GeneratedConfigClassBuildItem> configClasses,
             BeanValidationAnnotationsBuildItem beanValidationAnnotations,
             BuildProducer<UnremovableBeanBuildItem> unremovableBeans,
             BuildProducer<GeneratedClassBuildItem> generatedClass,
             BuildProducer<GeneratedResourceBuildItem> generatedResource,
+            BuildProducer<GeneratedServiceProviderBuildItem> generatedServiceProviders,
+            BuildProducer<ConstantBootstrapBuildItem> constantBootstraps,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
             BuildProducer<StaticInitConfigBuilderBuildItem> staticInitConfigBuilder,
             BuildProducer<RunTimeConfigBuilderBuildItem> runTimeConfigBuilder) {
 
         Set<DotName> configMappings = new HashSet<>();
         Set<DotName> configClassesToValidate = new HashSet<>();
-        Map<DotName, Map<DotName, ConfigClassBuildItem>> embeddingMap = new HashMap<>();
-        for (ConfigClassBuildItem configClass : configClasses) {
-            for (String generatedConfigClass : configClass.getGeneratedClasses()) {
-                DotName simple = DotName.createSimple(generatedConfigClass);
-                configClassesToValidate.add(simple);
-            }
-
-            configClass.getConfigComponentInterfaces().stream().map(DotName::createSimple)
+        Map<DotName, Map<DotName, GeneratedConfigClassBuildItem>> embeddingMap = new HashMap<>();
+        for (GeneratedConfigClassBuildItem configClass : configClasses) {
+            configClassesToValidate.addAll(configClass.getImplementations());
+            configClass.getInterfaces()
                     .forEach(cm -> {
                         configMappings.add(cm);
                         embeddingMap.computeIfAbsent(cm, c -> new HashMap<>())
-                                .putIfAbsent(configClass.getName(), configClass);
+                                .putIfAbsent(DotName.createSimple(configClass.getConfigClass()), configClass);
                     });
         }
 
@@ -330,12 +332,9 @@ class HibernateValidatorProcessor {
                 continue;
             }
 
-            for (ConfigClassBuildItem configClass : embeddingMap.get(constrainedConfigMapping).values()) {
+            for (GeneratedConfigClassBuildItem configClass : embeddingMap.get(constrainedConfigMapping).values()) {
                 unremovableBeans.produce(UnremovableBeanBuildItem.beanTypes(configClass.getConfigClass()));
-                configClass.getConfigComponentInterfaces()
-                        .stream()
-                        .map(DotName::createSimple)
-                        .forEach(configComponentsInterfacesToRegisterForReflection::add);
+                configComponentsInterfacesToRegisterForReflection.addAll(configClass.getInterfaces());
             }
         }
         reflectiveClass.produce(ReflectiveClassBuildItem
@@ -345,7 +344,8 @@ class HibernateValidatorProcessor {
                 .methods().build());
 
         String builderClassName = HibernateBeanValidationConfigValidator.class.getName() + "Builder";
-        Gizmo gizmo = Gizmo.create(new GeneratedClassGizmo2Adaptor(generatedClass, generatedResource, true))
+        Gizmo gizmo = Gizmo.create(new GeneratedClassGizmo2Adaptor(generatedClass, generatedResource, generatedServiceProviders,
+                constantBootstraps, true))
                 .withDebugInfo(false)
                 .withParameters(false);
         gizmo.class_(builderClassName, cc -> {
@@ -650,6 +650,21 @@ class HibernateValidatorProcessor {
     public RuntimeInitializedClassBuildItem reinitClockProviderSystemTimezone() {
         return new RuntimeInitializedClassBuildItem(
                 "io.quarkus.hibernate.validator.runtime.clockprovider.HibernateValidatorClockProviderSystemZoneIdHolder");
+    }
+
+    @BuildStep
+    void additionalConstrainedClasses(
+            List<GeneratedConfigClassBuildItem> generatedConfigClasses,
+            BuildProducer<AdditionalConstrainedClassBuildItem> additionalConstrainedClasses) {
+        for (GeneratedConfigClassBuildItem generatedConfigClass : generatedConfigClasses) {
+            generatedConfigClass.getElements().forEach(new BiConsumer<Class<?>, ConfigClassImplementation>() {
+                @Override
+                public void accept(Class<?> configClass, ConfigClassImplementation configClassImplementation) {
+                    additionalConstrainedClasses.produce(AdditionalConstrainedClassBuildItem.of(
+                            configClassImplementation.getName(), configClassImplementation.getBytes()));
+                }
+            });
+        }
     }
 
     @BuildStep

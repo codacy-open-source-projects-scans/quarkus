@@ -14,6 +14,7 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.StringWriter;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -182,6 +183,17 @@ public class DevMojoIT extends LaunchMojoTestBase {
     public void testPropertyOverridesTest() throws MavenInvocationException, IOException {
         testDir = getTargetDir("projects/property-overrides");
         runAndCheck("-Dlocal-dep.version=1.0-SNAPSHOT");
+    }
+
+    @Test
+    public void testCustomDebugPortIsUsed() throws MavenInvocationException, IOException {
+        testDir = initProject("projects/classic", "projects/project-classic-custom-debug-port");
+        int debugPort = 5006;
+        runAndCheck("-Ddebug=true", "-DdebugPort=" + debugPort);
+
+        try (Socket socket = new Socket("localhost", debugPort)) {
+            assertThat(socket.isConnected()).isTrue();
+        }
     }
 
     @Test
@@ -712,6 +724,19 @@ public class DevMojoIT extends LaunchMojoTestBase {
         results = testingTestUtils.waitForNextCompletion();
         Assertions.assertEquals(0, results.getTestsFailed(), results.toString());
         Assertions.assertEquals(9, results.getTotalTestsPassed(), results.toString());
+    }
+
+    @Test
+    void testQuarkusTestMetaAnnotationDiscovery()
+            throws MavenInvocationException, IOException {
+        testDir = initProject("projects/test-meta-annotation");
+        runAndCheck();
+
+        ContinuousTestingMavenTestUtils testingTestUtils = new ContinuousTestingMavenTestUtils();
+        ContinuousTestingMavenTestUtils.TestStatus results = testingTestUtils.waitForNextCompletion();
+
+        Assertions.assertEquals(0, results.getTestsFailed(), results.toString());
+        Assertions.assertEquals(1, results.getTestsPassed(), results.toString());
     }
 
     @Disabled("Not currently working, see https://github.com/quarkusio/quarkus/issues/46362")

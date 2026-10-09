@@ -21,7 +21,6 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 import javax.net.ssl.HostnameVerifier;
 
@@ -34,6 +33,7 @@ import org.jboss.resteasy.reactive.client.impl.multipart.PausableHttpPostRequest
 import io.quarkus.arc.Arc;
 import io.quarkus.proxy.ProxyConfiguration;
 import io.quarkus.proxy.ProxyConfigurationRegistry;
+import io.quarkus.rest.client.reactive.ParamStyle;
 import io.quarkus.rest.client.reactive.QuarkusRestClientBuilder;
 import io.quarkus.restclient.config.RestClientsConfig;
 import io.quarkus.restclient.config.RestClientsConfig.RestClientConfig;
@@ -44,6 +44,8 @@ import io.smallrye.config.SmallRyeConfig;
 import io.vertx.core.http.HttpClientOptions;
 
 public class RestClientCDIDelegateBuilder<T> {
+
+    static final URI DEFAULT_DOMAIN_SOCKET_URI = URI.create("http://localhost");
 
     private static final String REST_URL_FORMAT = "quarkus.rest-client.%s.url";
     private static final String REST_URI_FORMAT = "quarkus.rest-client.%s.uri";
@@ -86,10 +88,12 @@ public class RestClientCDIDelegateBuilder<T> {
         configureTLS(builder);
         configureRedirects(builder);
         configureQueryParamStyle(builder);
+        configureFormParamStyle(builder);
         configureProxy(builder);
         configureShared(builder);
         configureLogging(builder);
         configureCustomProperties(builder);
+        configureDomainSocket(builder);
         configureClientOptionsCustomizer(builder);
     }
 
@@ -146,18 +150,12 @@ public class RestClientCDIDelegateBuilder<T> {
         }
 
         Optional<Integer> maxChunkSize = oneOf(
-                restClientConfig.maxChunkSize().map(intChunkSize()),
-                restClientConfig.multipart().maxChunkSize().isPresent()
-                        ? Optional.of(restClientConfig.multipart().maxChunkSize().getAsInt())
-                        : Optional.empty(),
-                configRoot.maxChunkSize().map(intChunkSize()),
-                configRoot.multipart().maxChunkSize().isPresent()
-                        ? Optional.of(restClientConfig.multipart().maxChunkSize().getAsInt())
-                        : Optional.empty());
+                restClientConfig.maxChunkSize().map(MemorySize::asIntValue),
+                configRoot.maxChunkSize().map(MemorySize::asIntValue));
         builder.property(QuarkusRestClientProperties.MAX_CHUNK_SIZE, maxChunkSize.orElse(DEFAULT_MAX_CHUNK_SIZE));
 
         Optional<Boolean> enableCompressions = oneOf(restClientConfig.enableResponseDecompression(),
-                configRoot.enableCompression());
+                configRoot.enableResponseDecompression());
         if (enableCompressions.isPresent()) {
             builder.enableCompression(enableCompressions.get());
         }
@@ -165,11 +163,14 @@ public class RestClientCDIDelegateBuilder<T> {
         Boolean http2 = oneOf(restClientConfig.http2()).orElse(configRoot.http2());
         builder.property(QuarkusRestClientProperties.HTTP2, http2);
 
+        Boolean http3 = oneOf(restClientConfig.http3()).orElse(configRoot.http3());
+        builder.property(QuarkusRestClientProperties.HTTP3, http3);
+
         Optional<MemorySize> http2UpgradeMaxContentLength = oneOf(restClientConfig.http2UpgradeMaxContentLength(),
                 configRoot.http2UpgradeMaxContentLength());
         if (http2UpgradeMaxContentLength.isPresent()) {
             builder.property(QuarkusRestClientProperties.HTTP2_UPGRADE_MAX_CONTENT_LENGTH,
-                    (int) http2UpgradeMaxContentLength.get().asLongValue());
+                    http2UpgradeMaxContentLength.get().asIntValue());
         }
 
         Optional<Boolean> alpn = oneOf(restClientConfig.alpn(), configRoot.alpn());
@@ -183,49 +184,31 @@ public class RestClientCDIDelegateBuilder<T> {
         builder.disableDefaultMapper(restClientConfig.disableDefaultMapper());
     }
 
-    private static Function<MemorySize, Integer> intChunkSize() {
-        return m -> (int) m.asLongValue();
-    }
-
     private void configureProxy(QuarkusRestClientBuilder builder) {
-
-        final Optional<String> legacyProxy = oneOf(restClientConfig.proxyAddress(), configRoot.proxyAddress());
-        if (legacyProxy.isPresent()) {
-            String proxyAddress = legacyProxy.get();
-            if (proxyAddress.equals("none")) {
-                builder.proxyAddress("none", 0);
-            } else {
-                ProxyAddressUtil.HostAndPort hostAndPort = ProxyAddressUtil.parseAddress(proxyAddress);
-                builder.proxyAddress(hostAndPort.host, hostAndPort.port);
-
-                oneOf(restClientConfig.proxyUser(), configRoot.proxyUser()).ifPresent(builder::proxyUser);
-                oneOf(restClientConfig.proxyPassword(), configRoot.proxyPassword()).ifPresent(builder::proxyPassword);
-                oneOf(restClientConfig.nonProxyHosts(), configRoot.nonProxyHosts()).ifPresent(builder::nonProxyHosts);
-                oneOf(restClientConfig.proxyConnectTimeout(), configRoot.proxyConnectTimeout())
-                        .ifPresent(builder::proxyConnectTimeout);
-            }
-        } else {
-            /* Check the named proxy configurations */
-            final ProxyConfigurationRegistry registry = Arc.container().select(ProxyConfigurationRegistry.class).get();
-            final Optional<String> proxyConfigurationName = restClientConfig.proxyConfigurationName()
-                    .or(() -> configRoot.proxyConfigurationName());
-            registry.get(proxyConfigurationName)
-                    .map(ProxyConfiguration::assertHttpType)
-                    .ifPresent(proxyConfig -> {
-                        builder.proxyAddress(proxyConfig.host(), proxyConfig.port());
-                        if (proxyConfig.username().isPresent() && proxyConfig.password().isPresent()) {
-                            builder.proxyUser(proxyConfig.username().get());
-                            builder.proxyPassword(proxyConfig.password().get());
-                        }
-                        proxyConfig.nonProxyHosts().ifPresent(nonProxyHosts -> {
-                            if (!nonProxyHosts.isEmpty()) {
-                                builder.nonProxyHosts(String.join(",", nonProxyHosts));
-                            }
-                        });
-                        proxyConfig.proxyConnectTimeout().ifPresent(builder::proxyConnectTimeout);
-                    });
+        Optional<String> proxyConfigurationName = restClientConfig.proxyConfigurationName()
+                .or(() -> configRoot.proxyConfigurationName());
+        if (proxyConfigurationName.isPresent() && proxyConfigurationName.get().equals(NONE)) {
+            builder.proxyAddress("none", 0);
+            return;
         }
 
+        /* Check the named proxy configurations */
+        ProxyConfigurationRegistry registry = Arc.container().select(ProxyConfigurationRegistry.class).get();
+        registry.get(proxyConfigurationName)
+                .map(ProxyConfiguration::assertHttpType)
+                .ifPresent(proxyConfig -> {
+                    builder.proxyAddress(proxyConfig.host(), proxyConfig.port());
+                    if (proxyConfig.username().isPresent() && proxyConfig.password().isPresent()) {
+                        builder.proxyUser(proxyConfig.username().get());
+                        builder.proxyPassword(proxyConfig.password().get());
+                    }
+                    proxyConfig.nonProxyHosts().ifPresent(nonProxyHosts -> {
+                        if (!nonProxyHosts.isEmpty()) {
+                            builder.nonProxyHosts(String.join(",", nonProxyHosts));
+                        }
+                    });
+                    proxyConfig.proxyConnectTimeout().ifPresent(builder::proxyConnectTimeout);
+                });
     }
 
     private void configureQueryParamStyle(QuarkusRestClientBuilder builder) {
@@ -234,6 +217,14 @@ public class RestClientCDIDelegateBuilder<T> {
         if (maybeQueryParamStyle.isPresent()) {
             QueryParamStyle queryParamStyle = maybeQueryParamStyle.get();
             builder.queryParamStyle(queryParamStyle);
+        }
+    }
+
+    private void configureFormParamStyle(QuarkusRestClientBuilder builder) {
+        Optional<QueryParamStyle> maybeFormParamStyle = oneOf(restClientConfig.formParamStyle(),
+                configRoot.formParamStyle());
+        if (maybeFormParamStyle.isPresent()) {
+            builder.formParamStyle(ParamStyle.from(maybeFormParamStyle.get()));
         }
     }
 
@@ -435,14 +426,24 @@ public class RestClientCDIDelegateBuilder<T> {
         Optional<String> propertyOptional = oneOf(restClientConfig.uriReload(), restClientConfig.urlReload());
         if (((baseUriFromAnnotation == null) || baseUriFromAnnotation.isEmpty())
                 && propertyOptional.isEmpty()) {
+            if (restClientConfig.domainSocket().isPresent()) {
+                // the connection goes over the socket, so the URL only needs to provide a scheme and a Host header
+                builder.baseUri(DEFAULT_DOMAIN_SOCKET_URI);
+                return;
+            }
             String propertyPrefix = configKey != null ? configKey : "\"" + jaxrsInterface.getName() + "\"";
-            throw new IllegalArgumentException(
-                    String.format(
-                            "Unable to determine the proper baseUrl/baseUri. " +
-                                    "Consider registering using @RegisterRestClient(baseUri=\"someuri\"), @RegisterRestClient(configKey=\"orkey\"), "
-                                    +
-                                    "or by adding '%s' or '%s' to your Quarkus configuration",
-                            String.format(REST_URL_FORMAT, propertyPrefix), String.format(REST_URI_FORMAT, propertyPrefix)));
+            String message = String.format(
+                    "Unable to determine the proper baseUrl/baseUri. " +
+                            "Consider registering using @RegisterRestClient(baseUri=\"someuri\"), @RegisterRestClient(configKey=\"orkey\"), "
+                            +
+                            "or by adding '%s' or '%s' to your Quarkus configuration",
+                    String.format(REST_URL_FORMAT, propertyPrefix), String.format(REST_URI_FORMAT, propertyPrefix));
+            if (RestClientRecorder.hasUrlParam(jaxrsInterface)) {
+                builder.baseUri(MissingBaseUrlRequestFilter.PLACEHOLDER_URI);
+                builder.register(new MissingBaseUrlRequestFilter(message), Integer.MIN_VALUE);
+                return;
+            }
+            throw new IllegalArgumentException(message);
         }
         String baseUrl = propertyOptional.orElse(baseUriFromAnnotation);
 
@@ -451,6 +452,10 @@ public class RestClientCDIDelegateBuilder<T> {
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException("The value of URL was invalid " + baseUrl, e);
         }
+    }
+
+    private void configureDomainSocket(QuarkusRestClientBuilder builder) {
+        restClientConfig.domainSocket().ifPresent(builder::domainSocket);
     }
 
     private void configureClientOptionsCustomizer(QuarkusRestClientBuilder builder) {

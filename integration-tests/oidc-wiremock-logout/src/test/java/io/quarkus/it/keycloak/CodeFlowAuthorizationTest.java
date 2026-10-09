@@ -17,7 +17,7 @@ import org.htmlunit.WebRequest;
 import org.htmlunit.WebResponse;
 import org.htmlunit.html.HtmlForm;
 import org.htmlunit.html.HtmlPage;
-import org.htmlunit.util.Cookie;
+import org.htmlunit.http.Cookie;
 import org.junit.jupiter.api.Test;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
@@ -35,6 +35,23 @@ public class CodeFlowAuthorizationTest {
 
     @OidcWireMock
     WireMockServer wireMockServer;
+
+    @Test
+    public void testDisallowedResourceMetadataRouteDoesNotPreventDynamicTenantCreation() {
+        // resource-metadata route is not in allowed-routes, but the tenant enables it;
+        // a warning is logged and the tenant is created successfully
+        RestAssured.given()
+                .when().redirects().follow(false)
+                .get("http://localhost:8081/service/resource-metadata-tenant")
+                .then()
+                .statusCode(302);
+
+        RestAssured.given()
+                .when().redirects().follow(false)
+                .get("http://localhost:8081/service/resource-metadata-tenant?disabled")
+                .then()
+                .statusCode(302);
+    }
 
     @Test
     public void testCodeFlowFormPostAndBackChannelLogout() throws Exception {

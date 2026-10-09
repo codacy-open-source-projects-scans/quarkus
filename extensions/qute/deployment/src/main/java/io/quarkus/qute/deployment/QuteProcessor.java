@@ -95,10 +95,12 @@ import io.quarkus.deployment.builditem.BytecodeTransformerBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.HotDeploymentWatchedFileBuildItem;
 import io.quarkus.deployment.builditem.LaunchModeBuildItem;
 import io.quarkus.deployment.builditem.LiveReloadBuildItem;
 import io.quarkus.deployment.builditem.ServiceStartBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ConstantBootstrapBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.pkg.NativeConfig;
@@ -1975,6 +1977,8 @@ public class QuteProcessor {
     void generateValueResolvers(QuteConfig config,
             BuildProducer<GeneratedClassBuildItem> generatedClasses,
             BuildProducer<GeneratedResourceBuildItem> generatedResources,
+            BuildProducer<GeneratedServiceProviderBuildItem> generatedServiceProviders,
+            BuildProducer<ConstantBootstrapBuildItem> constantBootstraps,
             BeanArchiveIndexBuildItem beanArchiveIndex,
             ApplicationArchivesBuildItem applicationArchivesBuildItem,
             List<TemplateExtensionMethodBuildItem> templateExtensionMethods,
@@ -1997,7 +2001,7 @@ public class QuteProcessor {
 
         IndexView index = beanArchiveIndex.getIndex();
         ClassOutput classOutput = new GeneratedClassGizmo2Adaptor(generatedClasses, generatedResources,
-                new Function<String, String>() {
+                generatedServiceProviders, constantBootstraps, new Function<String, String>() {
                     @Override
                     public String apply(String name) {
                         int idx = name.lastIndexOf(ExtensionMethodGenerator.NAMESPACE_SUFFIX);
@@ -2280,7 +2284,7 @@ public class QuteProcessor {
 
         final boolean tryLocateSource = launchMode.getLaunchMode().isDev()
                 && DevModeType.LOCAL == launchMode.getDevModeType().orElse(null);
-        final Set<ApplicationArchive> allApplicationArchives = applicationArchives.getAllApplicationArchives();
+        final List<ApplicationArchive> allApplicationArchives = applicationArchives.getAllArchives();
         final Set<ArtifactKey> appArtifactKeys = new HashSet<>(allApplicationArchives.size());
         for (var archive : allApplicationArchives) {
             appArtifactKeys.add(archive.getKey());
@@ -2293,7 +2297,7 @@ public class QuteProcessor {
                         config, excludePatterns, TemplatePathBuildItem.APP_ARCHIVE_PRIORITY, null, tryLocateSource, null);
             }
         }
-        for (ApplicationArchive archive : applicationArchives.getApplicationArchives()) {
+        for (ApplicationArchive archive : applicationArchives.getArchives()) {
             archive.accept(
                     tree -> scanPathTree(tree, templateRoots, watchedPaths, templatePaths, nativeImageResources, config,
                             excludePatterns, TemplatePathBuildItem.APP_ARCHIVE_PRIORITY, null, tryLocateSource, null));

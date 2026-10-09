@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.hibernate.action.queue.internal.support.ActionQueueFactoryServiceInitiator;
 import org.hibernate.boot.registry.BootstrapServiceRegistry;
 import org.hibernate.boot.registry.StandardServiceInitiator;
 import org.hibernate.boot.registry.classloading.spi.ClassLoaderService;
@@ -27,6 +28,7 @@ import org.hibernate.persister.internal.PersisterFactoryInitiator;
 import org.hibernate.property.access.internal.PropertyAccessStrategyResolverInitiator;
 import org.hibernate.query.sqm.mutation.internal.SqmMultiTableMutationStrategyProviderInitiator;
 import org.hibernate.resource.transaction.internal.TransactionCoordinatorBuilderInitiator;
+import org.hibernate.service.internal.ChangesetCoordinatorInitiator;
 import org.hibernate.service.internal.ProvidedService;
 import org.hibernate.service.internal.SessionFactoryServiceRegistryFactoryInitiator;
 import org.hibernate.sql.ast.internal.ParameterMarkerStrategyInitiator;
@@ -50,6 +52,7 @@ import io.quarkus.hibernate.orm.runtime.service.QuarkusRuntimeInitDialectFactory
 import io.quarkus.hibernate.orm.runtime.service.QuarkusRuntimeInitDialectResolverInitiator;
 import io.quarkus.hibernate.orm.runtime.service.bytecodeprovider.QuarkusRuntimeBytecodeProviderInitiator;
 import io.quarkus.hibernate.orm.runtime.service.internalcache.QuarkusInternalCacheFactoryInitiator;
+import io.quarkus.hibernate.orm.runtime.service.propertyaccessor.QuarkusPropertyAccessorServiceInitiator;
 
 /**
  * Helps to instantiate a ServiceRegistryBuilder from a previous state. This
@@ -183,6 +186,9 @@ public class PreconfiguredServiceRegistryBuilder {
         // TODO (optional): assume entities are already enhanced?
         serviceInitiators.add(PropertyAccessStrategyResolverInitiator.INSTANCE);
 
+        // Default implementation
+        serviceInitiators.add(QuarkusPropertyAccessorServiceInitiator.INSTANCE);
+
         // Custom one!
         serviceInitiators.add(QuarkusImportSqlCommandExtractorInitiator.INSTANCE);
 
@@ -250,6 +256,12 @@ public class PreconfiguredServiceRegistryBuilder {
 
         // Custom Quarkus implementation: overrides the internal cache to leverage Caffeine
         serviceInitiators.add(QuarkusInternalCacheFactoryInitiator.INSTANCE);
+
+        // Default implementation
+        serviceInitiators.add(ChangesetCoordinatorInitiator.INSTANCE);
+
+        // Default Implementation
+        serviceInitiators.add(ActionQueueFactoryServiceInitiator.INSTANCE);
 
         serviceInitiators.trimToSize();
         return serviceInitiators;

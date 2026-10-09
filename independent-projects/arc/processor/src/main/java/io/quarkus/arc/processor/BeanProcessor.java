@@ -41,7 +41,6 @@ import io.quarkus.arc.processor.ResourceOutput.Resource;
 import io.quarkus.arc.processor.ResourceOutput.Resource.SpecialType;
 import io.quarkus.arc.processor.bcextensions.ExtensionsEntryPoint;
 import io.quarkus.gizmo2.Expr;
-import io.quarkus.gizmo2.creator.BlockCreator;
 
 /**
  * An integrator should create a new instance of the bean processor using the convenient {@link Builder} and then invoke the
@@ -52,8 +51,8 @@ import io.quarkus.gizmo2.creator.BlockCreator;
  * <li>{@link #registerScopes()}</li>
  * <li>{@link #registerBeans()}</li>
  * <li>{@link #registerSyntheticInjectionPoints(io.quarkus.arc.processor.BeanRegistrar.RegistrationContext)}</li>
- * <li>{@link BeanDeployment#initBeanByTypeMap()}</li>
  * <li>{@link #registerSyntheticObservers()}</li>
+ * <li>{@link #synthesisFinished()}
  * <li>{@link #initialize(Consumer, List)}</li>
  * <li>{@link #validate(Consumer)}</li>
  * <li>{@link #processValidationErrors(io.quarkus.arc.processor.BeanDeploymentValidator.ValidationContext)}</li>
@@ -87,7 +86,7 @@ public class BeanProcessor {
     private final boolean allowMocking;
     private final boolean transformUnproxyableClasses;
     private final Predicate<BeanDeployment> optimizeContexts;
-    private final List<Function<BeanInfo, Consumer<BlockCreator>>> suppressConditionGenerators;
+    private final List<Consumer<BeanGenerator.SuppressConditionGeneration>> suppressConditionGenerators;
 
     // This predicate is used to filter annotations for InjectionPoint metadata
     // Note that we do create annotation literals for all annotations for an injection point that resolves to a @Dependent bean that injects the InjectionPoint metadata
@@ -147,6 +146,9 @@ public class BeanProcessor {
     /**
      * Analyze the deployment and register all beans and observers declared on the classes. Furthermore, register all synthetic
      * beans provided by bean registrars.
+     * <p>
+     * Note that synthetic bean configurators may be finished after this method completes, but not later
+     * than the {@link #initialize(Consumer, List)} is called.
      *
      * @return the context applied to {@link BeanRegistrar}
      */
@@ -165,6 +167,16 @@ public class BeanProcessor {
 
     public ObserverRegistrar.RegistrationContext registerSyntheticObservers() {
         return beanDeployment.registerSyntheticObservers(observerRegistrars);
+    }
+
+    /**
+     * Notify the bean deployment that all synthetic beans and observers have been registered.
+     * <p>
+     * Must be called after all synthetic bean configurators are finished and before
+     * {@link #initialize(Consumer, List)}.
+     */
+    public void synthesisFinished() {
+        beanDeployment.synthesisFinished();
     }
 
     /**
@@ -187,7 +199,7 @@ public class BeanProcessor {
         customAlterableContexts.validate(validationContext, transformUnproxyableClasses, bytecodeTransformerConsumer);
         if (buildCompatibleExtensions != null) {
             buildCompatibleExtensions.runValidation(beanDeployment.getBeanArchiveIndex(),
-                    validationContext.get(Key.BEANS), validationContext.get(Key.OBSERVERS));
+                    beanDeployment.getInvokerFactory().getAsyncHandlers());
             buildCompatibleExtensions.registerValidationErrors(validationContext);
         }
         return validationContext;
@@ -201,6 +213,8 @@ public class BeanProcessor {
             Consumer<BytecodeTransformer> bytecodeTransformerConsumer, boolean detectUnusedFalsePositives,
             ExecutorService executor)
             throws IOException, InterruptedException, ExecutionException {
+
+        InvokerFactory invokerFactory = beanDeployment.getInvokerFactory();
 
         beanDeployment.resourceGenerationStarted();
 
@@ -266,8 +280,9 @@ public class BeanProcessor {
 
         InvokerGenerator invokerGenerator = new InvokerGenerator(generateSources,
                 applicationClassPredicate, beanDeployment, annotationLiterals, reflectionRegistration,
-                injectionPointAnnotationsPredicate);
+                injectionPointAnnotationsPredicate, name);
         Collection<InvokerInfo> invokers = beanDeployment.getInvokers();
+        List<AsyncHandlerInfo> asyncHandlers = invokerFactory.getAsyncHandlers();
 
         // this is different to `SubclassGenerator` in that it generates support classes
         // for interception of producer methods and synthetic beans and only supports
@@ -411,6 +426,12 @@ public class BeanProcessor {
                     }
                 }));
             }
+            primaryTasks.add(executor.submit(new Callable<Collection<Resource>>() {
+                @Override
+                public Collection<Resource> call() throws Exception {
+                    return invokerGenerator.generateAsyncHandlersSetup(asyncHandlers);
+                }
+            }));
 
             // Generate `_InjectableContext` subclasses for custom `AlterableContext`s
             for (CustomAlterableContextInfo info : alterableContexts) {
@@ -509,6 +530,7 @@ public class BeanProcessor {
             for (InvokerInfo invoker : invokers) {
                 resources.addAll(invokerGenerator.generate(invoker));
             }
+            resources.addAll(invokerGenerator.generateAsyncHandlersSetup(asyncHandlers));
 
             // Generate `_InjectableContext` subclasses for custom `AlterableContext`s
             for (CustomAlterableContextInfo info : alterableContexts) {
@@ -574,8 +596,8 @@ public class BeanProcessor {
         registerScopes();
         RegistrationContext registrationContext = registerBeans();
         registerSyntheticInjectionPoints(registrationContext);
-        beanDeployment.initBeanByTypeMap();
         registerSyntheticObservers();
+        synthesisFinished();
         initialize(unsupportedBytecodeTransformer, Collections.emptyList());
         ValidationContext validationContext = validate(unsupportedBytecodeTransformer);
         processValidationErrors(validationContext);
@@ -631,7 +653,8 @@ public class BeanProcessor {
         final List<InterceptorBindingRegistrar> interceptorBindingRegistrars;
         final List<StereotypeRegistrar> stereotypeRegistrars;
         final List<BeanDeploymentValidator> beanDeploymentValidators;
-        final List<Function<BeanInfo, Consumer<BlockCreator>>> suppressConditionGenerators;
+        final List<Consumer<BeanGenerator.SuppressConditionGeneration>> suppressConditionGenerators;
+        final List<Class<?>> asyncHandlers;
 
         boolean removeUnusedBeans = false;
         final List<Predicate<BeanInfo>> removalExclusions;
@@ -668,6 +691,7 @@ public class BeanProcessor {
             stereotypeRegistrars = new ArrayList<>();
             beanDeploymentValidators = new ArrayList<>();
             suppressConditionGenerators = new ArrayList<>();
+            asyncHandlers = new ArrayList<>();
 
             removeUnusedBeans = false;
             removalExclusions = new ArrayList<>();
@@ -977,8 +1001,21 @@ public class BeanProcessor {
          * @param generator
          * @return self
          */
-        public Builder addSuppressConditionGenerator(Function<BeanInfo, Consumer<BlockCreator>> generator) {
+        public Builder addSuppressConditionGenerator(Consumer<BeanGenerator.SuppressConditionGeneration> generator) {
             this.suppressConditionGenerators.add(generator);
+            return this;
+        }
+
+        /**
+         * Registers a given async handler class. Note that it is possible to register multiple async handlers
+         * for the same async type, but this is going to lead to an error. It is recommended that at most one
+         * async handler is registered for a given async type.
+         *
+         * @param asyncHandler the async handler class, must not be {@code null}
+         * @return self
+         */
+        public Builder addAsyncHandler(Class<?> asyncHandler) {
+            this.asyncHandlers.add(asyncHandler);
             return this;
         }
 

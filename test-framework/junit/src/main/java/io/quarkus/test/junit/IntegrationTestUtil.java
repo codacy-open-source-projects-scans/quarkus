@@ -26,7 +26,6 @@ import java.util.function.Consumer;
 import jakarta.inject.Inject;
 
 import org.apache.commons.lang3.RandomStringUtils;
-import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.config.spi.ConfigSource;
 import org.jboss.jandex.Index;
@@ -41,6 +40,7 @@ import io.quarkus.bootstrap.model.ApplicationModel;
 import io.quarkus.bootstrap.utils.BuildToolHelper;
 import io.quarkus.bootstrap.workspace.ArtifactSources;
 import io.quarkus.bootstrap.workspace.SourceDir;
+import io.quarkus.deployment.builditem.DevServicesAdditionalConfigBuildItem;
 import io.quarkus.deployment.builditem.DevServicesCustomizerBuildItem;
 import io.quarkus.deployment.builditem.DevServicesLauncherConfigResultBuildItem;
 import io.quarkus.deployment.builditem.DevServicesNetworkIdBuildItem;
@@ -50,7 +50,7 @@ import io.quarkus.deployment.util.ContainerRuntimeUtil;
 import io.quarkus.paths.PathList;
 import io.quarkus.runtime.logging.LoggingSetupRecorder;
 import io.quarkus.test.common.ArtifactLauncher;
-import io.quarkus.test.common.ListeningAddress;
+import io.quarkus.test.common.ListeningResults;
 import io.quarkus.test.common.PathTestHelper;
 import io.quarkus.test.common.TestClassIndexer;
 import io.quarkus.test.common.TestResourceManager;
@@ -121,10 +121,10 @@ public final class IntegrationTestUtil {
             throw new RuntimeException(
                     "An unexpected situation occurred while trying to instantiate the testing infrastructure. Have you perhaps mixed @QuarkusTest and @QuarkusIntegrationTest in the same test run?");
         }
-        ((TestResourceManager) state.getTestResourceManager()).inject(testInstance);
+        ((TestResourceManager) state.getTestResourceManager()).inject(valueRegistry, testInstance);
     }
 
-    static Optional<ListeningAddress> startLauncher(ArtifactLauncher<?> launcher, Map<String, String> additionalProperties)
+    static ListeningResults startLauncher(ArtifactLauncher<?> launcher, Map<String, String> additionalProperties)
             throws IOException {
         try {
             launcher.includeAsSysProps(additionalProperties);
@@ -250,15 +250,15 @@ public final class IntegrationTestUtil {
                 propertyMap.put(s, s2);
             }
         }, DevServicesLauncherConfigResultBuildItem.class.getName(), DevServicesNetworkIdBuildItem.class.getName(),
-                DevServicesRegistryBuildItem.class.getName(), DevServicesCustomizerBuildItem.class.getName());
+                DevServicesRegistryBuildItem.class.getName(), DevServicesCustomizerBuildItem.class.getName(),
+                DevServicesAdditionalConfigBuildItem.class.getName());
 
         networkId = propertyMap.get("quarkus.test.container.network");
         boolean manageNetwork = false;
         if (isDockerAppLaunch) {
             if (networkId == null) {
                 // use the network the use has specified or else just generate one if none is configured
-                Optional<String> networkIdOpt = ConfigProvider.getConfig().getOptionalValue(
-                        "quarkus.test.container.network", String.class);
+                Optional<String> networkIdOpt = Config.get().getOptionalValue("quarkus.test.container.network", String.class);
                 if (networkIdOpt.isPresent()) {
                     networkId = networkIdOpt.get();
                 } else {

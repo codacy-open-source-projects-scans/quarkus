@@ -255,6 +255,23 @@ public interface QuarkusRestClientBuilder extends Configurable<QuarkusRestClient
     QuarkusRestClientBuilder queryParamStyle(QueryParamStyle style);
 
     /**
+     * Specifies the URI formatting style to use when multiple query parameter values are passed to the client.
+     *
+     * @param style the URI formatting style to use for multiple query parameter values
+     * @return the current builder with the style of query params set
+     */
+    QuarkusRestClientBuilder queryParamStyle(ParamStyle style);
+
+    /**
+     * Specifies the formatting style to use when multiple values of the same {@code application/x-www-form-urlencoded}
+     * form parameter are passed to the client.
+     *
+     * @param style the formatting style to use for multiple form parameter values
+     * @return the current builder with the style of form params set
+     */
+    QuarkusRestClientBuilder formParamStyle(ParamStyle style);
+
+    /**
      * Specifies the client headers factory to use.
      *
      * @param clientHeadersFactoryClass the client headers factory class to use.
@@ -322,6 +339,17 @@ public interface QuarkusRestClientBuilder extends Configurable<QuarkusRestClient
      * REST Client will automatically decode the content and proceed with the message handling.
      */
     QuarkusRestClientBuilder enableCompression(boolean enableCompression);
+
+    /**
+     * Specifies the path to a Unix domain socket. When set, the client connects to the server
+     * using a Unix domain socket instead of a network connection. The base URI is optional in this case:
+     * when set, it provides the scheme, the request path prefix and the HTTP {@code Host} header,
+     * otherwise {@code http://localhost} is used.
+     *
+     * @param path the path to the Unix domain socket
+     * @return the current builder with the domain socket path set
+     */
+    QuarkusRestClientBuilder domainSocket(String path);
 
     /**
      * Based on the configured QuarkusRestClientBuilder, creates a new instance of the given REST interface to invoke API calls

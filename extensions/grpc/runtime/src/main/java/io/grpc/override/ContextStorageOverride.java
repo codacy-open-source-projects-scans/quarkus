@@ -1,6 +1,7 @@
 package io.grpc.override;
 
 import io.grpc.Context;
+import io.quarkus.grpc.runtime.GrpcContextLocalsProvider;
 import io.smallrye.common.vertx.VertxContext;
 import io.vertx.core.Vertx;
 
@@ -11,14 +12,12 @@ public class ContextStorageOverride extends Context.Storage {
 
     private static final ThreadLocal<Context> fallback = new ThreadLocal<>();
 
-    private static final String GRPC_CONTEXT = "GRPC_CONTEXT";
-
     @Override
     public Context doAttach(Context toAttach) {
         Context current = current();
         io.vertx.core.Context dc = Vertx.currentContext();
         if (dc != null && VertxContext.isDuplicatedContext(dc)) {
-            dc.putLocal(GRPC_CONTEXT, toAttach);
+            GrpcContextLocalsProvider.GRPC_CONTEXT_LOCAL.put(dc, toAttach);
         } else {
             fallback.set(toAttach);
         }
@@ -30,7 +29,7 @@ public class ContextStorageOverride extends Context.Storage {
         io.vertx.core.Context dc = Vertx.currentContext();
         if (toRestore != Context.ROOT) {
             if (dc != null && VertxContext.isDuplicatedContext(dc)) {
-                dc.putLocal(GRPC_CONTEXT, toRestore);
+                GrpcContextLocalsProvider.GRPC_CONTEXT_LOCAL.put(dc, toRestore);
             } else {
                 fallback.set(toRestore);
             }
@@ -46,7 +45,7 @@ public class ContextStorageOverride extends Context.Storage {
     @Override
     public Context current() {
         if (VertxContext.isOnDuplicatedContext()) {
-            Context current = Vertx.currentContext().getLocal(GRPC_CONTEXT);
+            Context current = GrpcContextLocalsProvider.GRPC_CONTEXT_LOCAL.get(Vertx.currentContext());
             if (current == null) {
                 return Context.ROOT;
             }

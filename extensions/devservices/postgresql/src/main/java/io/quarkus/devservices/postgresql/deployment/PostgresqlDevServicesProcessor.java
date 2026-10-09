@@ -19,10 +19,6 @@ import org.testcontainers.utility.DockerImageName;
 
 import io.quarkus.datasource.common.runtime.DataSourceUtil;
 import io.quarkus.datasource.common.runtime.DatabaseKind;
-import io.quarkus.datasource.deployment.spi.DatasourceStartable;
-import io.quarkus.datasource.deployment.spi.DevServicesDatasourceContainerConfig;
-import io.quarkus.datasource.deployment.spi.DevServicesDatasourceProvider;
-import io.quarkus.datasource.deployment.spi.DevServicesDatasourceProviderBuildItem;
 import io.quarkus.deployment.Feature;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.builditem.ConsoleCommandBuildItem;
@@ -30,10 +26,17 @@ import io.quarkus.deployment.builditem.DevServicesComposeProjectBuildItem;
 import io.quarkus.deployment.builditem.DevServicesLauncherConfigResultBuildItem;
 import io.quarkus.devservices.common.ComposeLocator;
 import io.quarkus.devservices.common.ConfigureUtil;
+import io.quarkus.devservices.common.DevServicesHostUtil;
 import io.quarkus.devservices.common.JBossLoggingConsumer;
 import io.quarkus.devservices.common.Labels;
 import io.quarkus.devservices.common.Volumes;
+import io.quarkus.devservices.datasource.common.DatasourceStartable;
+import io.quarkus.devservices.datasource.common.DatasourceStartableContainer;
+import io.quarkus.devservices.datasource.common.DevServicesDatasourceContainerConfig;
+import io.quarkus.devservices.datasource.common.DevServicesDatasourceProvider;
+import io.quarkus.devservices.datasource.common.DevServicesDatasourceProviderBuildItem;
 import io.quarkus.runtime.LaunchMode;
+import io.smallrye.common.cpu.CPU;
 
 public class PostgresqlDevServicesProcessor {
 
@@ -71,7 +74,10 @@ public class PostgresqlDevServicesProcessor {
                 String effectiveDbName = containerConfig.getDbName().orElse(
                         DataSourceUtil.isDefault(datasourceName) ? DEFAULT_DATABASE_NAME : datasourceName);
 
-                QuarkusPostgreSQLContainer container = new QuarkusPostgreSQLContainer(containerConfig.getImageName(),
+                String selectedImage = PostgresImageSelector.selectImage(containerConfig.getImageName(),
+                        containerConfig.getRequiredFeatures(), containerConfig.getDatasourceName(),
+                        CPU.host());
+                QuarkusPostgreSQLContainer container = new QuarkusPostgreSQLContainer(Optional.of(selectedImage),
                         containerConfig.getFixedExposedPort(),
                         composeProjectBuildItem.getDefaultNetworkId(),
                         useSharedNetwork);
@@ -102,7 +108,7 @@ public class PostgresqlDevServicesProcessor {
                     container.withLogConsumer(new JBossLoggingConsumer(LOG));
                 }
 
-                return container;
+                return new DatasourceStartableContainer<>(container);
             }
 
             @Override
@@ -110,9 +116,11 @@ public class PostgresqlDevServicesProcessor {
                     LaunchMode launchMode,
                     boolean useSharedNetwork, DevServicesDatasourceContainerConfig containerConfig,
                     DevServicesComposeProjectBuildItem composeProjectBuildItem) {
-                List<String> images = List.of(
-                        containerConfig.getImageName().orElseGet(() -> ConfigureUtil.getDefaultImageNameFor("postgresql")),
-                        "postgres");
+
+                String selectedImage = PostgresImageSelector.selectImage(containerConfig.getImageName(),
+                        containerConfig.getRequiredFeatures(), containerConfig.getDatasourceName(),
+                        CPU.host());
+                List<String> images = List.of(selectedImage, "postgres");
                 return ComposeLocator
                         .locateContainer(composeProjectBuildItem, images, POSTGRESQL_PORT, launchMode, useSharedNetwork)
                         .map(containerAddress -> configurator.composeRunningService(containerAddress, containerConfig));
@@ -130,7 +138,6 @@ public class PostgresqlDevServicesProcessor {
         private final boolean useSharedNetwork;
 
         private final String hostName;
-        private DevServicesDatasourceProvider.RunningDevServicesDatasource runningDevServicesDatasource;
 
         public QuarkusPostgreSQLContainer(Optional<String> imageName, OptionalInt fixedExposedPort,
                 String defaultNetworkId, boolean useSharedNetwork) {
@@ -171,6 +178,16 @@ public class PostgresqlDevServicesProcessor {
             }
         }
 
+        // this is always reachable from the host JVM, so that testcontainers can determine the status of the
+        // container (which it does by trying to acquire a connection)
+        @Override
+        public String getJdbcUrl() {
+            String host = DevServicesHostUtil.resolvePublishedPortHost(getContainerId(), getHost());
+            String authority = DevServicesHostUtil.formatHostAndPort(host, getMappedPort(POSTGRESQL_PORT));
+            String additionalUrlParams = constructUrlParameters("?", "&");
+            return "jdbc:postgresql://" + authority + "/" + getDatabaseName() + additionalUrlParams;
+        }
+
         // this is meant to be called by Quarkus code and is not strictly needed
         // in the PostgreSQL case as testcontainers does not try to establish
         // a connection to determine if the container is ready, but we do it anyway to be consistent across
@@ -180,16 +197,41 @@ public class PostgresqlDevServicesProcessor {
                 // in this case we expose the URL using the network alias we created in 'configure'
                 // and the container port since the application communicating with this container
                 // won't be doing port mapping
+                String authority = DevServicesHostUtil.formatHostAndPort(hostName, POSTGRESQL_PORT);
                 String additionalUrlParams = constructUrlParameters("?", "&");
-                return "jdbc:postgresql://" + hostName + ":" + POSTGRESQL_PORT
-                        + "/" + getDatabaseName() + additionalUrlParams;
-            } else {
-                return super.getJdbcUrl();
+                return "jdbc:postgresql://" + authority + "/" + getDatabaseName() + additionalUrlParams;
             }
+            return getJdbcUrl();
         }
 
         public String getReactiveUrl() {
-            return getEffectiveJdbcUrl().replaceFirst("jdbc:", "vertx-reactive:");
+            return stripJdbcParameters(getEffectiveJdbcUrl().replaceFirst("jdbc:", "vertx-reactive:"));
+        }
+
+        /**
+         * Strips JDBC-driver-specific parameters from the URL so they are not sent as
+         * PostgreSQL server startup parameters by the Vert.x PG client.
+         * Testcontainers adds {@code loggerLevel=OFF} for the JDBC driver, but
+         * PostgreSQL does not recognize it as a server configuration parameter.
+         */
+        private static String stripJdbcParameters(String url) {
+            int qmark = url.indexOf('?');
+            if (qmark < 0) {
+                return url;
+            }
+            String base = url.substring(0, qmark);
+            String query = url.substring(qmark + 1);
+            StringBuilder sb = new StringBuilder();
+            for (String param : query.split("&")) {
+                if (param.toLowerCase().startsWith("loggerlevel=")) {
+                    continue;
+                }
+                if (sb.length() > 0) {
+                    sb.append('&');
+                }
+                sb.append(param);
+            }
+            return sb.length() > 0 ? base + "?" + sb : base;
         }
 
         @Override
@@ -200,15 +242,6 @@ public class PostgresqlDevServicesProcessor {
         @Override
         public void close() {
             super.close();
-        }
-
-        @Override
-        public DevServicesDatasourceProvider.RunningDevServicesDatasource runningDevServicesDatasource() {
-            // Cache, since this is going to be called a lot
-            if (runningDevServicesDatasource == null) {
-                runningDevServicesDatasource = DatasourceStartable.super.runningDevServicesDatasource();
-            }
-            return runningDevServicesDatasource;
         }
     }
 }

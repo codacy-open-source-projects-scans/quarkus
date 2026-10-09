@@ -92,26 +92,6 @@ public final class PathTestHelper {
                 "classes" + File.separator + "kotlin" + File.separator + "native-integration-test",
                 "classes" + File.separator + "kotlin" + File.separator + "main");
         //endregion
-        //region Scala
-        TEST_TO_MAIN_DIR_FRAGMENTS.put(
-                "classes" + File.separator + "scala" + File.separator + "native-test",
-                "classes" + File.separator + "scala" + File.separator + "main");
-        TEST_TO_MAIN_DIR_FRAGMENTS.put(
-                "classes" + File.separator + "scala" + File.separator + "test",
-                "classes" + File.separator + "scala" + File.separator + "main");
-        TEST_TO_MAIN_DIR_FRAGMENTS.put(
-                "classes" + File.separator + "scala" + File.separator + "integration-test",
-                "classes" + File.separator + "scala" + File.separator + "main");
-        TEST_TO_MAIN_DIR_FRAGMENTS.put(
-                "classes" + File.separator + "scala" + File.separator + "integrationTest",
-                "classes" + File.separator + "scala" + File.separator + "main");
-        TEST_TO_MAIN_DIR_FRAGMENTS.put(
-                "classes" + File.separator + "scala" + File.separator + "native-integrationTest",
-                "classes" + File.separator + "scala" + File.separator + "main");
-        TEST_TO_MAIN_DIR_FRAGMENTS.put(
-                "classes" + File.separator + "scala" + File.separator + "native-integration-test",
-                "classes" + File.separator + "scala" + File.separator + "main");
-        //endregion
         //endregion
 
         //region Maven
@@ -120,7 +100,10 @@ public final class PathTestHelper {
                 File.separator + "classes");
         //endregion
 
-        String mappings = System.getenv(BootstrapConstants.TEST_TO_MAIN_MAPPINGS);
+        String mappings = System.getProperty(BootstrapConstants.TEST_TO_MAIN_MAPPINGS);
+        if (mappings == null) {
+            mappings = System.getenv(BootstrapConstants.TEST_TO_MAIN_MAPPINGS);
+        }
         if (mappings != null) {
             Stream.of(mappings.split(","))
                     .filter(s -> !s.isEmpty())

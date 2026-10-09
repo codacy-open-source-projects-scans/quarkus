@@ -18,24 +18,31 @@ import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.vertx.core.runtime.context.VertxContextSafetyToggle;
 import io.quarkus.vertx.http.runtime.RoutingUtils;
 import io.quarkus.vertx.http.runtime.security.QuarkusHttpUser;
+import io.smallrye.common.vertx.ContextLocals;
 import io.smallrye.common.vertx.VertxContext;
-import io.vertx.core.http.impl.HttpServerRequestInternal;
 import io.vertx.ext.web.RoutingContext;
 
 public class QuarkusResteasyReactiveRequestContext extends VertxResteasyReactiveRequestContext {
 
     private static final String QUARKUS_REST_KEY = "quarkus-rest";
     final CurrentIdentityAssociation association;
+    final ServerRestHandlerDispatcher dispatcher;
     boolean userSetup = false;
 
     public QuarkusResteasyReactiveRequestContext(Deployment deployment,
             RoutingContext context, ThreadSetupAction requestContext, ServerRestHandler[] handlerChain,
-            ServerRestHandler[] abortHandlerChain, ClassLoader devModeTccl,
-            CurrentIdentityAssociation currentIdentityAssociation) {
-        super(deployment, context, requestContext, handlerChain, abortHandlerChain, devModeTccl);
+            byte[] handlerKinds, ServerRestHandler[] abortHandlerChain, ClassLoader devModeTccl,
+            CurrentIdentityAssociation currentIdentityAssociation, ServerRestHandlerDispatcher dispatcher) {
+        super(deployment, context, requestContext, handlerChain, handlerKinds, abortHandlerChain, devModeTccl);
         this.association = currentIdentityAssociation;
+        this.dispatcher = dispatcher;
         if (VertxContext.isOnDuplicatedContext()) {
             VertxContextSafetyToggle.setCurrentContextSafe(true);
+        }
+        // If a CDI request context is already active (e.g. activated by a @RouteFilter),
+        // capture it so that it can be reused when the handler chain resumes on a worker thread
+        if (requestContext.isRequestContextActive()) {
+            captureCDIRequestScope();
         }
     }
 
@@ -109,8 +116,9 @@ public class QuarkusResteasyReactiveRequestContext extends VertxResteasyReactive
 
     @Override
     public ForwardedInfo getForwardedInfo() {
-        io.quarkus.vertx.http.runtime.ForwardedInfo vertxForwardedInfo = ((HttpServerRequestInternal) request).context()
-                .getLocal(io.quarkus.vertx.http.runtime.ForwardedInfo.CONTEXT_KEY);
+        io.quarkus.vertx.http.runtime.ForwardedInfo vertxForwardedInfo = ContextLocals.<io.quarkus.vertx.http.runtime.ForwardedInfo> get(
+                io.quarkus.vertx.http.runtime.ForwardedInfo.CONTEXT_KEY)
+                .orElse(null);
         if (vertxForwardedInfo == null) {
             return null;
         }
@@ -152,51 +160,9 @@ public class QuarkusResteasyReactiveRequestContext extends VertxResteasyReactive
         throw (E) e;
     }
 
-    /**
-     * The implementation looks like it makes no sense, but it in fact does make sense from a performance perspective.
-     * The idea is to reduce the use instances of megamorphic calls into a series of instance checks and monomorphic calls.
-     * The rationale behind this is fully explored in
-     * https://shipilev.net/blog/2015/black-magic-method-dispatch/#_cheating_the_runtime_2
-     * and this specific instance has been verified experimentally to result in better performance.
-     */
     @Override
     protected void invokeHandler(int pos) throws Exception {
-        var handler = handlers[pos];
-        if (handler instanceof org.jboss.resteasy.reactive.server.handlers.MatrixParamHandler) {
-            handler.handle(this);
-        } else if (handler instanceof io.quarkus.resteasy.reactive.server.runtime.security.SecurityContextOverrideHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.RestInitialHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.ClassRoutingHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.AbortChainHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.NonBlockingHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.BlockingHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.ResourceRequestFilterHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.InputHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.RequestDeserializeHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.ParameterHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.InstanceHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.InvocationHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.FixedProducesHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.ResponseHandler) {
-            handler.handle(this);
-        } else if (handler instanceof org.jboss.resteasy.reactive.server.handlers.ResponseWriterHandler) {
-            handler.handle(this);
-        } else {
-            // megamorphic call for other handlers
-            handler.handle(this);
-        }
+        // see ServerRestHandlerDispatcher for the rationale
+        dispatcher.dispatch(handlerKinds[pos], handlers[pos], this);
     }
 }

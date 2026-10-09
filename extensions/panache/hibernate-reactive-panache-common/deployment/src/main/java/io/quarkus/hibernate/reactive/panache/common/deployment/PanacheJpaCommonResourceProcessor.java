@@ -39,7 +39,6 @@ import io.quarkus.deployment.annotations.BuildSteps;
 import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
-import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
 import io.quarkus.deployment.util.JandexUtil;
 import io.quarkus.gizmo.ClassCreator;
 import io.quarkus.hibernate.orm.deployment.HibernateOrmEnabled;
@@ -128,7 +127,8 @@ public final class PanacheJpaCommonResourceProcessor {
                     DotName.createSimple("jakarta.ws.rs.PATCH"), DotName.createSimple("jakarta.ws.rs.POST"),
                     DotName.createSimple("jakarta.ws.rs.PUT"));
             List<DotName> bindings = List.of(DotNames.REACTIVE_TRANSACTIONAL, DotNames.WITH_SESSION,
-                    DotNames.WITH_SESSION_ON_DEMAND, DotNames.WITH_TRANSACTION);
+                    DotNames.WITH_SESSION_ON_DEMAND, DotNames.WITH_TRANSACTION,
+                    DotNames.TRANSACTIONAL);
 
             // Collect all Panache entities and repositories
             Set<DotName> entities = new HashSet<>();
@@ -190,7 +190,7 @@ public final class PanacheJpaCommonResourceProcessor {
                     // - returns Uni
                     // - is declared in a class that uses a panache entity/repository
                     // - is annotated with @GET, @POST, @PUT, @DELETE ,@PATCH ,@HEAD or @OPTIONS
-                    // - is not annotated with @ReactiveTransactional, @WithSession, @WithSessionOnDemand, or @WithTransaction
+                    // - is not annotated with @Transactional, @ReactiveTransactional, @WithSession, @WithSessionOnDemand, or @WithTransaction
                     context.transform().add(DotNames.WITH_SESSION_ON_DEMAND).done();
                 }
             }));
@@ -221,12 +221,6 @@ public final class PanacheJpaCommonResourceProcessor {
         panacheHibernateRecorder.setNamedQueryMap(namedQueryMap);
     }
 
-    @BuildStep
-    @Record(ExecutionTime.RUNTIME_INIT)
-    public void shutdown(ShutdownContextBuildItem shutdownContextBuildItem, PanacheHibernateRecorder panacheHibernateRecorder) {
-        panacheHibernateRecorder.clear(shutdownContextBuildItem);
-    }
-
     private void lookupNamedQueries(CombinedIndexBuildItem index, DotName name, Map<String, String> namedQueries) {
         ClassInfo classInfo = index.getComputingIndex().getClassByName(name);
         if (classInfo == null) {
@@ -248,6 +242,23 @@ public final class PanacheJpaCommonResourceProcessor {
                 AnnotationInstance[] nestedInstances = value.asNestedArray();
                 for (AnnotationInstance nested : nestedInstances) {
                     namedQueries.put(nested.value("name").asString(), nested.value("query").asString());
+                }
+            }
+        }
+
+        List<AnnotationInstance> namedStatementInstances = classInfo.annotationsMap().get(DotNames.DOTNAME_NAMED_STATEMENT);
+        if (namedStatementInstances != null) {
+            for (AnnotationInstance namedStatementInstance : namedStatementInstances) {
+                namedQueries.put(namedStatementInstance.value("name").asString(),
+                        namedStatementInstance.value("statement").asString());
+            }
+        }
+
+        List<AnnotationInstance> namedStatementsInstances = classInfo.annotationsMap().get(DotNames.DOTNAME_NAMED_STATEMENTS);
+        if (namedStatementsInstances != null) {
+            for (AnnotationInstance namedStatementsInstance : namedStatementsInstances) {
+                for (AnnotationInstance nested : namedStatementsInstance.value().asNestedArray()) {
+                    namedQueries.put(nested.value("name").asString(), nested.value("statement").asString());
                 }
             }
         }

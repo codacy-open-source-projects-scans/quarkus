@@ -2,8 +2,11 @@ package io.quarkus.vertx.http.runtime;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.Set;
 
 import io.quarkus.runtime.annotations.ConfigDocDefault;
+import io.quarkus.runtime.configuration.TrimmedStringConverter;
 import io.quarkus.vertx.http.runtime.TrustedProxyCheck.TrustedProxyCheckPart;
 import io.smallrye.config.WithConverter;
 import io.smallrye.config.WithDefault;
@@ -20,6 +23,23 @@ public interface ProxyConfig {
      */
     @WithDefault("false")
     boolean useProxyProtocol();
+
+    /**
+     * The listeners on which the {@code PROXY} protocol is expected when {@code use-proxy-protocol} is enabled.
+     * Connections to the other listeners are served without a {@code PROXY} protocol header.
+     * By default, the protocol is expected on every listener.
+     */
+    @WithDefault("http,https,domain-socket")
+    Set<ProxyProtocolListener> proxyProtocolListeners();
+
+    /**
+     * The listeners of the HTTP server.
+     */
+    enum ProxyProtocolListener {
+        HTTP,
+        HTTPS,
+        DOMAIN_SOCKET
+    }
 
     /**
      * If this is true then the address, scheme etc. will be set from headers forwarded by the proxy server, such as
@@ -145,4 +165,67 @@ public interface ProxyConfig {
      */
     @ConfigDocDefault("All proxy addresses are trusted")
     Optional<List<@WithConverter(TrustedProxyCheckPartConverter.class) TrustedProxyCheckPart>> trustedProxies();
+
+    /**
+     * Identify trusted proxies by their TLS client certificate Subject DN.
+     * Optionally, a truststore alias can be specified to also verify the trust anchor.
+     * Each entry defines a trusted proxy whose forwarded headers are honored when the client certificate matches.
+     * Use the indexed property format to configure multiple trusted proxies:
+     * {@code quarkus.http.proxy.trusted-proxy[0].subject-dn=CN=my-proxy,O=MyOrg}.
+     * <p>
+     * This option is mutually exclusive with {@link #trustedProxies()} and requires
+     * {@code quarkus.http.ssl.client-auth} to be set to {@code REQUEST} or {@code REQUIRED}.
+     */
+    List<TrustedProxyConfig> trustedProxy();
+
+    /**
+     * Trusted proxy configuration.
+     */
+    interface TrustedProxyConfig {
+
+        /**
+         * The trusted proxy's Subject Distinguished Name (DN) in RFC 2253 format.
+         * The proxy is trusted when its TLS client certificate's Subject DN contains all
+         * the components specified in this value. For example, configuring
+         * {@code CN=my-proxy,O=MyOrg} matches a certificate with Subject DN {@code CN=my-proxy,O=MyOrg,C=US}.
+         */
+        @WithConverter(TrimmedStringConverter.class)
+        String subjectDn();
+
+        /**
+         * Alias of a certificate entry in the TLS registry truststore used by the HTTP server.
+         * When set, the client's certificate chain is validated against the certificate stored under this alias.
+         */
+        Optional<@WithConverter(TrimmedStringConverter.class) String> truststoreAlias();
+    }
+
+    /**
+     * Validation mode for the {@code Forwarded} proto and {@code X-Forwarded-Proto} header values.
+     */
+    enum ForwardedProtoValidation {
+        /** No validation — accept any proto value. */
+        NONE,
+        /**
+         * Reject proto values that do not conform to the
+         * <a href="https://datatracker.ietf.org/doc/html/rfc3986#section-3.1">URI scheme</a> syntax
+         * with a {@code 400 Bad Request} response.
+         */
+        REJECT
+    }
+
+    /**
+     * How to handle {@code Forwarded} proto and {@code X-Forwarded-Proto} header values
+     * that are not valid <a href="https://datatracker.ietf.org/doc/html/rfc3986#section-3.1">URI schemes</a>.
+     */
+    @WithDefault("reject")
+    ForwardedProtoValidation forwardedProtoValidation();
+
+    /**
+     * Selects the client address from the {@code X-Forwarded-For} header as the value at this 1-based index counted from
+     * the rightmost value ({@code 1} is the rightmost, {@code 2} the second from the right). When not set, the leftmost
+     * value is used. Use only when the server is reachable exclusively through trusted proxies or trusted clients,
+     * otherwise a client that connects directly can forge the selected value. Mutually exclusive with
+     * {@code quarkus.http.proxy.allow-forwarded} and with a {@code io.quarkus.vertx.http.XForwardedForSelector} CDI bean.
+     */
+    OptionalInt xForwardedForIndex();
 }

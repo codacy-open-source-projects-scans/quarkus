@@ -1,6 +1,5 @@
 package io.quarkus.mongodb.panache.common.reactive;
 
-import java.util.UUID;
 import java.util.function.Supplier;
 
 import org.reactivestreams.Publisher;
@@ -21,8 +20,6 @@ import mutiny.zero.flow.adapters.AdaptersToFlow;
 public class Panache {
     private static final String ERROR_MSG = "MongoDB reactive with Panache requires a safe (isolated) Vert.x sub-context, but the current context hasn't been flagged as such.";
 
-    private static final UUID SESSION_KEY = UUID.randomUUID();
-
     /**
      * Performs the given work within the scope of a MongoDB transaction.
      * The transaction will be rolled back if the work completes with an uncaught exception.
@@ -33,7 +30,7 @@ public class Panache {
      */
     public static <T> Uni<T> withTransaction(Supplier<Uni<T>> work) {
         Context context = vertxContext();
-        ClientSession current = context.getLocal(SESSION_KEY);
+        ClientSession current = MongodbPanacheContextLocalsProvider.SESSION_LOCAL.get(context);
         if (current != null && current.hasActiveTransaction()) {
             // reactive session exists - reuse this session
             return work.get();
@@ -41,7 +38,7 @@ public class Panache {
             // reactive session does not exist - open a new one and close it when the returned Uni completes
             return Panache.startSession()
                     .invoke(s -> s.startTransaction())
-                    .invoke(s -> context.putLocal(SESSION_KEY, s))
+                    .invoke(s -> MongodbPanacheContextLocalsProvider.SESSION_LOCAL.put(context, s))
                     .chain(s -> work.get())
                     .call(() -> commitTransaction())
                     .onFailure().call(() -> abortTransaction())
@@ -59,18 +56,21 @@ public class Panache {
      */
     public static ClientSession getCurrentSession() {
         Context context = Vertx.currentContext();
-        return context != null ? context.getLocal(SESSION_KEY) : null;
+        if (context == null) {
+            return null;
+        }
+        return MongodbPanacheContextLocalsProvider.SESSION_LOCAL.get(context);
     }
 
     private static Uni<?> abortTransaction() {
         Context context = vertxContext();
-        ClientSession current = context.getLocal(SESSION_KEY);
+        ClientSession current = MongodbPanacheContextLocalsProvider.SESSION_LOCAL.get(context);
         return toUni(current.abortTransaction());
     }
 
     private static Uni<?> commitTransaction() {
         Context context = vertxContext();
-        ClientSession current = context.getLocal(SESSION_KEY);
+        ClientSession current = MongodbPanacheContextLocalsProvider.SESSION_LOCAL.get(context);
         return toUni(current.commitTransaction());
     }
 
@@ -90,11 +90,11 @@ public class Panache {
 
     private static void closeSession() {
         Context context = vertxContext();
-        ClientSession current = context.getLocal(SESSION_KEY);
+        ClientSession current = MongodbPanacheContextLocalsProvider.SESSION_LOCAL.get(context);
         try {
             current.close();
         } finally {
-            context.removeLocal(SESSION_KEY);
+            MongodbPanacheContextLocalsProvider.SESSION_LOCAL.remove(context);
         }
     }
 

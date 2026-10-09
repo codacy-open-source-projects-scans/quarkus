@@ -26,6 +26,13 @@ public interface OidcClientCommonConfig extends OidcCommonConfig {
     /**
      * The client id of the application. Each application has a client id that is used to identify the application.
      * Setting the client id is not required if {@link #applicationType} is `service` and no token introspection is required.
+     * <p>
+     * If this property is set to an HTTPS URL, the
+     * <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document">OAuth Client ID
+     * Metadata Document</a> registration is activated. In this mode, Quarkus serves a metadata document at the URL path
+     * derived from the client id, allowing the authorization server to discover the client configuration without
+     * prior registration. The {@link #clientName()} property must also be set in this case.
+     * This option is only supported by the OIDC extension.
      */
     Optional<String> clientId();
 
@@ -67,6 +74,20 @@ public interface OidcClientCommonConfig extends OidcCommonConfig {
          * Client JSON Web Token (JWT) authentication methods
          */
         Jwt jwt();
+
+        /**
+         * If true, client credentials are also sent to OIDC discovery and JWKS endpoints, which normally
+         * do not require authentication.
+         * Enable this when the OIDC provider enforces authenticated access to these endpoints.
+         * <p>
+         * One of the following authentication methods must be used when this property is enabled:
+         * <ul>
+         * <li>{@code client_secret_basic} — {@code Authorization: Basic} header</li>
+         * <li>JWT bearer ({@code jwt.source=bearer}) — {@code Authorization: Bearer} header</li>
+         * </ul>
+         */
+        @WithDefault("false")
+        boolean forAllEndpoints();
 
         /**
          * Supports the client authentication methods that involve sending a client secret.
@@ -145,7 +166,7 @@ public interface OidcClientCommonConfig extends OidcCommonConfig {
                 /**
                  * SPIFFE SVID token is used as a client assertion: urn:ietf:params:oauth:client-assertion-type:jwt-spiffe
                  */
-                SPIFFE
+                SPIFFE_JWT
             }
 
             /**
@@ -209,8 +230,36 @@ public interface OidcClientCommonConfig extends OidcCommonConfig {
             Optional<String> keyPassword();
 
             /**
-             * The JWT audience (`aud`) claim value.
+             * String representation of a public key in PEM format.
+             * Ignored unless the {@link OidcClientCommonConfig#clientId() client-id} is an HTTPS URL activating
+             * the <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document">Client ID
+             * Metadata Document</a> registration, and a private key ({@link #key}, {@link #keyFile}, or
+             * {@link #keyStoreFile}) is also configured.
+             * The public key is published in the metadata document {@code jwks} property and
+             * {@code token_endpoint_auth_method} is set to {@code private_key_jwt}.
+             * This option is only supported by the OIDC extension.
+             */
+            Optional<String> publicKey();
+
+            /**
+             * Path to a file containing the public key in PEM format.
+             * Both public keys and certificates are accepted.
+             * Ignored unless the {@link OidcClientCommonConfig#clientId() client-id} is an HTTPS URL activating
+             * the <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document">Client ID
+             * Metadata Document</a> registration, and a private key ({@link #key}, {@link #keyFile}, or
+             * {@link #keyStoreFile}) is also configured.
+             * The public key is published in the metadata document {@code jwks} property and
+             * {@code token_endpoint_auth_method} is set to {@code private_key_jwt}.
+             * This option is only supported by the OIDC extension.
+             */
+            Optional<String> publicKeyFile();
+
+            /**
+             * The JWT audience ({@code aud}) claim value.
              * By default, the audience is set to the address of the OpenId Connect Provider's token endpoint.
+             * When the JWT {@link #source()} is {@link Source#SPIFFE_JWT}, the audience defaults to the
+             * {@link OidcCommonConfig#authServerUrl() auth-server-url} instead. If the OIDC provider's
+             * issuer URL differs from the {@code auth-server-url}, set this property explicitly.
              */
             Optional<String> audience();
 

@@ -11,6 +11,8 @@ import jakarta.ws.rs.Path;
 
 import org.jboss.shrinkwrap.api.asset.StringAsset;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import io.opentelemetry.sdk.trace.data.SpanData;
@@ -19,6 +21,7 @@ import io.quarkus.opentelemetry.deployment.common.exporter.TestSpanExporterProvi
 import io.quarkus.test.QuarkusDevModeTest;
 import io.restassured.RestAssured;
 
+@DisabledOnOs(OS.WINDOWS)
 public class OpenTelemetrySuppressNonAppUriTest {
 
     @RegisterExtension
@@ -31,8 +34,11 @@ public class OpenTelemetrySuppressNonAppUriTest {
                             """
                                     quarkus.otel.traces.exporter=test-span-exporter
                                     quarkus.otel.metrics.exporter=none
+                                    quarkus.otel.logs.exporter=none
                                     quarkus.otel.bsp.export.timeout=1s
                                     quarkus.otel.bsp.schedule.delay=50
+                                    quarkus.datasource.devservices.enabled=false
+                                    quarkus.observability.enabled=false
                                     """),
                             "application.properties"));
 

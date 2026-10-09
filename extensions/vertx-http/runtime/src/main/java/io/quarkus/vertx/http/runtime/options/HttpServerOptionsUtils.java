@@ -9,19 +9,19 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
+import java.time.Duration;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.jboss.logging.Logger;
 
-import io.netty.handler.codec.compression.BrotliOptions;
-import io.netty.handler.codec.compression.DeflateOptions;
-import io.netty.handler.codec.compression.GzipOptions;
-import io.netty.handler.codec.compression.StandardCompressionOptions;
+import io.netty.handler.logging.ByteBufFormat;
 import io.quarkus.credentials.CredentialsProvider;
 import io.quarkus.credentials.runtime.CredentialsProviderFinder;
 import io.quarkus.runtime.LaunchMode;
@@ -29,47 +29,70 @@ import io.quarkus.runtime.configuration.ConfigurationException;
 import io.quarkus.runtime.util.ClassPathUtils;
 import io.quarkus.tls.TlsConfiguration;
 import io.quarkus.tls.TlsConfigurationRegistry;
+import io.quarkus.vertx.http.runtime.ProxyConfig;
+import io.quarkus.vertx.http.runtime.ProxyConfig.ProxyProtocolListener;
 import io.quarkus.vertx.http.runtime.ServerSslConfig;
 import io.quarkus.vertx.http.runtime.VertxHttpBuildTimeConfig;
 import io.quarkus.vertx.http.runtime.VertxHttpConfig;
 import io.quarkus.vertx.http.runtime.VertxHttpConfig.InsecureRequests;
+import io.quarkus.vertx.http.runtime.WebsocketServerConfig;
 import io.quarkus.vertx.http.runtime.management.ManagementConfig;
 import io.quarkus.vertx.http.runtime.management.ManagementInterfaceBuildTimeConfig;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.ClientAuth;
+import io.vertx.core.http.CompressionConfig;
+import io.vertx.core.http.FormDecoderConfig;
+import io.vertx.core.http.Http1ServerConfig;
+import io.vertx.core.http.Http2ServerConfig;
 import io.vertx.core.http.Http2Settings;
-import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.http.HttpServerConfig;
 import io.vertx.core.http.HttpVersion;
-import io.vertx.core.net.JdkSSLEngineOptions;
+import io.vertx.core.http.QueryParamDecoderConfig;
+import io.vertx.core.http.WebSocketServerConfig;
 import io.vertx.core.net.KeyCertOptions;
-import io.vertx.core.net.TCPSSLOptions;
+import io.vertx.core.net.LogConfig;
+import io.vertx.core.net.SSLEngineOptions;
+import io.vertx.core.net.ServerSSLOptions;
+import io.vertx.core.net.TcpOption;
 import io.vertx.core.net.TrafficShapingOptions;
 import io.vertx.core.net.TrustOptions;
 
 @SuppressWarnings("OptionalIsPresent")
 public class HttpServerOptionsUtils {
 
-    private static final boolean JDK_SSL_BUFFER_POOLING = Boolean.getBoolean("quarkus.http.server.ssl.jdk.bufferPooling");
+    private static final Logger LOGGER = Logger.getLogger(HttpServerOptionsUtils.class);
 
     /**
      * When the http port is set to 0, replace it by this value to let Vert.x choose a random port
      */
-    public static final int RANDOM_PORT_MAIN_HTTP = -1;
+    public static final int RANDOM_PORT_MAIN_HTTP = 10;
 
     /**
      * When the https port is set to 0, replace it by this value to let Vert.x choose a random port
      */
-    public static final int RANDOM_PORT_MAIN_TLS = -2;
+    public static final int RANDOM_PORT_MAIN_TLS = 20;
 
     /**
      * When the management port is set to 0, replace it by this value to let Vert.x choose a random port
      */
-    public static final int RANDOM_PORT_MANAGEMENT = -3;
+    public static final int RANDOM_PORT_MANAGEMENT = 30;
 
     /**
-     * Get an {@code HttpServerOptions} for this server configuration, or null if SSL should not be enabled
+     * Holds the result of building server configuration: an {@link HttpServerConfig}, optional {@link ServerSSLOptions},
+     * and optional {@link SSLEngineOptions} for selecting the SSL engine.
      */
-    public static HttpServerOptions createSslOptions(
+    public record ServerConfig(HttpServerConfig config, ServerSSLOptions sslOptions,
+            SSLEngineOptions sslEngineOptions) {
+        public ServerConfig(HttpServerConfig config, ServerSSLOptions sslOptions) {
+            this(config, sslOptions, null);
+        }
+    }
+
+    /**
+     * Create an {@link HttpServerConfig} and {@link ServerSSLOptions} for the HTTPS server,
+     * or {@code null} if SSL should not be enabled.
+     */
+    public static ServerConfig createSslServerConfig(
             VertxHttpBuildTimeConfig httpBuildTimeConfig,
             VertxHttpConfig httpConfig,
             LaunchMode launchMode,
@@ -80,116 +103,45 @@ public class HttpServerOptionsUtils {
             return null;
         }
 
-        final HttpServerOptions serverOptions = new HttpServerOptions();
+        HttpServerConfig config = new HttpServerConfig();
         int sslPort = httpConfig.determineSslPort(launchMode);
-        // -2 instead of -1 (see http) to have vert.x assign two different random ports if both http and https shall be random
-        serverOptions.setPort(sslPort == 0 ? RANDOM_PORT_MAIN_TLS : sslPort);
-        serverOptions.setClientAuth(getTlsClientAuth(httpConfig, httpBuildTimeConfig, launchMode));
+        config.setPort(sslPort);
 
-        if (JdkSSLEngineOptions.isAlpnAvailable()) {
-            serverOptions.setUseAlpn(httpConfig.http2());
-            if (httpConfig.http2()) {
-                serverOptions.setAlpnVersions(Arrays.asList(HttpVersion.HTTP_2, HttpVersion.HTTP_1_1));
-            }
+        Set<HttpVersion> versions = EnumSet.of(HttpVersion.HTTP_1_1);
+        if (httpConfig.http2()) {
+            versions.add(HttpVersion.HTTP_2);
         }
-        setIdleTimeout(httpConfig, serverOptions);
+        config.setVersions(versions);
+
+        setIdleTimeout(httpConfig, config);
 
         Optional<String> tlsConfigurationName = getHttpServerTlsConfigName(httpConfig, httpBuildTimeConfig, launchMode);
         TlsConfiguration bucket = getTlsConfiguration(tlsConfigurationName, registry);
         if (bucket != null) {
-            applyTlsConfigurationToHttpServerOptions(bucket, serverOptions);
-            applyCommonOptions(serverOptions, httpBuildTimeConfig, httpConfig, websocketSubProtocols);
-            return serverOptions;
+            ClientAuth clientAuth = getTlsClientAuth(httpConfig, httpBuildTimeConfig, launchMode);
+            ServerSSLOptions sslOptions = createServerSslOptions(bucket, clientAuth);
+            SSLEngineOptions engineOptions = bucket.getSslEngineOptions().orElse(null);
+            applyCommonOptions(config, httpBuildTimeConfig, httpConfig, websocketSubProtocols,
+                    httpConfig.determineSslHost(), ProxyProtocolListener.HTTPS);
+            return new ServerConfig(config, sslOptions, engineOptions);
         }
 
-        // Legacy configuration:
-        applySslConfigToHttpServerOptions(httpConfig.ssl(), serverOptions);
-        applyCommonOptions(serverOptions, httpBuildTimeConfig, httpConfig, websocketSubProtocols);
-
-        return serverOptions;
-    }
-
-    private static TlsConfiguration getTlsConfiguration(Optional<String> tlsConfigurationName,
-            TlsConfigurationRegistry registry) {
-        TlsConfiguration bucket = null;
-        if (tlsConfigurationName.isPresent()) {
-            var maybeTlsConfig = registry.get(tlsConfigurationName.get());
-            if (maybeTlsConfig.isEmpty()) {
-                throw new ConfigurationException("No TLS configuration named " + tlsConfigurationName.get()
-                        + " found in the TLS registry. Configure `quarkus.tls."
-                        + tlsConfigurationName.get() + "` in your application.properties.");
-            }
-            bucket = maybeTlsConfig.get();
-        } else if (registry != null && registry.getDefault().isPresent()
-                && registry.getDefault().get().getKeyStoreOptions() != null) {
-            // Verify that default is present and a key store has been configured, otherwise we get the default configuration.
-            bucket = registry.getDefault().get();
+        // Legacy configuration
+        ServerSSLOptions sslOptions = createSslOptionsFromLegacyConfig(httpConfig.ssl());
+        if (sslOptions == null) {
+            return null;
         }
-        return bucket;
-    }
-
-    private static void applySslConfigToHttpServerOptions(ServerSslConfig sslConfig, HttpServerOptions serverOptions)
-            throws IOException {
-        // credentials provider
-        Map<String, String> credentials = Map.of();
-        if (sslConfig.certificate().credentialsProvider().isPresent()) {
-            String beanName = sslConfig.certificate().credentialsProviderName().orElse(null);
-            CredentialsProvider credentialsProvider = CredentialsProviderFinder.find(beanName);
-            String name = sslConfig.certificate().credentialsProvider().get();
-            credentials = credentialsProvider.getCredentialsAsync(name).await().indefinitely();
-        }
-
-        final Optional<String> keyStorePassword = getCredential(sslConfig.certificate().keyStorePassword(), credentials,
-                sslConfig.certificate().keyStorePasswordKey());
-
-        Optional<String> keyStoreAliasPassword = Optional.empty();
-        if (sslConfig.certificate().keyStoreAliasPassword().isPresent()
-                || sslConfig.certificate().keyStoreKeyPassword().isPresent()
-                || sslConfig.certificate().keyStoreKeyPasswordKey().isPresent()
-                || sslConfig.certificate().keyStoreAliasPasswordKey().isPresent()) {
-            if (sslConfig.certificate().keyStoreKeyPasswordKey().isPresent()
-                    && sslConfig.certificate().keyStoreAliasPasswordKey().isPresent()) {
-                throw new ConfigurationException(
-                        "You cannot specify both `keyStoreKeyPasswordKey` and `keyStoreAliasPasswordKey` - Use `keyStoreAliasPasswordKey` instead");
-            }
-            if (sslConfig.certificate().keyStoreAliasPassword().isPresent()
-                    && sslConfig.certificate().keyStoreKeyPassword().isPresent()) {
-                throw new ConfigurationException(
-                        "You cannot specify both `keyStoreKeyPassword` and `keyStoreAliasPassword` - Use `keyStoreAliasPassword` instead");
-            }
-            keyStoreAliasPassword = getCredential(
-                    or(sslConfig.certificate().keyStoreAliasPassword(), sslConfig.certificate().keyStoreKeyPassword()),
-                    credentials,
-                    or(sslConfig.certificate().keyStoreAliasPasswordKey(), sslConfig.certificate().keyStoreKeyPasswordKey()));
-        }
-
-        final Optional<String> trustStorePassword = getCredential(sslConfig.certificate().trustStorePassword(), credentials,
-                sslConfig.certificate().trustStorePasswordKey());
-
-        var kso = computeKeyStoreOptions(sslConfig.certificate(), keyStorePassword, keyStoreAliasPassword);
-        if (kso != null) {
-            serverOptions.setKeyCertOptions(kso);
-        }
-
-        var to = computeTrustOptions(sslConfig.certificate(), trustStorePassword);
-        if (to != null) {
-            serverOptions.setTrustOptions(to);
-        }
-
-        for (String cipher : sslConfig.cipherSuites().orElse(Collections.emptyList())) {
-            serverOptions.addEnabledCipherSuite(cipher);
-        }
-
-        serverOptions.setEnabledSecureTransportProtocols(sslConfig.protocols());
-        serverOptions.setSsl(true);
-        serverOptions.setSni(sslConfig.sni());
-        setJdkHeapBufferPooling(serverOptions);
+        sslOptions.setClientAuth(getTlsClientAuth(httpConfig, httpBuildTimeConfig, launchMode));
+        applyCommonOptions(config, httpBuildTimeConfig, httpConfig, websocketSubProtocols,
+                httpConfig.determineSslHost(), ProxyProtocolListener.HTTPS);
+        return new ServerConfig(config, sslOptions);
     }
 
     /**
-     * Get an {@code HttpServerOptions} for this server configuration, or null if SSL should not be enabled
+     * Create an {@link HttpServerConfig} and {@link ServerSSLOptions} for the management HTTPS server,
+     * or {@code null} if SSL should not be enabled.
      */
-    public static HttpServerOptions createSslOptionsForManagementInterface(
+    public static ServerConfig createSslServerConfigForManagementInterface(
             ManagementInterfaceBuildTimeConfig managementBuildTimeConfig,
             ManagementConfig managementConfig,
             LaunchMode launchMode, List<String> websocketSubProtocols, TlsConfigurationRegistry registry)
@@ -198,76 +150,376 @@ public class HttpServerOptionsUtils {
             return null;
         }
 
-        final HttpServerOptions serverOptions = new HttpServerOptions();
-        if (JdkSSLEngineOptions.isAlpnAvailable()) {
-            serverOptions.setUseAlpn(true);
-            serverOptions.setAlpnVersions(Arrays.asList(HttpVersion.HTTP_2, HttpVersion.HTTP_1_1));
-        }
-        int idleTimeout = (int) managementConfig.idleTimeout().toMillis();
-        serverOptions.setIdleTimeout(idleTimeout);
-        serverOptions.setIdleTimeoutUnit(TimeUnit.MILLISECONDS);
+        HttpServerConfig config = new HttpServerConfig();
+        config.setVersions(EnumSet.of(HttpVersion.HTTP_1_1, HttpVersion.HTTP_2));
+        config.setIdleTimeout(managementConfig.idleTimeout());
 
         int sslPort = managementConfig.determinePort(launchMode);
-        serverOptions.setPort(sslPort == 0 ? RANDOM_PORT_MANAGEMENT : sslPort);
-        serverOptions.setClientAuth(managementBuildTimeConfig.tlsClientAuth());
+        config.setPort(sslPort);
 
         TlsConfiguration bucket = getTlsConfiguration(managementConfig.tlsConfigurationName(), registry);
         if (bucket != null) {
-            applyTlsConfigurationToHttpServerOptions(bucket, serverOptions);
-            applyCommonOptionsForManagementInterface(serverOptions, managementBuildTimeConfig, managementConfig,
-                    websocketSubProtocols);
-            return serverOptions;
+            ClientAuth clientAuth = managementBuildTimeConfig.tlsClientAuth();
+            ServerSSLOptions sslOptions = createServerSslOptions(bucket, clientAuth);
+            SSLEngineOptions engineOptions = bucket.getSslEngineOptions().orElse(null);
+            applyCommonOptionsForManagementInterface(config, managementBuildTimeConfig, managementConfig,
+                    websocketSubProtocols, ProxyProtocolListener.HTTPS);
+            return new ServerConfig(config, sslOptions, engineOptions);
         }
 
-        // Legacy configuration:
-        applySslConfigToHttpServerOptions(managementConfig.ssl(), serverOptions);
-        applyCommonOptionsForManagementInterface(serverOptions, managementBuildTimeConfig, managementConfig,
-                websocketSubProtocols);
-
-        return serverOptions;
+        // Legacy configuration
+        ServerSSLOptions sslOptions = createSslOptionsFromLegacyConfig(managementConfig.ssl());
+        if (sslOptions == null) {
+            return null;
+        }
+        sslOptions.setClientAuth(managementBuildTimeConfig.tlsClientAuth());
+        applyCommonOptionsForManagementInterface(config, managementBuildTimeConfig, managementConfig,
+                websocketSubProtocols, ProxyProtocolListener.HTTPS);
+        return new ServerConfig(config, sslOptions);
     }
 
-    public static void applyTlsConfigurationToHttpServerOptions(TlsConfiguration bucket, HttpServerOptions serverOptions) {
-        serverOptions.setSsl(true);
-        setJdkHeapBufferPooling(serverOptions);
+    /**
+     * Create {@link ServerSSLOptions} for a server from a TLS registry configuration and client authentication setting.
+     */
+    public static ServerSSLOptions createServerSslOptions(TlsConfiguration bucket, ClientAuth clientAuth) {
+        ServerSSLOptions sslOptions = new ServerSSLOptions();
 
         KeyCertOptions keyStoreOptions = bucket.getKeyStoreOptions();
         TrustOptions trustStoreOptions = bucket.getTrustStoreOptions();
         if (keyStoreOptions != null) {
-            serverOptions.setKeyCertOptions(keyStoreOptions);
+            sslOptions.setKeyCertOptions(keyStoreOptions);
         }
         if (trustStoreOptions != null) {
-            serverOptions.setTrustOptions(trustStoreOptions);
+            sslOptions.setTrustOptions(trustStoreOptions);
         }
-        serverOptions.setSni(bucket.usesSni());
+        sslOptions.setSni(bucket.usesSni());
 
-        var other = bucket.getSSLOptions();
-        serverOptions.setSslHandshakeTimeout(other.getSslHandshakeTimeout());
-        serverOptions.setSslHandshakeTimeoutUnit(other.getSslHandshakeTimeoutUnit());
+        var other = bucket.getServerSSLOptions();
+        sslOptions.setSslHandshakeTimeout(other.getSslHandshakeTimeout());
+        sslOptions.setSslHandshakeTimeoutUnit(other.getSslHandshakeTimeoutUnit());
         for (String suite : other.getEnabledCipherSuites()) {
-            serverOptions.addEnabledCipherSuite(suite);
+            sslOptions.addEnabledCipherSuite(suite);
         }
         for (Buffer buffer : other.getCrlValues()) {
-            serverOptions.addCrlValue(buffer);
+            sslOptions.addCrlValue(buffer);
         }
         if (!other.isUseAlpn()) {
-            serverOptions.setUseAlpn(false);
+            sslOptions.setUseAlpn(false);
         }
-        serverOptions.setEnabledSecureTransportProtocols(other.getEnabledSecureTransportProtocols());
+        if (other.getKeyExchangeGroups() != null && !other.getKeyExchangeGroups().isEmpty()) {
+            sslOptions.setKeyExchangeGroups(other.getKeyExchangeGroups());
+        }
+        sslOptions.setPqcEnforcementPolicy(other.getPqcEnforcementPolicy());
+        sslOptions.setEnabledSecureTransportProtocols(other.getEnabledSecureTransportProtocols());
+
+        sslOptions.setClientAuth(clientAuth);
+
+        return sslOptions;
     }
 
-    private static void setJdkHeapBufferPooling(TCPSSLOptions tcpSslOptions) {
-        if (!JDK_SSL_BUFFER_POOLING) {
-            return;
+    /**
+     * Create an {@link HttpServerConfig} for the plain HTTP server.
+     */
+    public static HttpServerConfig createHttpServerConfig(
+            VertxHttpBuildTimeConfig buildTimeConfig,
+            VertxHttpConfig httpConfig,
+            LaunchMode launchMode,
+            List<String> websocketSubProtocols) {
+        if (!httpConfig.hostEnabled()) {
+            return null;
         }
-        var engineOption = tcpSslOptions.getSslEngineOptions();
-        if (engineOption == null) {
-            var jdkEngineOptions = new JdkSSLEngineOptions();
-            jdkEngineOptions.setPooledHeapBuffers(true);
-            tcpSslOptions.setSslEngineOptions(jdkEngineOptions);
-        } else if (engineOption instanceof JdkSSLEngineOptions jdkEngineOptions) {
-            jdkEngineOptions.setPooledHeapBuffers(true);
+        HttpServerConfig config = new HttpServerConfig();
+
+        if (httpConfig.http2()) {
+            config.setVersions(EnumSet.of(HttpVersion.HTTP_1_1, HttpVersion.HTTP_2));
+        } else {
+            config.setVersions(EnumSet.of(HttpVersion.HTTP_1_1));
         }
+
+        int port = httpConfig.determinePort(launchMode);
+        config.setPort(port);
+
+        applyCommonOptions(config, buildTimeConfig, httpConfig, websocketSubProtocols, httpConfig.host(),
+                ProxyProtocolListener.HTTP);
+        return config;
+    }
+
+    /**
+     * Create an {@link HttpServerConfig} for the management plain HTTP server.
+     */
+    public static HttpServerConfig createHttpServerConfigForManagementInterface(
+            ManagementInterfaceBuildTimeConfig buildTimeConfig,
+            ManagementConfig httpConfig,
+            LaunchMode launchMode,
+            List<String> websocketSubProtocols) {
+        if (!httpConfig.hostEnabled()) {
+            return null;
+        }
+        HttpServerConfig config = new HttpServerConfig();
+        int port = httpConfig.determinePort(launchMode);
+        config.setPort(port);
+
+        applyCommonOptionsForManagementInterface(config, buildTimeConfig, httpConfig, websocketSubProtocols,
+                ProxyProtocolListener.HTTP);
+        return config;
+    }
+
+    /**
+     * Create an {@link HttpServerConfig} for a domain socket server, or {@code null} if not enabled.
+     */
+    public static HttpServerConfig createDomainSocketConfig(
+            VertxHttpBuildTimeConfig buildTimeConfig,
+            VertxHttpConfig httpConfig,
+            List<String> websocketSubProtocols) {
+        if (!httpConfig.domainSocketEnabled()) {
+            return null;
+        }
+        HttpServerConfig config = new HttpServerConfig();
+        applyCommonOptions(config, buildTimeConfig, httpConfig, websocketSubProtocols, httpConfig.host(),
+                ProxyProtocolListener.DOMAIN_SOCKET);
+        config.setHost(httpConfig.domainSocket());
+        return config;
+    }
+
+    /**
+     * Create an {@link HttpServerConfig} for a management domain socket server, or {@code null} if not enabled.
+     */
+    public static HttpServerConfig createDomainSocketConfigForManagementInterface(
+            ManagementInterfaceBuildTimeConfig buildTimeConfig,
+            ManagementConfig managementConfig,
+            List<String> websocketSubProtocols) {
+        if (!managementConfig.domainSocketEnabled()) {
+            return null;
+        }
+        HttpServerConfig config = new HttpServerConfig();
+        applyCommonOptionsForManagementInterface(config, buildTimeConfig, managementConfig, websocketSubProtocols,
+                ProxyProtocolListener.DOMAIN_SOCKET);
+        config.setHost(managementConfig.domainSocket());
+        return config;
+    }
+
+    /**
+     * Apply common HTTP server options to an {@link HttpServerConfig}.
+     *
+     * @param listener the listener the config is for; the {@code PROXY} protocol is enabled on it only when
+     *        {@code quarkus.http.proxy.proxy-protocol-listeners} contains it
+     */
+    public static void applyCommonOptions(
+            HttpServerConfig config,
+            VertxHttpBuildTimeConfig httpBuildTimeConfig,
+            VertxHttpConfig httpConfig,
+            List<String> websocketSubProtocols,
+            String host,
+            ProxyProtocolListener listener) {
+        config.setHost(host);
+        setIdleTimeout(httpConfig, config);
+
+        // HTTP/1.1 config
+        Http1ServerConfig http1 = new Http1ServerConfig();
+        http1.setMaxHeaderSize(httpConfig.limits().maxHeaderSize().asBigInteger().intValueExact());
+        http1.setMaxChunkSize(httpConfig.limits().maxChunkSize().asBigInteger().intValueExact());
+        http1.setMaxInitialLineLength(httpConfig.limits().maxInitialLineLength());
+        http1.setDecoderInitialBufferSize(httpConfig.decoderInitialBufferSize());
+        config.setHttp1Config(http1);
+
+        // Form decoder config
+        FormDecoderConfig formConfig = new FormDecoderConfig();
+        formConfig.setMaxAttributeSize(httpConfig.limits().maxFormAttributeSize().asBigInteger().intValueExact());
+        formConfig.setMaxFields(httpConfig.limits().maxFormFields());
+        formConfig.setMaxBufferedBytes(httpConfig.limits().maxFormBufferedBytes().asBigInteger().intValue());
+        config.setFormDecoderConfig(formConfig);
+
+        // WebSocket config
+        WebSocketServerConfig wsConfig = new WebSocketServerConfig();
+        wsConfig.setSubProtocols(websocketSubProtocols);
+        httpConfig.websocketServer().maxFrameSize().ifPresent(wsConfig::setMaxFrameSize);
+        httpConfig.websocketServer().maxMessageSize().ifPresent(wsConfig::setMaxMessageSize);
+        applyWebSocketOptions(wsConfig, httpConfig.websocketServer());
+        config.setWebSocketConfig(wsConfig);
+
+        // TCP transport config
+        var tcpConfig = config.getTcpConfig();
+        var transport = tcpConfig.getTransportConfig();
+        transport.setSoReusePort(httpConfig.soReusePort());
+        transport.setOption(TcpOption.QUICKACK, httpConfig.tcpQuickAck());
+        transport.setOption(TcpOption.CORK, httpConfig.tcpCork());
+        tcpConfig.setAcceptBacklog(httpConfig.acceptBacklog());
+        transport.setOption(TcpOption.FASTOPEN_CONNECT, httpConfig.tcpFastOpen());
+        transport.setOption(TcpOption.USER_TIMEOUT, (int) httpConfig.tcpUserTimeout().toMillis());
+        transport.setSoLinger(httpConfig.soLinger());
+        transport.setSoKeepAlive(httpConfig.tcpKeepAlive());
+        transport.setReuseAddress(httpConfig.reuseAddress());
+        if (httpConfig.trafficClass() >= 0) {
+            transport.setTrafficClass(httpConfig.trafficClass());
+        }
+        if (httpConfig.sendBufferSize().isPresent()) {
+            transport.setSendBufferSize(httpConfig.sendBufferSize().getAsInt());
+        }
+        if (httpConfig.receiveBufferSize().isPresent()) {
+            transport.setReceiveBufferSize(httpConfig.receiveBufferSize().getAsInt());
+        }
+        tcpConfig.setProxyProtocolTimeout(httpConfig.proxyProtocolTimeout());
+        config.setReadIdleTimeout(Duration.ofMillis(httpConfig.readIdleTimeout().toMillis()));
+        config.setWriteIdleTimeout(Duration.ofMillis(httpConfig.writeIdleTimeout().toMillis()));
+
+        config.setHandle100ContinueAutomatically(httpConfig.handle100ContinueAutomatically());
+
+        // Query param decoder config
+        config.setQueryParamConfig(new QueryParamDecoderConfig()
+                .setMaxSize(httpConfig.limits().maxQueryParameters())
+                .setUseSemicolonAsDelimiter(httpConfig.useSemicolonAsQueryParamDelimiter()));
+
+        // Compression config
+        applyCompressionConfig(config, httpBuildTimeConfig, httpConfig.compressionContentSizeThreshold());
+
+        // Logging
+        if (httpConfig.logActivity()) {
+            var log = new LogConfig();
+            if (httpConfig.activityLogDataFormat() != null) {
+                log.setDataFormat(ByteBufFormat.valueOf(httpConfig.activityLogDataFormat().name()));
+            }
+            config.setLogConfig(log);
+        }
+
+        // HTTP/2 config
+        if (httpConfig.http2()) {
+            Http2ServerConfig http2 = new Http2ServerConfig();
+            var settings = new Http2Settings();
+            if (httpConfig.limits().headerTableSize().isPresent()) {
+                settings.setHeaderTableSize(httpConfig.limits().headerTableSize().getAsLong());
+            }
+            settings.setPushEnabled(httpConfig.http2PushEnabled());
+            settings.setMaxConcurrentStreams(httpConfig.limits().maxConcurrentStreams());
+            if (httpConfig.initialWindowSize().isPresent()) {
+                settings.setInitialWindowSize(httpConfig.initialWindowSize().getAsInt());
+            }
+            if (httpConfig.limits().maxFrameSize().isPresent()) {
+                settings.setMaxFrameSize(httpConfig.limits().maxFrameSize().getAsInt());
+            }
+            if (httpConfig.limits().maxHeaderListSize().isPresent()) {
+                settings.setMaxHeaderListSize(httpConfig.limits().maxHeaderListSize().getAsLong());
+            }
+            http2.setInitialSettings(settings);
+
+            // RST attack protection
+            if (httpConfig.limits().rstFloodMaxRstFramePerWindow().isPresent()) {
+                http2.setRstFloodMaxRstFramePerWindow(httpConfig.limits().rstFloodMaxRstFramePerWindow().getAsInt());
+            }
+            if (httpConfig.limits().rstFloodWindowDuration().isPresent()) {
+                http2.setRstFloodWindowDuration(httpConfig.limits().rstFloodWindowDuration().get());
+            }
+            if (httpConfig.http2ConnectionWindowSize().isPresent()) {
+                http2.setConnectionWindowSize(httpConfig.http2ConnectionWindowSize().getAsInt());
+            }
+            if (httpConfig.http2MaxSmallContinuationFrames().isPresent()) {
+                http2.setMaxSmallContinuationFrames(httpConfig.http2MaxSmallContinuationFrames().getAsInt());
+            }
+            config.setHttp2Config(http2);
+        }
+
+        // Proxy protocol
+        config.getTcpConfig().setUseProxyProtocol(httpConfig.proxy().useProxyProtocol()
+                && httpConfig.proxy().proxyProtocolListeners().contains(listener));
+
+        // Traffic shaping
+        configureTrafficShapingIfEnabled(config, httpConfig);
+    }
+
+    /**
+     * Warn when the {@code PROXY} protocol is enabled but none of the listeners it is expected on is started.
+     *
+     * @param configRoot {@code quarkus.http} or {@code quarkus.management}
+     */
+    public static void warnIfProxyProtocolIsNotUsed(String configRoot, ProxyConfig proxyConfig,
+            Set<ProxyProtocolListener> startedListeners) {
+        if (proxyConfig.useProxyProtocol()
+                && Collections.disjoint(proxyConfig.proxyProtocolListeners(), startedListeners)) {
+            LOGGER.warnf(
+                    "'%1$s.proxy.use-proxy-protocol' is enabled, but the PROXY protocol is not used: '%1$s.proxy.proxy-protocol-listeners' selects %2$s and the started listeners are %3$s",
+                    configRoot, proxyConfig.proxyProtocolListeners(), startedListeners);
+        }
+    }
+
+    /**
+     * Apply common management interface options to an {@link HttpServerConfig}.
+     */
+    public static void applyCommonOptionsForManagementInterface(
+            HttpServerConfig config,
+            ManagementInterfaceBuildTimeConfig managementBuildTimeConfig,
+            ManagementConfig managementConfig,
+            List<String> websocketSubProtocols,
+            ProxyProtocolListener listener) {
+        config.setHost(managementConfig.host());
+        config.setIdleTimeout(managementConfig.idleTimeout());
+
+        // HTTP/1.1 config
+        Http1ServerConfig http1 = new Http1ServerConfig();
+        http1.setMaxHeaderSize(managementConfig.limits().maxHeaderSize().asBigInteger().intValueExact());
+        http1.setMaxChunkSize(managementConfig.limits().maxChunkSize().asBigInteger().intValueExact());
+        http1.setMaxInitialLineLength(managementConfig.limits().maxInitialLineLength());
+        config.setHttp1Config(http1);
+
+        // Form decoder config
+        FormDecoderConfig formConfig = new FormDecoderConfig();
+        formConfig.setMaxAttributeSize(managementConfig.limits().maxFormAttributeSize().asBigInteger().intValueExact());
+        formConfig.setMaxFields(managementConfig.limits().maxFormFields());
+        formConfig.setMaxBufferedBytes(managementConfig.limits().maxFormBufferedBytes().asBigInteger().intValue());
+        config.setFormDecoderConfig(formConfig);
+
+        // WebSocket config
+        WebSocketServerConfig wsConfig = new WebSocketServerConfig();
+        wsConfig.setSubProtocols(websocketSubProtocols);
+        managementConfig.websocketServer().maxFrameSize().ifPresent(wsConfig::setMaxFrameSize);
+        managementConfig.websocketServer().maxMessageSize().ifPresent(wsConfig::setMaxMessageSize);
+        applyWebSocketOptions(wsConfig, managementConfig.websocketServer());
+        config.setWebSocketConfig(wsConfig);
+
+        var tcpConfig = config.getTcpConfig();
+        tcpConfig.setAcceptBacklog(managementConfig.acceptBacklog());
+
+        config.setHandle100ContinueAutomatically(managementConfig.handle100ContinueAutomatically());
+
+        // Query param decoder config
+        config.setQueryParamConfig(new QueryParamDecoderConfig()
+                .setMaxSize(managementConfig.limits().maxQueryParameters())
+                .setUseSemicolonAsDelimiter(managementConfig.useSemicolonAsQueryParamDelimiter()));
+
+        // Compression
+        applyCompressionConfig(config, managementBuildTimeConfig.enableCompression(),
+                managementBuildTimeConfig.enableDecompression(), Optional.empty(),
+                managementBuildTimeConfig.compressionLevel(), managementConfig.compressionContentSizeThreshold());
+
+        // Logging
+        if (managementConfig.logActivity()) {
+            var log = new LogConfig();
+            if (managementConfig.activityLogDataFormat() != null) {
+                log.setDataFormat(ByteBufFormat.valueOf(managementConfig.activityLogDataFormat().name()));
+            }
+            config.setLogConfig(log);
+        }
+
+        // Proxy protocol
+        tcpConfig.setUseProxyProtocol(managementConfig.proxy().useProxyProtocol()
+                && managementConfig.proxy().proxyProtocolListeners().contains(listener));
+        tcpConfig.setProxyProtocolTimeout(managementConfig.proxyProtocolTimeout());
+
+        // TCP options
+        var transport = tcpConfig.getTransportConfig();
+        transport.setOption(TcpOption.USER_TIMEOUT, (int) managementConfig.tcpUserTimeout().toMillis());
+        transport.setSoLinger(managementConfig.soLinger());
+        transport.setSoKeepAlive(managementConfig.tcpKeepAlive());
+        transport.setReuseAddress(managementConfig.reuseAddress());
+        if (managementConfig.trafficClass() >= 0) {
+            transport.setTrafficClass(managementConfig.trafficClass());
+        }
+        if (managementConfig.sendBufferSize().isPresent()) {
+            transport.setSendBufferSize(managementConfig.sendBufferSize().getAsInt());
+        }
+        if (managementConfig.receiveBufferSize().isPresent()) {
+            transport.setReceiveBufferSize(managementConfig.receiveBufferSize().getAsInt());
+        }
+        config.setReadIdleTimeout(Duration.ofMillis(managementConfig.readIdleTimeout().toMillis()));
+        config.setWriteIdleTimeout(Duration.ofMillis(managementConfig.writeIdleTimeout().toMillis()));
     }
 
     public static Optional<String> getCredential(Optional<String> password, Map<String, String> credentials,
@@ -281,184 +533,6 @@ public class HttpServerOptionsUtils {
         } else {
             return Optional.empty();
         }
-    }
-
-    public static void applyCommonOptions(
-            HttpServerOptions httpServerOptions,
-            VertxHttpBuildTimeConfig httpBuildTimeConfig,
-            VertxHttpConfig httpConfig,
-            List<String> websocketSubProtocols) {
-        httpServerOptions.setHost(httpConfig.host());
-        setIdleTimeout(httpConfig, httpServerOptions);
-        httpServerOptions.setMaxHeaderSize(httpConfig.limits().maxHeaderSize().asBigInteger().intValueExact());
-        httpServerOptions.setMaxChunkSize(httpConfig.limits().maxChunkSize().asBigInteger().intValueExact());
-        httpServerOptions.setMaxFormAttributeSize(httpConfig.limits().maxFormAttributeSize().asBigInteger().intValueExact());
-        httpServerOptions.setMaxFormFields(httpConfig.limits().maxFormFields());
-        httpServerOptions.setMaxFormBufferedBytes(httpConfig.limits().maxFormBufferedBytes().asBigInteger().intValue());
-        httpServerOptions.setWebSocketSubProtocols(websocketSubProtocols);
-        httpServerOptions.setReusePort(httpConfig.soReusePort());
-        httpServerOptions.setTcpQuickAck(httpConfig.tcpQuickAck());
-        httpServerOptions.setTcpCork(httpConfig.tcpCork());
-        httpServerOptions.setAcceptBacklog(httpConfig.acceptBacklog());
-        httpServerOptions.setTcpFastOpen(httpConfig.tcpFastOpen());
-        httpServerOptions.setCompressionSupported(httpBuildTimeConfig.enableCompression());
-        if (httpBuildTimeConfig.compressionLevel().isPresent()) {
-            httpServerOptions.setCompressionLevel(httpBuildTimeConfig.compressionLevel().getAsInt());
-        }
-        httpServerOptions.setDecompressionSupported(httpBuildTimeConfig.enableDecompression());
-        httpServerOptions.setMaxInitialLineLength(httpConfig.limits().maxInitialLineLength());
-        httpServerOptions.setHandle100ContinueAutomatically(httpConfig.handle100ContinueAutomatically());
-
-        if (httpBuildTimeConfig.compressors().isPresent()) {
-            // Adding defaults too, because mere addition of .addCompressor(brotli) actually
-            // overrides the default deflate and gzip capability.
-            for (String compressor : httpBuildTimeConfig.compressors().get()) {
-                if ("gzip".equalsIgnoreCase(compressor)) {
-                    // GZip's default compression level is 6 in Netty Codec 4.1, the same
-                    // as the default compression level in Vert.x Core 4.5.7's HttpServerOptions.
-                    final GzipOptions defaultOps = StandardCompressionOptions.gzip();
-                    httpServerOptions.addCompressor(StandardCompressionOptions
-                            .gzip(httpServerOptions.getCompressionLevel(), defaultOps.windowBits(), defaultOps.memLevel()));
-                } else if ("deflate".equalsIgnoreCase(compressor)) {
-                    // Deflate's default compression level defaults the same as with GZip.
-                    final DeflateOptions defaultOps = StandardCompressionOptions.deflate();
-                    httpServerOptions.addCompressor(StandardCompressionOptions
-                            .deflate(httpServerOptions.getCompressionLevel(), defaultOps.windowBits(), defaultOps.memLevel()));
-                } else if ("br".equalsIgnoreCase(compressor)) {
-                    final BrotliOptions o = StandardCompressionOptions.brotli();
-                    // The default compression level for brotli as of Netty Codec 4.1 is 4,
-                    // so we don't pick up Vert.x Core 4.5.7's default of 6. User can override:
-                    if (httpBuildTimeConfig.compressionLevel().isPresent()) {
-                        o.parameters().setQuality(httpBuildTimeConfig.compressionLevel().getAsInt());
-                    }
-                    httpServerOptions.addCompressor(o);
-                } else {
-                    Logger.getLogger(HttpServerOptionsUtils.class).errorf("Unknown compressor: %s", compressor);
-                }
-            }
-        }
-
-        if (httpConfig.http2()) {
-            var settings = new Http2Settings();
-            if (httpConfig.limits().headerTableSize().isPresent()) {
-                settings.setHeaderTableSize(httpConfig.limits().headerTableSize().getAsLong());
-            }
-            settings.setPushEnabled(httpConfig.http2PushEnabled());
-            if (httpConfig.limits().maxConcurrentStreams().isPresent()) {
-                settings.setMaxConcurrentStreams(httpConfig.limits().maxConcurrentStreams().getAsLong());
-            }
-            if (httpConfig.initialWindowSize().isPresent()) {
-                settings.setInitialWindowSize(httpConfig.initialWindowSize().getAsInt());
-            }
-            if (httpConfig.limits().maxFrameSize().isPresent()) {
-                settings.setMaxFrameSize(httpConfig.limits().maxFrameSize().getAsInt());
-            }
-            if (httpConfig.limits().maxHeaderListSize().isPresent()) {
-                settings.setMaxHeaderListSize(httpConfig.limits().maxHeaderListSize().getAsLong());
-            }
-            httpServerOptions.setInitialSettings(settings);
-
-            // RST attack protection - https://github.com/netty/netty/security/advisories/GHSA-xpw8-rcwv-8f8p
-            if (httpConfig.limits().rstFloodMaxRstFramePerWindow().isPresent()) {
-                httpServerOptions
-                        .setHttp2RstFloodMaxRstFramePerWindow(httpConfig.limits().rstFloodMaxRstFramePerWindow().getAsInt());
-            }
-            if (httpConfig.limits().rstFloodWindowDuration().isPresent()) {
-                httpServerOptions.setHttp2RstFloodWindowDuration(
-                        (int) httpConfig.limits().rstFloodWindowDuration().get().toSeconds());
-                httpServerOptions.setHttp2RstFloodWindowDurationTimeUnit(TimeUnit.SECONDS);
-            }
-            if (httpConfig.http2ConnectionWindowSize().isPresent()) {
-                httpServerOptions.setHttp2ConnectionWindowSize(httpConfig.http2ConnectionWindowSize().getAsInt());
-            }
-        } else {
-            httpServerOptions.setHttp2ClearTextEnabled(false);
-        }
-
-        httpServerOptions.setUseProxyProtocol(httpConfig.proxy().useProxyProtocol());
-        configureTrafficShapingIfEnabled(httpServerOptions, httpConfig);
-    }
-
-    private static void configureTrafficShapingIfEnabled(HttpServerOptions httpServerOptions,
-            VertxHttpConfig httpConfig) {
-        if (httpConfig.trafficShaping().enabled()) {
-            TrafficShapingOptions options = new TrafficShapingOptions();
-            if (httpConfig.trafficShaping().checkInterval().isPresent()) {
-                options.setCheckIntervalForStats(httpConfig.trafficShaping().checkInterval().get().toSeconds());
-                options.setCheckIntervalForStatsTimeUnit(TimeUnit.SECONDS);
-            }
-            if (httpConfig.trafficShaping().maxDelay().isPresent()) {
-                options.setMaxDelayToWait(httpConfig.trafficShaping().maxDelay().get().toSeconds());
-                options.setMaxDelayToWaitUnit(TimeUnit.SECONDS);
-            }
-            if (httpConfig.trafficShaping().inboundGlobalBandwidth().isPresent()) {
-                options.setInboundGlobalBandwidth(httpConfig.trafficShaping().inboundGlobalBandwidth().get().asLongValue());
-            }
-            if (httpConfig.trafficShaping().outboundGlobalBandwidth().isPresent()) {
-                options.setOutboundGlobalBandwidth(
-                        httpConfig.trafficShaping().outboundGlobalBandwidth().get().asLongValue());
-            }
-            if (httpConfig.trafficShaping().peakOutboundGlobalBandwidth().isPresent()) {
-                options.setPeakOutboundGlobalBandwidth(
-                        httpConfig.trafficShaping().peakOutboundGlobalBandwidth().get().asLongValue());
-            }
-            httpServerOptions.setTrafficShapingOptions(options);
-        }
-    }
-
-    public static void applyCommonOptionsForManagementInterface(
-            HttpServerOptions options,
-            ManagementInterfaceBuildTimeConfig managementBuildTimeConfig,
-            ManagementConfig managementConfig,
-            List<String> websocketSubProtocols) {
-        options.setHost(managementConfig.host());
-
-        int idleTimeout = (int) managementConfig.idleTimeout().toMillis();
-        options.setIdleTimeout(idleTimeout);
-        options.setIdleTimeoutUnit(TimeUnit.MILLISECONDS);
-
-        options.setMaxHeaderSize(managementConfig.limits().maxHeaderSize().asBigInteger().intValueExact());
-        options.setMaxChunkSize(managementConfig.limits().maxChunkSize().asBigInteger().intValueExact());
-        options.setMaxFormAttributeSize(managementConfig.limits().maxFormAttributeSize().asBigInteger().intValueExact());
-        options.setMaxFormFields(managementConfig.limits().maxFormFields());
-        options.setMaxFormBufferedBytes(managementConfig.limits().maxFormBufferedBytes().asBigInteger().intValue());
-        options.setMaxInitialLineLength(managementConfig.limits().maxInitialLineLength());
-        options.setWebSocketSubProtocols(websocketSubProtocols);
-        options.setAcceptBacklog(managementConfig.acceptBacklog());
-        options.setCompressionSupported(managementBuildTimeConfig.enableCompression());
-        if (managementBuildTimeConfig.compressionLevel().isPresent()) {
-            options.setCompressionLevel(managementBuildTimeConfig.compressionLevel().getAsInt());
-        }
-        options.setDecompressionSupported(managementBuildTimeConfig.enableDecompression());
-        options.setHandle100ContinueAutomatically(managementConfig.handle100ContinueAutomatically());
-
-        options.setUseProxyProtocol(managementConfig.proxy().useProxyProtocol());
-    }
-
-    static byte[] getFileContent(Path path) throws IOException {
-        byte[] data;
-        final InputStream resource = Thread.currentThread().getContextClassLoader()
-                .getResourceAsStream(ClassPathUtils.toResourceName(path));
-        if (resource != null) {
-            try (InputStream is = resource) {
-                data = doRead(is);
-            }
-        } else {
-            try (InputStream is = Files.newInputStream(path)) {
-                data = doRead(is);
-            }
-        }
-        return data;
-    }
-
-    private static byte[] doRead(InputStream is) throws IOException {
-        return is.readAllBytes();
-    }
-
-    private static void setIdleTimeout(VertxHttpConfig httpConfig, HttpServerOptions options) {
-        int idleTimeout = (int) httpConfig.idleTimeout().toMillis();
-        options.setIdleTimeout(idleTimeout);
-        options.setIdleTimeoutUnit(TimeUnit.MILLISECONDS);
     }
 
     public static InsecureRequests getInsecureRequestStrategy(VertxHttpConfig httpConfig,
@@ -484,8 +558,191 @@ public class HttpServerOptionsUtils {
         return InsecureRequests.ENABLED;
     }
 
+    static byte[] getFileContent(Path path) throws IOException {
+        byte[] data;
+        final InputStream resource = Thread.currentThread().getContextClassLoader()
+                .getResourceAsStream(ClassPathUtils.toResourceName(path));
+        if (resource != null) {
+            try (InputStream is = resource) {
+                data = doRead(is);
+            }
+        } else {
+            try (InputStream is = Files.newInputStream(path)) {
+                data = doRead(is);
+            }
+        }
+        return data;
+    }
+
     @SuppressWarnings("OptionalUsedAsFieldOrParameterType")
     static <T> Optional<T> or(Optional<T> a, Optional<T> b) {
         return a.isPresent() ? a : b;
+    }
+
+    private static TlsConfiguration getTlsConfiguration(Optional<String> tlsConfigurationName,
+            TlsConfigurationRegistry registry) {
+        TlsConfiguration bucket = null;
+        if (tlsConfigurationName.isPresent()) {
+            var maybeTlsConfig = registry.get(tlsConfigurationName.get());
+            if (maybeTlsConfig.isEmpty()) {
+                throw new ConfigurationException("No TLS configuration named " + tlsConfigurationName.get()
+                        + " found in the TLS registry. Configure `quarkus.tls."
+                        + tlsConfigurationName.get() + "` in your application.properties.");
+            }
+            bucket = maybeTlsConfig.get();
+        } else if (registry != null && registry.getDefault().isPresent()
+                && registry.getDefault().get().getKeyStoreOptions() != null) {
+            bucket = registry.getDefault().get();
+        }
+        return bucket;
+    }
+
+    private static ServerSSLOptions createSslOptionsFromLegacyConfig(ServerSslConfig sslConfig) throws IOException {
+        // credentials provider
+        Map<String, String> credentials = Map.of();
+        if (sslConfig.certificate().credentialsProvider().isPresent()) {
+            String beanName = sslConfig.certificate().credentialsProviderName().orElse(null);
+            CredentialsProvider credentialsProvider = CredentialsProviderFinder.find(beanName);
+            String name = sslConfig.certificate().credentialsProvider().get();
+            credentials = credentialsProvider.getCredentialsAsync(name).await().indefinitely();
+        }
+
+        final Optional<String> keyStorePassword = getCredential(sslConfig.certificate().keyStorePassword(), credentials,
+                sslConfig.certificate().keyStorePasswordKey());
+
+        Optional<String> keyStoreAliasPassword = Optional.empty();
+        if (sslConfig.certificate().keyStoreAliasPassword().isPresent()
+                || sslConfig.certificate().keyStoreAliasPasswordKey().isPresent()) {
+            keyStoreAliasPassword = getCredential(
+                    sslConfig.certificate().keyStoreAliasPassword(),
+                    credentials,
+                    sslConfig.certificate().keyStoreAliasPasswordKey());
+        }
+
+        final Optional<String> trustStorePassword = getCredential(sslConfig.certificate().trustStorePassword(), credentials,
+                sslConfig.certificate().trustStorePasswordKey());
+
+        ServerSSLOptions sslOptions = new ServerSSLOptions();
+        var kso = computeKeyStoreOptions(sslConfig.certificate(), keyStorePassword, keyStoreAliasPassword);
+        if (kso != null) {
+            sslOptions.setKeyCertOptions(kso);
+        }
+
+        var to = computeTrustOptions(sslConfig.certificate(), trustStorePassword);
+        if (to != null) {
+            sslOptions.setTrustOptions(to);
+        }
+
+        for (String cipher : sslConfig.cipherSuites().orElse(Collections.emptyList())) {
+            sslOptions.addEnabledCipherSuite(cipher);
+        }
+
+        sslOptions.setEnabledSecureTransportProtocols(sslConfig.protocols());
+        sslOptions.setSni(sslConfig.sni());
+
+        return sslOptions;
+    }
+
+    private static void applyCompressionConfig(HttpServerConfig config, VertxHttpBuildTimeConfig httpBuildTimeConfig,
+            int contentSizeThreshold) {
+        applyCompressionConfig(config, httpBuildTimeConfig.enableCompression(),
+                httpBuildTimeConfig.enableDecompression(), httpBuildTimeConfig.compressors(),
+                httpBuildTimeConfig.compressionLevel(), contentSizeThreshold);
+    }
+
+    private static void applyCompressionConfig(HttpServerConfig config, boolean enableCompression,
+            boolean enableDecompression, Optional<List<String>> compressors, OptionalInt compressionLevel,
+            int contentSizeThreshold) {
+        CompressionConfig compression = new CompressionConfig();
+        compression.setCompressionEnabled(enableCompression);
+        compression.setDecompressionEnabled(enableDecompression);
+
+        if (compressors.isPresent()) {
+            for (String compressor : compressors.get()) {
+                if ("gzip".equalsIgnoreCase(compressor)) {
+                    if (compressionLevel.isPresent()) {
+                        compression.addGzip(compressionLevel.getAsInt());
+                    } else {
+                        compression.addGzip();
+                    }
+                } else if ("deflate".equalsIgnoreCase(compressor)) {
+                    if (compressionLevel.isPresent()) {
+                        compression.addDeflate(compressionLevel.getAsInt());
+                    } else {
+                        compression.addDeflate();
+                    }
+                } else if ("br".equalsIgnoreCase(compressor)) {
+                    if (compressionLevel.isPresent()) {
+                        compression.addBrotli(compressionLevel.getAsInt());
+                    } else {
+                        compression.addBrotli();
+                    }
+                } else if ("snappy".equalsIgnoreCase(compressor)) {
+                    compression.addSnappy();
+                } else {
+                    LOGGER.errorf("Unknown compressor: %s", compressor);
+                }
+            }
+        } else {
+            if (compressionLevel.isPresent()) {
+                int level = compressionLevel.getAsInt();
+                compression.addGzip(level);
+                compression.addDeflate(level);
+            } else {
+                compression.addGzip();
+                compression.addDeflate();
+            }
+        }
+
+        compression.setContentSizeThreshold(contentSizeThreshold);
+        config.setCompressionConfig(compression);
+    }
+
+    private static TrafficShapingOptions buildTrafficShapingOptions(VertxHttpConfig httpConfig) {
+        TrafficShapingOptions options = new TrafficShapingOptions();
+        if (httpConfig.trafficShaping().checkInterval().isPresent()) {
+            options.setCheckIntervalForStats(httpConfig.trafficShaping().checkInterval().get().toSeconds());
+            options.setCheckIntervalForStatsTimeUnit(TimeUnit.SECONDS);
+        }
+        if (httpConfig.trafficShaping().maxDelay().isPresent()) {
+            options.setMaxDelayToWait(httpConfig.trafficShaping().maxDelay().get().toSeconds());
+            options.setMaxDelayToWaitUnit(TimeUnit.SECONDS);
+        }
+        if (httpConfig.trafficShaping().inboundGlobalBandwidth().isPresent()) {
+            options.setInboundGlobalBandwidth(httpConfig.trafficShaping().inboundGlobalBandwidth().get().asLongValue());
+        }
+        if (httpConfig.trafficShaping().outboundGlobalBandwidth().isPresent()) {
+            options.setOutboundGlobalBandwidth(
+                    httpConfig.trafficShaping().outboundGlobalBandwidth().get().asLongValue());
+        }
+        if (httpConfig.trafficShaping().peakOutboundGlobalBandwidth().isPresent()) {
+            options.setPeakOutboundGlobalBandwidth(
+                    httpConfig.trafficShaping().peakOutboundGlobalBandwidth().get().asLongValue());
+        }
+        return options;
+    }
+
+    private static void configureTrafficShapingIfEnabled(HttpServerConfig config, VertxHttpConfig httpConfig) {
+        if (httpConfig.trafficShaping().enabled()) {
+            config.getTcpConfig().setTrafficShapingOptions(buildTrafficShapingOptions(httpConfig));
+        }
+    }
+
+    private static void applyWebSocketOptions(WebSocketServerConfig wsConfig, WebsocketServerConfig ws) {
+        wsConfig.setUsePerFrameCompression(ws.perFrameCompression());
+        wsConfig.setUsePerMessageCompression(ws.perMessageCompression());
+        wsConfig.setCompressionLevel(ws.compressionLevel());
+        wsConfig.setUseServerNoContext(ws.allowServerNoContext());
+        wsConfig.setUseClientNoContext(ws.preferredClientNoContext());
+        wsConfig.setClosingTimeout(Duration.ofSeconds(ws.closingTimeout()));
+        wsConfig.setUseUnmaskedFrames(ws.acceptUnmaskedFrames());
+    }
+
+    private static void setIdleTimeout(VertxHttpConfig httpConfig, HttpServerConfig config) {
+        config.setIdleTimeout(httpConfig.idleTimeout());
+    }
+
+    private static byte[] doRead(InputStream is) throws IOException {
+        return is.readAllBytes();
     }
 }

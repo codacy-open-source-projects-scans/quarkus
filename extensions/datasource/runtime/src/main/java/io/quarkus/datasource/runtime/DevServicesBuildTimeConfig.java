@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import io.quarkus.runtime.annotations.ConfigDocDefault;
 import io.quarkus.runtime.annotations.ConfigDocMapKey;
 import io.quarkus.runtime.annotations.ConfigGroup;
 import io.quarkus.runtime.configuration.TrimmedStringConverter;
@@ -39,8 +40,12 @@ public interface DevServicesBuildTimeConfig {
      * * Oracle Express Edition: `{oracle-image}`
      * * PostgreSQL: `{postgres-image}`
      *
+     * For certain databases, the default image may be automatically adjusted based on required database features
+     * (e.g., spatial or vector support). Explicitly setting this property overrides the automatic image selection.
+     *
      * @asciidoclet
      */
+    @ConfigDocDefault("Depends on `db-kind`, see description.")
     Optional<@WithConverter(TrimmedStringConverter.class) String> imageName();
 
     /**

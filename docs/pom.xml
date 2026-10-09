@@ -26,7 +26,7 @@
         <asciidoctor-maven-plugin.version>3.2.0</asciidoctor-maven-plugin.version>
         <asciidoctorj-pdf.version>2.3.23</asciidoctorj-pdf.version>
         <asciidoctor.fail-if>WARN</asciidoctor.fail-if>
-        <roaster-jdt.version>2.26.0.Final</roaster-jdt.version>
+        <javaparser.version>3.28.2</javaparser.version>
         <maven-model-helper.version>41</maven-model-helper.version>
         <eclipse-collections.version>13.0.0</eclipse-collections.version>
 
@@ -41,17 +41,17 @@
     <description>The Quarkus documentation</description>
     <dependencies>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
+            <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <groupId>tools.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.jboss.forge.roaster</groupId>
-            <artifactId>roaster-jdt</artifactId>
-            <version>${roaster-jdt.version}</version>
+            <groupId>com.github.javaparser</groupId>
+            <artifactId>javaparser-core</artifactId>
+            <version>${javaparser.version}</version>
         </dependency>
         <dependency>
             <groupId>io.fabric8</groupId>
@@ -105,6 +105,45 @@
         </dependency>
         <!-- Minimal test dependencies for consistent build order -->
         <!-- START update-extension-dependencies.sh -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-aesh-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-aesh-ssh-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-aesh-websocket-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-agroal-deployment</artifactId>
@@ -315,6 +354,19 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-cache-kotlin-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
             <artifactId>quarkus-caffeine-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
@@ -497,7 +549,46 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-data-hibernate-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
             <artifactId>quarkus-datasource-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-devjsonrpc-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-devmcp-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
             <scope>test</scope>
@@ -939,19 +1030,6 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-hibernate-panache-next-deployment</artifactId>
-            <version>${project.version}</version>
-            <type>pom</type>
-            <scope>test</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
             <artifactId>quarkus-hibernate-reactive-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
@@ -1070,6 +1148,19 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-hibernate-validator-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-http3-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
             <scope>test</scope>
@@ -1265,6 +1356,19 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-jfr-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jlink-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
             <scope>test</scope>
@@ -1680,6 +1784,19 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-modular-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
             <artifactId>quarkus-mongodb-client-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
@@ -1824,6 +1941,19 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-observability-devservices-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-observation-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
             <scope>test</scope>
@@ -2317,6 +2447,19 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest-data-hibernate-json-types-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
             <artifactId>quarkus-rest-data-panache-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
@@ -2707,19 +2850,6 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-scala-deployment</artifactId>
-            <version>${project.version}</version>
-            <type>pom</type>
-            <scope>test</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
             <artifactId>quarkus-scheduler-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
@@ -2786,6 +2916,19 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-security-webauthn-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-signals-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
             <scope>test</scope>
@@ -2941,6 +3084,19 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-spiffe-client-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
             <artifactId>quarkus-spring-boot-properties-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
@@ -3033,6 +3189,19 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-spring-security-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-spring-tx-deployment</artifactId>
             <version>${project.version}</version>
             <type>pom</type>
             <scope>test</scope>
@@ -3380,6 +3549,46 @@
                 </configuration>
                 <executions>
                     <execution>
+                        <id>check-categories</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${skipDocs}</skip>
+                            <!-- Don't wait for unkillable reference reaper threads -->
+                            <cleanupDaemonThreads>false</cleanupDaemonThreads>
+                            <mainClass>io.quarkus.docs.generation.CheckCategories</mainClass>
+                            <arguments>
+                                <argument>${project.basedir}/src/main/asciidoc</argument>
+                                <argument>${project.basedir}/src/main/resources/categories.yaml</argument>
+                            </arguments>
+                            <environmentVariables>
+                                <MAVEN_CMD_LINE_ARGS>${env.MAVEN_CMD_LINE_ARGS}</MAVEN_CMD_LINE_ARGS>
+                            </environmentVariables>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>inject-categories</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${skipDocs}</skip>
+                            <!-- Don't wait for unkillable reference reaper threads -->
+                            <cleanupDaemonThreads>false</cleanupDaemonThreads>
+                            <mainClass>io.quarkus.docs.generation.InjectCategories</mainClass>
+                            <arguments>
+                                <argument>${project.build.directory}/asciidoc/sources</argument>
+                                <argument>${project.basedir}/src/main/resources/categories.yaml</argument>
+                            </arguments>
+                            <environmentVariables>
+                                <MAVEN_CMD_LINE_ARGS>${env.MAVEN_CMD_LINE_ARGS}</MAVEN_CMD_LINE_ARGS>
+                            </environmentVariables>
+                        </configuration>
+                    </execution>
+                    <execution>
                         <id>generate-quarkus-mvn-plugin-docs</id>
                         <phase>process-classes</phase>
                         <goals>
@@ -3414,6 +3623,26 @@
                                 <argument>${generated-dir}/infra/quarkus-all-build-items.adoc</argument>
                                 <argument>${project.basedir}/../core/deployment</argument>
                                 <argument>${project.basedir}/../extensions</argument>
+                                <argument>${project.version}</argument>
+                            </arguments>
+                            <environmentVariables>
+                                <MAVEN_CMD_LINE_ARGS>${env.MAVEN_CMD_LINE_ARGS}</MAVEN_CMD_LINE_ARGS>
+                            </environmentVariables>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>generate-extension-metadata-schema-reference</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${skipDocs}</skip>
+                            <cleanupDaemonThreads>false</cleanupDaemonThreads>
+                            <mainClass>io.quarkus.docs.generation.ExtensionMetadataSchemaDocGenerator</mainClass>
+                            <arguments>
+                                <argument>${generated-dir}/infra/quarkus-extension-schema-reference.adoc</argument>
+                                <argument>${project.basedir}/../independent-projects/tools/devtools-common/src/main/resources/META-INF/quarkus-extension-schema.json</argument>
                             </arguments>
                             <environmentVariables>
                                 <MAVEN_CMD_LINE_ARGS>${env.MAVEN_CMD_LINE_ARGS}</MAVEN_CMD_LINE_ARGS>
@@ -3455,6 +3684,7 @@
                             <arguments>
                                 <argument>${project.basedir}/target/asciidoc/sources</argument>
                                 <argument>${project.basedir}/target</argument>
+                                <argument>${project.basedir}/src/main/resources/categories.yaml</argument>
                             </arguments>
                             <environmentVariables>
                                 <MAVEN_CMD_LINE_ARGS>${env.MAVEN_CMD_LINE_ARGS}</MAVEN_CMD_LINE_ARGS>

@@ -40,6 +40,7 @@ import org.jboss.resteasy.reactive.client.api.LoggingScope;
 import org.jboss.resteasy.reactive.client.logging.DefaultClientLogger;
 import org.jboss.resteasy.reactive.client.spi.ClientContextResolver;
 import org.jboss.resteasy.reactive.common.jaxrs.ConfigurationImpl;
+import org.jboss.resteasy.reactive.common.jaxrs.MultiFormParamMode;
 import org.jboss.resteasy.reactive.common.jaxrs.MultiQueryParamMode;
 
 import io.vertx.core.buffer.Buffer;
@@ -72,6 +73,7 @@ public class ClientBuilderImpl extends ClientBuilder {
 
     private boolean http2;
     private boolean alpn;
+    private boolean http3;
 
     // security settings
     private KeyStore keyStore;
@@ -90,8 +92,10 @@ public class ClientBuilderImpl extends ClientBuilder {
 
     private int maxChunkSize = 8096;
     private MultiQueryParamMode multiQueryParamMode;
+    private MultiFormParamMode multiFormParamMode;
 
     private String userAgent = RestClientRequestContext.DEFAULT_USER_AGENT_VALUE;
+    private String domainSocketPath;
 
     private Boolean enableCompression;
     private Integer http2UpgradeMaxContentLength;
@@ -180,6 +184,11 @@ public class ClientBuilderImpl extends ClientBuilder {
         return this;
     }
 
+    public ClientBuilder http3(boolean http3) {
+        this.http3 = http3;
+        return this;
+    }
+
     public ClientBuilder proxy(String proxyHost, int proxyPort) {
         this.proxyPort = proxyPort;
         this.proxyHost = proxyHost;
@@ -203,6 +212,11 @@ public class ClientBuilderImpl extends ClientBuilder {
 
     public ClientBuilder multiQueryParamMode(MultiQueryParamMode multiQueryParamMode) {
         this.multiQueryParamMode = multiQueryParamMode;
+        return this;
+    }
+
+    public ClientBuilder multiFormParamMode(MultiFormParamMode multiFormParamMode) {
+        this.multiFormParamMode = multiFormParamMode;
         return this;
     }
 
@@ -356,14 +370,18 @@ public class ClientBuilderImpl extends ClientBuilder {
                 null,
                 followRedirects,
                 multiQueryParamMode,
+                multiFormParamMode,
                 loggingScope,
                 clientLogger, userAgent, tlsConfig != null ? tlsConfig.getName().orElse(null) : null,
-                clientRequestCustomizers);
+                clientRequestCustomizers,
+                http3,
+                domainSocketPath);
 
     }
 
     private void populateSecurityOptionsFromTlsConfig(HttpClientOptions options) {
         options.setSsl(true);
+        options.setVerifyHost(verifyHost);
 
         if (tlsConfig.getTrustStoreOptions() != null) {
             options.setTrustOptions(tlsConfig.getTrustStoreOptions());
@@ -376,6 +394,7 @@ public class ClientBuilderImpl extends ClientBuilder {
 
         if (tlsConfig.isTrustAll()) {
             options.setTrustAll(true);
+            options.setVerifyHost(false);
         }
         if (tlsConfig.getHostnameVerificationAlgorithm().isPresent()
                 && tlsConfig.getHostnameVerificationAlgorithm().get().equals("NONE")) {
@@ -395,6 +414,10 @@ public class ClientBuilderImpl extends ClientBuilder {
             }
             options.setEnabledSecureTransportProtocols(sslOptions.getEnabledSecureTransportProtocols());
             options.setUseAlpn(sslOptions.isUseAlpn());
+            if (sslOptions.getKeyExchangeGroups() != null && !sslOptions.getKeyExchangeGroups().isEmpty()) {
+                options.getSslOptions().setKeyExchangeGroups(sslOptions.getKeyExchangeGroups());
+            }
+            options.getSslOptions().setPqcEnforcementPolicy(sslOptions.getPqcEnforcementPolicy());
         }
     }
 
@@ -414,13 +437,13 @@ public class ClientBuilderImpl extends ClientBuilder {
                 JksOptions jks = new JksOptions();
                 jks.setValue(keyStore);
                 jks.setPassword(new String(keystorePassword));
-                options.setKeyStoreOptions(jks);
+                options.setKeyCertOptions(jks);
             }
             if (trustStore != null) {
                 JksOptions jks = new JksOptions();
                 jks.setValue(trustStore);
                 jks.setPassword(new String(effectiveTrustStorePassword));
-                options.setTrustStoreOptions(jks);
+                options.setTrustOptions(jks);
             }
         }
     }
@@ -536,6 +559,11 @@ public class ClientBuilderImpl extends ClientBuilder {
 
     public ClientBuilderImpl setUserAgent(String userAgent) {
         this.userAgent = userAgent;
+        return this;
+    }
+
+    public ClientBuilderImpl domainSocket(String path) {
+        this.domainSocketPath = path;
         return this;
     }
 

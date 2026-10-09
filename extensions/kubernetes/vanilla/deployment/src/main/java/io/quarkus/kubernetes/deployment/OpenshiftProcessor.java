@@ -225,7 +225,7 @@ public class OpenshiftProcessor extends BaseKubeProcessor<AddPortToOpenshiftConf
             List<KubernetesClusterRoleBindingBuildItem> clusterRoleBindings,
             Optional<CustomProjectRootBuildItem> customProjectRoot,
             List<KubernetesDeploymentTargetBuildItem> targets) {
-        final var context = commonDecorators(applicationInfo, outputTarget, packageConfig, metricsConfiguration,
+        final var context = commonDecorators(applicationInfo, outputTarget, capabilities, packageConfig, metricsConfiguration,
                 kubernetesClientConfiguration, namespaces, annotations, labels, envs, image, command,
                 ports, livenessPath, readinessPath, startupPath, roles, clusterRoles, serviceAccounts, roleBindings,
                 clusterRoleBindings, customProjectRoot, targets);
@@ -280,8 +280,6 @@ public class OpenshiftProcessor extends BaseKubeProcessor<AddPortToOpenshiftConf
 
         context.addToAnyTarget(new ApplyResolveNamesImagePolicyDecorator());
 
-        deploymentKindDecorators(context, capabilities);
-
         if (config.route() != null) {
             for (Map.Entry<String, String> annotation : config.route().annotations().entrySet()) {
                 context.add(new AddAnnotationDecorator(name, annotation.getKey(), annotation.getValue(), ROUTE));
@@ -289,6 +287,11 @@ public class OpenshiftProcessor extends BaseKubeProcessor<AddPortToOpenshiftConf
 
             for (Map.Entry<String, String> label : config.route().labels().entrySet()) {
                 context.add(new AddLabelDecorator(name, label.getKey(), label.getValue(), ROUTE));
+            }
+
+            // OpenShift rejects any path (including "/") with passthrough TLS termination.
+            if (config.route().tls().termination().filter("passthrough"::equalsIgnoreCase).isPresent()) {
+                context.add(new RemovePathFromRouteDecorator(name));
             }
         }
 

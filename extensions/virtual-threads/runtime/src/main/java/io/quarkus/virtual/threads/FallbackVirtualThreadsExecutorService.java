@@ -8,10 +8,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.smallrye.mutiny.infrastructure.Infrastructure;
 import io.vertx.core.Vertx;
-import io.vertx.core.impl.ContextInternal;
+import io.vertx.core.internal.ContextInternal;
 
 /**
- * Fallback executor service implementation in case the virtual threads are disabled or not available on the current platform.
+ * Fallback executor service implementation in case the virtual threads are disabled.
  * <p>
  * Executes tasks on the current Vert.x context worker pool, or when not available, on the Mutiny Infrastructure default worker
  * pool

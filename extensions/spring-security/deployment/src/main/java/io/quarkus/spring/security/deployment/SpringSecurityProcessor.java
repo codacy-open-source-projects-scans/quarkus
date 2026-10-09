@@ -4,6 +4,7 @@ import static io.quarkus.security.spi.SecurityTransformerBuildItem.createSecurit
 
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -27,19 +28,20 @@ import org.jboss.jandex.MethodInfo;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.AnnotationsTransformerBuildItem;
 import io.quarkus.arc.deployment.GeneratedBeanBuildItem;
-import io.quarkus.arc.deployment.GeneratedBeanGizmoAdaptor;
+import io.quarkus.arc.deployment.GeneratedBeanGizmo2Adaptor;
 import io.quarkus.arc.deployment.InterceptorBindingRegistrarBuildItem;
 import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
 import io.quarkus.arc.processor.AnnotationsTransformer;
 import io.quarkus.deployment.Feature;
-import io.quarkus.deployment.GeneratedClassGizmoAdaptor;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
+import io.quarkus.deployment.annotations.Produce;
 import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
+import io.quarkus.deployment.builditem.ServiceStartBuildItem;
 import io.quarkus.security.deployment.AdditionalSecurityCheckBuildItem;
 import io.quarkus.security.runtime.SecurityCheckRecorder;
 import io.quarkus.security.spi.SecurityTransformer;
@@ -64,6 +66,30 @@ class SpringSecurityProcessor {
     @BuildStep
     FeatureBuildItem feature() {
         return new FeatureBuildItem(Feature.SPRING_SECURITY);
+    }
+
+    @BuildStep
+    @Produce(ServiceStartBuildItem.class)
+    void detectUnsupportedSpringSecurityAnnotations(CombinedIndexBuildItem index) {
+        for (DotName unsupported : DotNames.UNSUPPORTED_SPRING_SECURITY_ANNOTATIONS) {
+            Collection<AnnotationInstance> instances = index.getIndex().getAnnotations(unsupported);
+            if (!instances.isEmpty()) {
+                AnnotationInstance first = instances.iterator().next();
+                AnnotationTarget target = first.target();
+                String location;
+                if (target.kind() == AnnotationTarget.Kind.METHOD) {
+                    MethodInfo method = target.asMethod();
+                    location = "method '" + method.name() + "' of class '" + method.declaringClass().name() + "'";
+                } else {
+                    location = "class '" + target.asClass().name() + "'";
+                }
+                throw new IllegalArgumentException(
+                        "Quarkus does not support the @" + unsupported.withoutPackagePrefix()
+                                + " annotation, found on " + location
+                                + ". Only @Secured and @PreAuthorize are supported."
+                                + " See https://quarkus.io/guides/spring-security#supported-spring-security-annotations");
+            }
+        }
     }
 
     @BuildStep
@@ -342,7 +368,7 @@ class SpringSecurityProcessor {
 
         // actually generate the accessor classes as beans
         if (!stringPropertiesInNeedOfGeneratedAccessors.isEmpty()) {
-            GeneratedBeanGizmoAdaptor classOutput = new GeneratedBeanGizmoAdaptor(generatedBeans);
+            GeneratedBeanGizmo2Adaptor classOutput = new GeneratedBeanGizmo2Adaptor(generatedBeans);
             Set<String> generatedBeanClassNames = new HashSet<>(stringPropertiesInNeedOfGeneratedAccessors.keySet().size());
             for (Map.Entry<DotName, Set<FieldInfo>> entry : stringPropertiesInNeedOfGeneratedAccessors.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey()).toList()) {
@@ -371,7 +397,10 @@ class SpringSecurityProcessor {
         Set<String> beansReferencedInPreAuthorized = new HashSet<>();
         BeanMethodInvocationGenerator beanMethodInvocationGenerator = new BeanMethodInvocationGenerator(index.getIndex(),
                 springBeansNameToDotName, springBeansNameToClassInfo, beansReferencedInPreAuthorized,
-                new GeneratedClassGizmoAdaptor(generatedClasses, true));
+                (resourceName, bytes) -> {
+                    String className = resourceName.substring(0, resourceName.length() - 6).replace('/', '.');
+                    generatedClasses.produce(new GeneratedClassBuildItem(true, className, bytes));
+                });
 
         for (Map.Entry<MethodInfo, AnnotationInstance> entry : springPreAuthorizeAnnotatedMethods.getMethodToInstanceMap()
                 .entrySet().stream().sorted(Comparator.comparing(e -> e.getKey().toString())).toList()) {

@@ -9,16 +9,19 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.function.Supplier;
 
 import org.jboss.logmanager.MDCProvider;
 
+import io.smallrye.common.vertx.VertxContext;
 import io.vertx.core.Context;
 import io.vertx.core.Vertx;
-import io.vertx.core.impl.ContextInternal;
+import io.vertx.core.spi.context.storage.ContextLocal;
 
 public enum VertxMDC implements MDCProvider {
     INSTANCE;
+
+    public static final ContextLocal<ConcurrentHashMap<String, Object>> MDC_LOCAL = VertxMDCServiceProvider.MDC_LOCAL;
 
     final InheritableThreadLocal<Map<String, Object>> inheritableThreadLocalMap = new InheritableThreadLocal<>() {
         @Override
@@ -37,7 +40,7 @@ public enum VertxMDC implements MDCProvider {
 
     /**
      * Get the value for a key, or {@code null} if there is no mapping.
-     *
+     * <p>
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
@@ -52,7 +55,7 @@ public enum VertxMDC implements MDCProvider {
 
     /**
      * Get the value for a key, or {@code null} if there is no mapping.
-     *
+     * <p>
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
@@ -93,7 +96,7 @@ public enum VertxMDC implements MDCProvider {
 
     /**
      * Set the value of a key, returning the old value (if any) or {@code null} if there was none.
-     *
+     * <p>
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
@@ -109,7 +112,7 @@ public enum VertxMDC implements MDCProvider {
 
     /**
      * Set the value of a key, returning the old value (if any) or {@code null} if there was none.
-     *
+     * <p>
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
@@ -156,7 +159,7 @@ public enum VertxMDC implements MDCProvider {
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
-     *
+     * <p>
      * Will look up the contextual data map just once.
      *
      * @param map contents to add
@@ -169,7 +172,7 @@ public enum VertxMDC implements MDCProvider {
 
     /**
      * Removes a key.
-     *
+     * <p>
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
@@ -184,7 +187,7 @@ public enum VertxMDC implements MDCProvider {
 
     /**
      * Removes a key.
-     *
+     * <p>
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
@@ -223,7 +226,7 @@ public enum VertxMDC implements MDCProvider {
 
     /**
      * Get a copy of the MDC map. This is a relatively expensive operation.
-     *
+     * <p>
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
@@ -237,7 +240,7 @@ public enum VertxMDC implements MDCProvider {
 
     /**
      * Get a copy of the MDC map. This is a relatively expensive operation.
-     *
+     * <p>
      * Tries to use the current Vert.x Context, if the context is non-existent
      * meaning that it was called out of a Vert.x thread it will fall back to
      * the thread local context map.
@@ -317,51 +320,22 @@ public enum VertxMDC implements MDCProvider {
     }
 
     /**
-     * Clears out the object ref from the context to force a new one to be created and prevent thread crosstalk.
-     * Should be used before adding data to the VertxMCD context on a new thread.
+     * Removes the specified MDC keys from the context's MDC map in place.
+     * Non-discard keys are preserved. This method is safe for concurrent use
+     * when multiple threads share the same Vert.x context.
      *
-     * @param vertxContext
-     */
-    void clearVertxMdcFromContext(Context vertxContext) {
-        if (vertxContext != null) {
-            vertxContext.removeLocal(VertxMDC.class.getName());
-        }
-    }
-
-    /**
-     * Clears out the object ref from the context to force a new one to be created and prevent thread crosstalk.
-     * Also copies to the new reference any previous data not in the set of MDC keys to discard.
-     *
-     * @param vertxContext
-     * @param discardMdcKeys Entries not to be copied over to the new MDC
+     * @param vertxContext the Vert.x context
+     * @param discardMdcKeys keys to remove from the MDC
      */
     public void reinitializeVertxMdc(Context vertxContext, Set<String> discardMdcKeys) {
-        if (vertxContext == null || vertxContext.getLocal(VertxMDC.class.getName()) == null) {
-            // nothing to do
+        if (vertxContext == null || discardMdcKeys == null || discardMdcKeys.isEmpty()) {
             return;
         }
-
-        if (VertxMDC.INSTANCE.isEmpty(vertxContext)) {
-            // clear the object ref to force a new one and prevent crosstalk
-            VertxMDC.INSTANCE.clearVertxMdcFromContext(vertxContext);
+        ConcurrentHashMap<String, Object> data = vertxContext.getLocal(MDC_LOCAL);
+        if (data == null) {
             return;
         }
-
-        final Map<String, Object> carryover = new HashMap<>();
-        final boolean hasDiscardKeys = discardMdcKeys == null || discardMdcKeys.isEmpty();
-        for (Map.Entry<String, Object> entry : VertxMDC.INSTANCE.getEntrySet()) {
-            final String key = entry.getKey();
-            final Object value = entry.getValue();
-            // Not taking chances with null values
-            if (key != null && value != null && (hasDiscardKeys || !discardMdcKeys.contains(key))) {
-                carryover.put(key, value);
-            }
-        }
-
-        // clear the object ref to force a new one and prevent crosstalk
-        VertxMDC.INSTANCE.clearVertxMdcFromContext(vertxContext);
-        // Preserving relevant data
-        VertxMDC.INSTANCE.putAll(carryover, vertxContext);
+        discardMdcKeys.forEach(data::remove);
     }
 
     /**
@@ -383,19 +357,46 @@ public enum VertxMDC implements MDCProvider {
     }
 
     /**
-     * Gets the current Contextual Data Map from the current Vert.x Context if it is not null or the default
+     * Gets the current MDC map from the current Vert.x Context if it is not null or the default
      * ThreadLocal Data Map for use in non Vert.x Threads.
      *
      * @return the current Contextual Data Map.
      */
-    @SuppressWarnings({ "unchecked" })
     private Map<String, Object> contextualDataMap(Context ctx) {
         if (ctx == null) {
             return inheritableThreadLocalMap.get();
         }
 
-        ConcurrentMap<Object, Object> lcd = Objects.requireNonNull((ContextInternal) ctx).localContextData();
-        return (ConcurrentMap<String, Object>) lcd.computeIfAbsent(VertxMDC.class.getName(),
-                k -> new ConcurrentHashMap<String, Object>());
+        return ctx.getLocal(MDC_LOCAL, new Supplier<ConcurrentHashMap<String, Object>>() {
+            @Override
+            public ConcurrentHashMap<String, Object> get() {
+                return initialContextualDataMap(ctx);
+            }
+        });
+    }
+
+    /**
+     * A context created for a nested operation may be duplicated from the root context rather than from the
+     * context the operation originates from, in which case it only keeps a reference to that originating
+     * context and none of its Vert.x context locals. This is how the REST Client creates the context of each
+     * invocation. Without inheriting the originating context's MDC, log statements emitted while the nested
+     * operation runs — such as the REST Client request/response logs — lose the contextual data of the
+     * originating request, including the OpenTelemetry trace identifiers.
+     * See <a href="https://github.com/quarkusio/quarkus/issues/55828">GitHub issue #55828</a>.
+     */
+    private static ConcurrentHashMap<String, Object> initialContextualDataMap(Context ctx) {
+        // the immediate parent may not have logged anything yet and so have no materialized MDC map,
+        // in which case we keep walking up the parent chain. The chain is acyclic by construction, as the
+        // parent reference is always set at creation time to an already existing context, and it is
+        // walked at most once per context since the result is stored as the context's own MDC map.
+        Context parent = ctx.getLocal(VertxContext.PARENT_CONTEXT_LOCAL);
+        while (parent != null) {
+            ConcurrentHashMap<String, Object> parentMap = parent.getLocal(MDC_LOCAL);
+            if (parentMap != null) {
+                return new ConcurrentHashMap<>(parentMap);
+            }
+            parent = parent.getLocal(VertxContext.PARENT_CONTEXT_LOCAL);
+        }
+        return new ConcurrentHashMap<>();
     }
 }

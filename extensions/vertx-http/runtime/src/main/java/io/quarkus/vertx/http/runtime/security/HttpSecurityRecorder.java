@@ -14,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -47,6 +46,7 @@ import io.quarkus.vertx.http.runtime.VertxHttpBuildTimeConfig;
 import io.quarkus.vertx.http.runtime.VertxHttpConfig;
 import io.quarkus.vertx.http.runtime.cors.CORSConfig;
 import io.quarkus.vertx.http.security.MTLS;
+import io.smallrye.common.vertx.ContextLocals;
 import io.smallrye.common.vertx.VertxContext;
 import io.smallrye.mutiny.CompositeException;
 import io.smallrye.mutiny.Uni;
@@ -73,22 +73,13 @@ public class HttpSecurityRecorder {
         this.httpBuildTimeConfig = httpBuildTimeConfig;
     }
 
-    public RuntimeValue<AuthenticationHandler> authenticationMechanismHandler(boolean proactiveAuthentication,
-            boolean propagateRoutingContext) {
-        return new RuntimeValue<>(new AuthenticationHandler(proactiveAuthentication, propagateRoutingContext));
-    }
-
-    public Handler<RoutingContext> getHttpAuthenticatorHandler(RuntimeValue<AuthenticationHandler> handlerRuntimeValue) {
-        return handlerRuntimeValue.getValue();
-    }
-
     public void initializeHttpAuthenticatorHandler(RuntimeValue<AuthenticationHandler> handlerRuntimeValue,
             BeanContainer beanContainer) {
         handlerRuntimeValue.getValue().init(beanContainer.beanInstance(PathMatchingHttpSecurityPolicy.class),
                 HttpSecurityConfiguration.get().rolesMapping());
     }
 
-    public Handler<RoutingContext> permissionCheckHandler() {
+    public static Handler<RoutingContext> permissionCheckHandler() {
         return new Handler<RoutingContext>() {
             volatile HttpAuthorizer authorizer;
 
@@ -193,13 +184,13 @@ public class HttpSecurityRecorder {
         return new RuntimeValue<>(config.getCorsConfig());
     }
 
-    public Supplier<FormAuthenticationMechanism> createFormAuthMechanism() {
-        return new Supplier<FormAuthenticationMechanism>() {
-            @Override
-            public FormAuthenticationMechanism get() {
-                return HttpSecurityConfiguration.get().getFormAuthenticationMechanism();
-            }
-        };
+    /**
+     * Get the form authentication mechanism instance.
+     *
+     * @return the form authentication mechanism
+     */
+    public static FormAuthenticationMechanism getFormAuthMechanism() {
+        return HttpSecurityConfiguration.get().getFormAuthenticationMechanism();
     }
 
     public static abstract class DefaultAuthFailureHandler implements BiConsumer<RoutingContext, Throwable> {
@@ -234,12 +225,7 @@ public class HttpSecurityRecorder {
                             proceed(authenticationFailedException);
                         }
                     }
-                }, new Consumer<Throwable>() {
-                    @Override
-                    public void accept(Throwable throwable) {
-                        event.fail(throwable);
-                    }
-                });
+                }, event::fail);
             } else if (throwable instanceof AuthenticationCompletionException) {
                 log.debug("Authentication has failed, returning HTTP status 401");
                 event.response().setStatusCode(401);
@@ -278,10 +264,10 @@ public class HttpSecurityRecorder {
         }
 
         public static Throwable extractRootCause(Throwable throwable) {
-            while ((throwable instanceof CompletionException && throwable.getCause() != null) ||
-                    (throwable instanceof CompositeException)) {
-                if (throwable instanceof CompositeException) {
-                    throwable = ((CompositeException) throwable).getCauses().get(0);
+            while (throwable instanceof CompletionException && throwable.getCause() != null ||
+                    throwable instanceof CompositeException) {
+                if (throwable instanceof CompositeException ce) {
+                    throwable = ce.getCauses().get(0);
                 } else {
                     throwable = throwable.getCause();
                 }
@@ -311,7 +297,13 @@ public class HttpSecurityRecorder {
         private AbstractPathMatchingHttpSecurityPolicy pathMatchingPolicy;
         private RolesMapping rolesMapping;
 
-        AuthenticationHandler(boolean proactiveAuthentication, boolean propagateRoutingContext) {
+        /**
+         * Construct a new instance.
+         *
+         * @param proactiveAuthentication whether to use proactive authentication
+         * @param propagateRoutingContext whether to propagate the routing context to duplicated contexts
+         */
+        public AuthenticationHandler(boolean proactiveAuthentication, boolean propagateRoutingContext) {
             this.proactiveAuthentication = proactiveAuthentication;
             this.propagateRoutingContext = propagateRoutingContext;
         }
@@ -331,7 +323,7 @@ public class HttpSecurityRecorder {
             if (propagateRoutingContext) {
                 Context context = Vertx.currentContext();
                 if (context != null && VertxContext.isDuplicatedContext(context)) {
-                    context.putLocal(HttpSecurityUtils.ROUTING_CONTEXT_ATTRIBUTE, event);
+                    ContextLocals.put(HttpSecurityUtils.ROUTING_CONTEXT_ATTRIBUTE, event);
                 }
             }
             //we put the authenticator into the routing context so it can be used by other systems
@@ -437,7 +429,7 @@ public class HttpSecurityRecorder {
                             public void accept(SecurityIdentity identity, Throwable throwable, Boolean aBoolean) {
                                 if (identity != null) {
                                     //when the result is evaluated we set the user, even if it is evaluated lazily
-                                    event.setUser(new QuarkusHttpUser(identity));
+                                    QuarkusHttpUser.setUser(event, new QuarkusHttpUser(identity));
                                 } else if (throwable != null) {
                                     //handle the auth failure
                                     //this can be customised
@@ -468,10 +460,14 @@ public class HttpSecurityRecorder {
         }
     }
 
-    public void setMtlsCertificateRoleProperties() {
+    /**
+     * Configure MTLS certificate role properties.
+     *
+     * @param httpConfig the HTTP runtime configuration
+     */
+    public static void setMtlsCertificateRoleProperties(VertxHttpConfig httpConfig) {
         MtlsAuthenticationMechanism mTLS = HttpSecurityConfiguration.get().getMtlsAuthenticationMechanism();
         if (mTLS != null) {
-            VertxHttpConfig httpConfig = this.httpConfig.getValue();
             if (httpConfig.auth().certificateRoleProperties().isPresent()) {
                 if (mTLS.isCertificateToRolesMapperSet()) {
                     throw new ConfigurationException("The 'quarkus.http.auth.certificate-role-properties' configuration"
@@ -540,10 +536,6 @@ public class HttpSecurityRecorder {
         };
     }
 
-    public RuntimeValue<List<String>> getSecurityIdentityContextKeySupplier() {
-        return new RuntimeValue<>(List.of(HttpSecurityUtils.ROUTING_CONTEXT_ATTRIBUTE));
-    }
-
     public Consumer<RoutingContext> createEagerSecurityInterceptor(
             Function<String, Consumer<RoutingContext>> interceptorCreator, String annotationValue) {
         return interceptorCreator.apply(annotationValue);
@@ -572,13 +564,13 @@ public class HttpSecurityRecorder {
         return Set.copyOf(roles);
     }
 
-    public Supplier<BasicAuthenticationMechanism> basicAuthenticationMechanismBean() {
-        return new Supplier<>() {
-            @Override
-            public BasicAuthenticationMechanism get() {
-                return HttpSecurityConfiguration.get().getBasicAuthenticationMechanism();
-            }
-        };
+    /**
+     * Get the basic authentication mechanism instance.
+     *
+     * @return the basic authentication mechanism
+     */
+    public static BasicAuthenticationMechanism getBasicAuthMechanism() {
+        return HttpSecurityConfiguration.get().getBasicAuthenticationMechanism();
     }
 
 }

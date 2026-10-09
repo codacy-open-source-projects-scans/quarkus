@@ -1,6 +1,7 @@
 package io.quarkus.devservices.test;
 
 import static io.quarkus.tests.dependentextension.Constants.QUARKUS_DEPENDENT_EXTENSION_BASE_URL;
+import static io.quarkus.tests.dependentextension.Constants.QUARKUS_DEPENDENT_EXTENSION_CONFIG_CONTAMINATED;
 import static io.quarkus.tests.dependentextension.Constants.QUARKUS_DEPENDENT_EXTENSION_SEES_DEPENDENCY;
 import static io.quarkus.tests.dependentextension.Constants.QUARKUS_OPTIONAL_DEPENDENT_EXTENSION_BASE_URL;
 import static io.quarkus.tests.dependentextension.Constants.QUARKUS_OPTIONAL_DEPENDENT_EXTENSION_SEES_DEPENDENCY;
@@ -16,7 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import jakarta.inject.Inject;
+
+import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.eclipse.microprofile.config.spi.ConfigSource;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -56,6 +61,12 @@ public class DevServicesTest {
 
     @ConfigProperty(name = SIMPLE_EXTENSION_CLASSLOADER_ON_SERVICE_START, defaultValue = UNSET)
     String classloaderOnServiceStart;
+
+    @ConfigProperty(name = QUARKUS_DEPENDENT_EXTENSION_CONFIG_CONTAMINATED, defaultValue = "false")
+    String dependentExtensionConfigContaminated;
+
+    @Inject
+    Config config;
 
     @Test
     public void testTheLazyDevServicesConfigIsAvailable() {
@@ -113,6 +124,26 @@ public class DevServicesTest {
     public void testOptionalDependentServiceWithUnsatisfiedDependencyIsStarted() {
         assertIsSet(unsatisfiedOptionalDependentExtensionBaseUrl);
         assertFalse(unsatisfiedOptionalDependentExtensionSeesDependencyService);
+    }
+
+    @Test
+    public void testDevServiceConfigIsNotContaminatedByOtherDevServices() {
+        assertEquals("false", dependentExtensionConfigContaminated);
+    }
+
+    @Test
+    public void testStaticConfigIsVisibleInDevServicesConfigSource() {
+        ConfigSource devServicesConfigSource = null;
+        for (ConfigSource source : config.getConfigSources()) {
+            if ("DevServicesConfigSource".equals(source.getName())) {
+                devServicesConfigSource = source;
+                break;
+            }
+        }
+        Assertions.assertNotNull(devServicesConfigSource, "DevServicesConfigSource should be present");
+        assertTrue(devServicesConfigSource.getPropertyNames().contains(QUARKUS_SIMPLE_EXTENSION_STATIC_THING),
+                "DevServicesConfigSource should contain " + QUARKUS_SIMPLE_EXTENSION_STATIC_THING);
+        assertEquals("some value", devServicesConfigSource.getValue(QUARKUS_SIMPLE_EXTENSION_STATIC_THING));
     }
 
     @Test

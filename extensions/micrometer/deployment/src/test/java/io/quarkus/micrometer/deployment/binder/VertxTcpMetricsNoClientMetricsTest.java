@@ -27,6 +27,7 @@ public class VertxTcpMetricsNoClientMetricsTest {
     @RegisterExtension
     static final QuarkusExtensionTest config = new QuarkusExtensionTest()
             .withConfigurationResource("test-logging.properties")
+            .overrideConfigKey("quarkus.otel.enabled", "false")
             .overrideConfigKey("quarkus.redis.devservices.enabled", "false")
             .withApplicationRoot((jar) -> jar
                     .addClasses(NetServer.class, NetClient.class));
@@ -53,6 +54,10 @@ public class VertxTcpMetricsNoClientMetricsTest {
         return registry.find(name);
     }
 
+    private Search getServerMeter(String name) {
+        return registry.find(name).tag("port", "8888");
+    }
+
     @Test
     void testTcpMetricsWithoutClientMetrics() {
         server.start();
@@ -60,14 +65,16 @@ public class VertxTcpMetricsNoClientMetricsTest {
             Assertions.assertEquals("HELLO", client.sendAndAwait("hello"));
             Assertions.assertEquals("HOW ARE YOU?", client.sendAndAwait("How are you?"));
 
-            await().untilAsserted(() -> Assertions.assertEquals(1, getMeter("tcp.connections").longTaskTimer().activeTasks()));
+            await().untilAsserted(
+                    () -> Assertions.assertEquals(1, getServerMeter("tcp.connections").longTaskTimer().activeTasks()));
             await().untilAsserted(() -> Assertions.assertNull(getMeter("telnet.connections").longTaskTimer()));
 
             client.quit();
 
-            await().untilAsserted(() -> Assertions.assertEquals(0, getMeter("tcp.connections").longTaskTimer().activeTasks()));
-            await().until(() -> getMeter("tcp.bytes.written").summary().totalAmount() > 0);
-            await().until(() -> getMeter("tcp.bytes.read").summary().totalAmount() > 0);
+            await().untilAsserted(
+                    () -> Assertions.assertEquals(0, getServerMeter("tcp.connections").longTaskTimer().activeTasks()));
+            await().until(() -> getServerMeter("tcp.bytes.written").summary().totalAmount() > 0);
+            await().until(() -> getServerMeter("tcp.bytes.read").summary().totalAmount() > 0);
 
             await().untilAsserted(() -> Assertions.assertNull(getMeter("telnet.connections").longTaskTimer()));
         } catch (InterruptedException e) {

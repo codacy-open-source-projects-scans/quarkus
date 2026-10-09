@@ -13,6 +13,7 @@ metadata:
   - "resteasy-reactive"
   - "rest"
   - "jakarta-rest"
+  guide: "https://quarkus.io/guides/rest-client"
   categories:
   - "web"
   - "serialization"
@@ -23,7 +24,6 @@ metadata:
     languages:
       - "java"
       - "kotlin"
-      - "scala"
     artifact: "io.quarkus:quarkus-project-core-extension-codestarts"
   config:
-  - "quarkus.rest-client-reactive."
+  - "quarkus.rest-client."

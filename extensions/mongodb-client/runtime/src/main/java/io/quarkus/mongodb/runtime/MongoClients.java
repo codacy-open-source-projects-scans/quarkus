@@ -14,6 +14,8 @@ import static org.bson.codecs.configuration.CodecRegistries.fromProviders;
 import static org.bson.codecs.configuration.CodecRegistries.fromRegistries;
 
 import java.lang.annotation.Annotation;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -72,7 +74,8 @@ import io.quarkus.mongodb.reactive.ReactiveMongoClient;
 import io.quarkus.tls.TlsConfiguration;
 import io.quarkus.tls.TlsConfigurationRegistry;
 import io.vertx.core.Vertx;
-import io.vertx.core.buffer.impl.VertxByteBufAllocator;
+import io.vertx.core.impl.buffer.VertxByteBufAllocator;
+import io.vertx.core.internal.VertxInternal;
 
 /**
  * This class is sort of a producer for {@link MongoClient} and {@link ReactiveMongoClient}.
@@ -258,16 +261,23 @@ public class MongoClients {
 
         @Override
         public void apply(SslSettings.Builder builder) {
-            builder.enabled(!disableSslSupport).invalidHostNameAllowed(config.tlsInsecure());
+            builder.enabled(!disableSslSupport);
             if (!disableSslSupport) {
                 Optional<TlsConfiguration> tlsConfig = TlsConfiguration.from(tlsConfigurationRegistry,
                         config.tlsConfigurationName());
                 if (tlsConfig.isPresent()) {
+                    // Honor the hostname verification configured at the TLS registry level.
+                    // "NONE" disables hostname verification, which maps to allowing invalid host names.
+                    boolean insecure = tlsConfig.get().getHostnameVerificationAlgorithm()
+                            .map("NONE"::equals).orElse(false);
+                    builder.invalidHostNameAllowed(insecure);
                     try {
                         builder.context(tlsConfig.get().createSSLContext());
                     } catch (Exception e) {
                         throw new MongoConfigurationException("Could not configure MongoDB client with TLS registry", e);
                     }
+                } else {
+                    builder.invalidHostNameAllowed(false);
                 }
             }
         }
@@ -330,7 +340,7 @@ public class MongoClients {
             reactiveContextProviders.stream().findAny().ifPresent(settings::contextProvider);
         }
 
-        ConnectionString connectionString;
+        ConnectionString connectionString = null;
         Optional<String> maybeConnectionString = config.connectionString();
         if (maybeConnectionString.isPresent()) {
             connectionString = new ConnectionString(maybeConnectionString.get());
@@ -348,7 +358,7 @@ public class MongoClients {
         config.applicationName().ifPresent(settings::applicationName);
 
         if (config.credentials() != null) {
-            MongoCredential credential = createMongoCredential(config);
+            MongoCredential credential = createMongoCredential(config, connectionString);
             if (credential != null) {
                 settings.credential(credential);
             }
@@ -413,7 +423,7 @@ public class MongoClients {
     private void configureNettyTransport(MongoClientSettings.Builder settings) {
         var nettyStreaming = TransportSettings.nettyBuilder()
                 .allocator(VertxByteBufAllocator.POOLED_ALLOCATOR)
-                .eventLoopGroup(vertx.nettyEventLoopGroup())
+                .eventLoopGroup(((VertxInternal) vertx).nettyEventLoopGroup())
                 .socketChannelClass(NioSocketChannel.class).build();
         settings.transportSettings(nettyStreaming);
     }
@@ -508,11 +518,11 @@ public class MongoClients {
         }
     }
 
-    private MongoCredential createMongoCredential(MongoClientConfig config) {
+    private MongoCredential createMongoCredential(MongoClientConfig config, ConnectionString connectionString) {
 
-        // get the authsource, or the database from the config, or 'admin' as it is the default auth source in mongo
-        // and null is not allowed
-        String authSource = config.credentials().authSource().orElse(config.database().orElse("admin"));
+        // Get the auth source, or a configured database, or 'admin' as it is the default auth source in MongoDB
+        // and null is not allowed.
+        String authSource = getAuthSource(config, connectionString);
         // AuthMechanism
         AuthenticationMechanism mechanism = null;
         Optional<String> maybeMechanism = config.credentials().authMechanism();
@@ -557,6 +567,45 @@ public class MongoClients {
         }
 
         return credential;
+    }
+
+    static String getAuthSource(MongoClientConfig config, ConnectionString connectionString) {
+        String authSource = config.credentials().authSource().orElse(null);
+        if (authSource != null) {
+            return authSource;
+        }
+        if (connectionString != null) {
+            authSource = getAuthSource(connectionString);
+            if (authSource != null) {
+                return authSource;
+            }
+        }
+        String database = config.database().orElse(null);
+        if (database != null) {
+            return database;
+        }
+        if (connectionString != null) {
+            database = connectionString.getDatabase();
+            if (database != null) {
+                return database;
+            }
+        }
+        return "admin";
+    }
+
+    private static String getAuthSource(ConnectionString connectionString) {
+        String value = null;
+        int optionsStart = connectionString.getConnectionString().indexOf('?');
+        if (optionsStart == -1) {
+            return null;
+        }
+        for (String option : connectionString.getConnectionString().substring(optionsStart + 1).split("&")) {
+            int valueStart = option.indexOf('=');
+            if (valueStart != -1 && option.substring(0, valueStart).equalsIgnoreCase("authSource")) {
+                value = URLDecoder.decode(option.substring(valueStart + 1), StandardCharsets.UTF_8);
+            }
+        }
+        return value;
     }
 
     private UsernamePassword determineUserNamePassword(CredentialConfig config) {

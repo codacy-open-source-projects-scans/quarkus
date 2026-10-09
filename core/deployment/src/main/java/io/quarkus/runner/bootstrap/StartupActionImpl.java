@@ -13,12 +13,14 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -46,6 +48,7 @@ import io.quarkus.deployment.builditem.DevServicesRegistryBuildItem;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.MainClassBuildItem;
 import io.quarkus.deployment.builditem.RuntimeApplicationShutdownBuildItem;
 import io.quarkus.deployment.builditem.TransformedClassesBuildItem;
@@ -336,10 +339,33 @@ public class StartupActionImpl implements StartupAction {
             if (deploymentClassLoader == null) {
                 throw new IllegalStateException("Dev services cannot be started without a deployment class loader.");
             }
-            devServicesRegistry.startAll(devServicesResults, devServicesCustomizers, additionalConfigBuildItems,
-                    deploymentClassLoader);
+            DevServicesRegistryBuildItem.DevServicesStartResult startResult = devServicesRegistry.startAll(
+                    devServicesResults, devServicesCustomizers, additionalConfigBuildItems, deploymentClassLoader);
 
-            devServicesProperties.putAll(devServicesRegistry.getConfigForAllRunningServices());
+            devServicesProperties.putAll(startResult.configs());
+            setDevServicesConfigSourceValues(startResult);
+        }
+    }
+
+    private void setDevServicesConfigSourceValues(DevServicesRegistryBuildItem.DevServicesStartResult startResult) {
+        try {
+            Class<?> configSourceClass = runtimeClassLoader
+                    .loadClass("io.quarkus.devservice.runtime.config.DevServicesConfigSource");
+            configSourceClass.getMethod("setConfig", Map.class).invoke(null, startResult.configs());
+        } catch (ClassNotFoundException e) {
+            // devservices runtime module not available
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException("Failed to set dev services config", e);
+        }
+
+        try {
+            Class<?> overrideConfigSourceClass = runtimeClassLoader
+                    .loadClass("io.quarkus.devservice.runtime.config.DevServicesOverrideConfigSource");
+            overrideConfigSourceClass.getMethod("setConfig", Map.class).invoke(null, startResult.overrideConfigs());
+        } catch (ClassNotFoundException e) {
+            // devservices runtime module not available
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException("Failed to set dev services override config", e);
         }
     }
 
@@ -404,15 +430,11 @@ public class StartupActionImpl implements StartupAction {
                                 log.error("Failed to run close task", t);
                             }
                         }
-                        // This will read the state of the curated application at the time of closing;
-                        // If the caller of close knows that the 'next' application shares a curated application, it can set eligible for reuse to true
-                        if (!curatedApplication.isEligibleForReuse()) {
-                            if (curatedApplication.getQuarkusBootstrap().getMode() == QuarkusBootstrap.Mode.TEST
-                                    && !curatedApplication.getQuarkusBootstrap().isAuxiliaryApplication()) {
-                                //for tests, we just always shut down the curated application, as it is only used once
-                                //dev mode might be about to restart, so we leave it
-                                curatedApplication.close();
-                            }
+                        if (curatedApplication.getQuarkusBootstrap().getMode() == QuarkusBootstrap.Mode.TEST
+                                && !curatedApplication.getQuarkusBootstrap().isAuxiliaryApplication()) {
+                            //for tests, we just always shut down the curated application, as it is only used once
+                            //dev mode might be about to restart, so we leave it
+                            curatedApplication.close();
                         }
                     }
                 }
@@ -481,7 +503,7 @@ public class StartupActionImpl implements StartupAction {
         String debugSourcesDir = BootstrapDebug.debugSourcesDir();
         for (GeneratedClassBuildItem i : buildResult.consumeMulti(GeneratedClassBuildItem.class)) {
             if (i.isApplicationClass() == applicationClasses) {
-                data.put(fromClassNameToResourceName(i.getName()), i.getClassData());
+                data.put(fromClassNameToResourceName(i.internalName()), i.getClassData());
                 if (debugClassesDir != null) {
                     try {
                         File debugPath = new File(debugClassesDir);
@@ -525,6 +547,17 @@ public class StartupActionImpl implements StartupAction {
                     continue;
                 }
                 data.put(i.getName(), i.getData());
+            }
+            Map<String, StringBuilder> serviceProviders = new LinkedHashMap<>();
+            for (GeneratedServiceProviderBuildItem i : buildResult
+                    .consumeMulti(GeneratedServiceProviderBuildItem.class)) {
+                serviceProviders.computeIfAbsent("META-INF/services/" + i.getServiceInterfaceName(),
+                        k -> new StringBuilder())
+                        .append(i.getImplementationClassName())
+                        .append(System.lineSeparator());
+            }
+            for (Map.Entry<String, StringBuilder> entry : serviceProviders.entrySet()) {
+                data.put(entry.getKey(), entry.getValue().toString().getBytes(StandardCharsets.UTF_8));
             }
         }
         return data;

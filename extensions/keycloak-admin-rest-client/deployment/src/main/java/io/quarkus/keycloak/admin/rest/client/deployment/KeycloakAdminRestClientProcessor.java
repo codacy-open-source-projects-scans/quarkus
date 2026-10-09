@@ -10,14 +10,15 @@ import org.keycloak.json.StringListMapDeserializer;
 import org.keycloak.json.StringOrArrayDeserializer;
 import org.keycloak.json.StringOrArraySerializer;
 
-import io.quarkus.arc.BeanDestroyer;
 import io.quarkus.arc.deployment.SyntheticBeanBuildItem;
+import io.quarkus.deployment.Feature;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Produce;
 import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.AdditionalApplicationArchiveMarkerBuildItem;
+import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.ServiceStartBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveHierarchyIgnoreWarningBuildItem;
@@ -28,6 +29,12 @@ import io.quarkus.keycloak.admin.rest.client.runtime.KeycloakAdminRestClientReco
 import io.quarkus.tls.deployment.spi.TlsRegistryBuildItem;
 
 public class KeycloakAdminRestClientProcessor {
+
+    // Must be executed even if the extension is disabled, see https://github.com/quarkusio/quarkus/pull/26966/
+    @BuildStep
+    FeatureBuildItem featureBuildItem() {
+        return new FeatureBuildItem(Feature.KEYCLOAK_ADMIN_REST_CLIENT);
+    }
 
     @BuildStep
     void marker(BuildProducer<AdditionalApplicationArchiveMarkerBuildItem> producer) {
@@ -74,10 +81,11 @@ public class KeycloakAdminRestClientProcessor {
                 // use @RequestScoped as we don't want to keep client connection open too long
                 .scope(RequestScoped.class)
                 .setRuntimeInit()
-                .defaultBean()
+                .reserve(true)
+                .priority(0)
                 .unremovable()
                 .supplier(recorder.createAdminClient())
-                .destroyer(BeanDestroyer.AutoCloseableDestroyer.class)
+                .autoClose(true)
                 .done());
     }
 }

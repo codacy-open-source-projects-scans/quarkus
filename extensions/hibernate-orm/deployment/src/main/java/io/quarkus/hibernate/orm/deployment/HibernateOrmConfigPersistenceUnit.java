@@ -9,8 +9,6 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 
-import org.hibernate.annotations.TimeZoneColumn;
-import org.hibernate.dialect.Dialect;
 import org.hibernate.id.enhanced.StandardOptimizerDescriptor;
 
 import io.quarkus.runtime.annotations.ConfigDocDefault;
@@ -24,6 +22,7 @@ import io.smallrye.config.WithDefault;
 import io.smallrye.config.WithName;
 import io.smallrye.config.WithParentName;
 
+//@deprecated Use {@code TypeContributor}, {@code FunctionContributor}, or {@code AdditionalMappingContributor} instead.
 @ConfigGroup
 public interface HibernateOrmConfigPersistenceUnit {
 
@@ -87,29 +86,6 @@ public interface HibernateOrmConfigPersistenceUnit {
     Optional<List<@WithConverter(TrimmedStringConverter.class) String>> sqlLoadScript();
 
     /**
-     * The size of the batches used when loading entities and collections.
-     *
-     * `-1` means batch loading is disabled.
-     *
-     * @deprecated {@link #fetch} should be used to configure fetching properties.
-     * @asciidoclet
-     */
-    @ConfigDocDefault("16")
-    @Deprecated
-    OptionalInt batchFetchSize();
-
-    /**
-     * The maximum depth of outer join fetch tree for single-ended associations (one-to-one, many-to-one).
-     *
-     * A `0` disables default outer join fetching.
-     *
-     * @deprecated {@link #fetch} should be used to configure fetching properties.
-     * @asciidoclet
-     */
-    @Deprecated
-    OptionalInt maxFetchDepth();
-
-    /**
      * Pluggable strategy contract for applying physical naming rules for database object names.
      *
      * Class name of the Hibernate PhysicalNamingStrategy implementation
@@ -122,26 +98,6 @@ public interface HibernateOrmConfigPersistenceUnit {
      * Class name of the Hibernate ImplicitNamingStrategy implementation
      */
     Optional<@WithConverter(TrimmedStringConverter.class) String> implicitNamingStrategy();
-
-    /**
-     * Class name of a custom
-     * https://docs.hibernate.org/stable/orm/javadocs/org/hibernate/boot/spi/MetadataBuilderContributor.html[`org.hibernate.boot.spi.MetadataBuilderContributor`]
-     * implementation.
-     *
-     * [NOTE]
-     * ====
-     * Not all customization options exposed by
-     * https://docs.hibernate.org/stable/orm/javadocs/org/hibernate/boot/MetadataBuilder.html[`org.hibernate.boot.MetadataBuilder`]
-     * will work correctly. Stay clear of options related to classpath scanning in particular.
-     *
-     * This setting is exposed mainly to allow registration of types, converters and SQL functions.
-     * ====
-     * * @deprecated Use TypeContributor, FunctionContributor or AdditionalMappingContributor instead.
-     *
-     * @asciidoclet
-     */
-    @Deprecated
-    Optional<@WithConverter(TrimmedStringConverter.class) String> metadataBuilderContributor();
 
     /**
      * XML files to configure the entity mapping, e.g. {@code META-INF/my-orm.xml}.
@@ -175,6 +131,12 @@ public interface HibernateOrmConfigPersistenceUnit {
      */
     @ConfigDocSection
     HibernateOrmConfigPersistenceUnitJdbc jdbc();
+
+    /**
+     * Reactive related configuration.
+     */
+    @ConfigDocSection
+    HibernateOrmConfigPersistenceUnitReactive reactive();
 
     /**
      * Fetching logic configuration.
@@ -226,15 +188,6 @@ public interface HibernateOrmConfigPersistenceUnit {
     Optional<@WithConverter(TrimmedStringConverter.class) String> multitenant();
 
     /**
-     * Defines the name of the datasource to use in case of SCHEMA approach. The datasource of the persistence unit will be used
-     * if not set.
-     *
-     * @deprecated Use {@link #datasource()} instead.
-     */
-    @Deprecated
-    Optional<@WithConverter(TrimmedStringConverter.class) String> multitenantSchemaDatasource();
-
-    /**
      * If hibernate is not auto generating the schema, and Quarkus is running in development mode
      * then Quarkus will attempt to validate the database after startup and print a log message if
      * there are any problems.
@@ -245,30 +198,6 @@ public interface HibernateOrmConfigPersistenceUnit {
     @ConfigDocIgnore
     @ConfigDocMapKey("full-property-key")
     Map<String, String> unsupportedProperties();
-
-    default boolean isAnyPropertySet() {
-        return datasource().isPresent() ||
-                packages().isPresent() ||
-                dialect().isAnyPropertySet() ||
-                sqlLoadScript().isPresent() ||
-                batchFetchSize().isPresent() ||
-                maxFetchDepth().isPresent() ||
-                physicalNamingStrategy().isPresent() ||
-                implicitNamingStrategy().isPresent() ||
-                metadataBuilderContributor().isPresent() ||
-                mapping().isAnyPropertySet() ||
-                query().isAnyPropertySet() ||
-                database().isAnyPropertySet() ||
-                jdbc().isAnyPropertySet() ||
-                !cache().isEmpty() ||
-                !secondLevelCachingEnabled() ||
-                multitenant().isPresent() ||
-                multitenantSchemaDatasource().isPresent() ||
-                fetch().isAnyPropertySet() ||
-                discriminator().isAnyPropertySet() ||
-                quoteIdentifiers().isAnyPropertySet() ||
-                !unsupportedProperties().isEmpty();
-    }
 
     @ConfigGroup
     interface HibernateOrmConfigPersistenceUnitDialect {
@@ -303,20 +232,6 @@ public interface HibernateOrmConfigPersistenceUnit {
         Optional<@WithConverter(TrimmedStringConverter.class) String> dialect();
 
         /**
-         * The storage engine to use when the dialect supports multiple storage engines.
-         *
-         * E.g. `MyISAM` or `InnoDB` for MySQL.
-         *
-         * @deprecated Use {@code mysql.}{@linkplain MySQLDialectConfig#storageEngine storage-engine}
-         *             or {@code mariadb.}{@linkplain MySQLDialectConfig#storageEngine storage-engine} instead
-         *
-         * @asciidoclet
-         */
-        @WithConverter(TrimmedStringConverter.class)
-        @Deprecated
-        Optional<String> storageEngine();
-
-        /**
          * Configuration specific to Hibernate's Dialect for MariaDB
          */
         MySQLDialectConfig mariadb();
@@ -335,14 +250,6 @@ public interface HibernateOrmConfigPersistenceUnit {
          * Configuration specific to Hibernate's Dialect for Microsoft SQLServer
          */
         SqlServerDialectConfig mssql();
-
-        default boolean isAnyPropertySet() {
-            return dialect().isPresent() || storageEngine().isPresent()
-                    || mysql().isAnyPropertySet()
-                    || oracle().isAnyPropertySet()
-                    || mssql().isAnyPropertySet()
-                    || mariadb().isAnyPropertySet();
-        }
     }
 
     /**
@@ -470,15 +377,6 @@ public interface HibernateOrmConfigPersistenceUnit {
             @WithName("preferred-jdbc-type")
             @ConfigDocDefault("INTERVAL_SECOND")
             Optional<@WithConverter(TrimmedStringConverter.class) String> durationPreferredJdbcType();
-        }
-
-        default boolean isAnyPropertySet() {
-            return timezone().timeZoneDefaultStorage().isPresent() ||
-                    id().optimizer().idOptimizerDefault().isPresent() ||
-                    duration().durationPreferredJdbcType().isPresent() ||
-                    instantPreferredJdbcType().isPresent() ||
-                    booleanPreferredJdbcType().isPresent() ||
-                    UUIDPreferredJdbcType().isPresent();
         }
 
     }
@@ -638,11 +536,6 @@ public interface HibernateOrmConfigPersistenceUnit {
         @WithDefault("false")
         boolean failOnPaginationOverCollectionFetch();
 
-        default boolean isAnyPropertySet() {
-            return queryPlanCacheMaxSize() != DEFAULT_QUERY_PLAN_CACHE_MAX_SIZE
-                    || defaultNullOrdering() != NullOrdering.NONE
-                    || !inClauseParameterPadding();
-        }
     }
 
     @ConfigGroup
@@ -658,23 +551,24 @@ public interface HibernateOrmConfigPersistenceUnit {
         @WithDefault(DEFAULT_CHARSET)
         Charset charset();
 
-        /**
-         * Whether Hibernate should quote all identifiers.
-         *
-         * @deprecated {@link #quoteIdentifiers} should be used to configure quoting strategy.
-         */
-        @Deprecated
-        @WithDefault("false")
-        boolean globallyQuotedIdentifiers();
-
-        default boolean isAnyPropertySet() {
-            return !DEFAULT_CHARSET.equals(charset().name())
-                    || globallyQuotedIdentifiers();
-        }
     }
 
     @ConfigGroup
     interface HibernateOrmConfigPersistenceUnitJdbc {
+
+        /**
+         * Whether to bootstrap a blocking (JDBC) Hibernate ORM instance for this persistence unit.
+         * <p>
+         * Use {@code quarkus.hibernate-orm.jdbc.enabled} for the default persistence unit
+         * and {@code quarkus.hibernate-orm."<persistence-unit-name>".jdbc.enabled} for named persistence units.
+         * This is the per-persistence-unit replacement for the deprecated {@code quarkus.hibernate-orm.blocking}.
+         * <p>
+         * If not set, this is inferred from whether a JDBC datasource is available for this persistence unit,
+         * as well as the global (deprecated) `quarkus.hibernate-orm.blocking` setting.
+         *
+         * @asciidoclet
+         */
+        Optional<Boolean> enabled();
 
         /**
          * The time zone pushed to the JDBC driver.
@@ -693,9 +587,23 @@ public interface HibernateOrmConfigPersistenceUnit {
          */
         OptionalInt statementBatchSize();
 
-        default boolean isAnyPropertySet() {
-            return timezone().isPresent() || statementFetchSize().isPresent() || statementBatchSize().isPresent();
-        }
+    }
+
+    @ConfigGroup
+    interface HibernateOrmConfigPersistenceUnitReactive {
+
+        /**
+         * Whether to bootstrap a reactive Hibernate Reactive instance for this persistence unit.
+         * <p>
+         * Use {@code quarkus.hibernate-orm.reactive.enabled} for the default persistence unit
+         * and {@code quarkus.hibernate-orm."<persistence-unit-name>".reactive.enabled} for named persistence units.
+         * <p>
+         * If not set, this is inferred from whether a reactive datasource is available for this persistence unit.
+         *
+         * @asciidoclet
+         */
+        Optional<Boolean> enabled();
+
     }
 
     @ConfigGroup
@@ -724,9 +632,30 @@ public interface HibernateOrmConfigPersistenceUnit {
     interface HibernateOrmConfigPersistenceUnitCacheMemory {
         /**
          * The maximum number of objects kept in memory in the cache.
+         * <p>
+         * Mutually exclusive with {@code maximum-weight}.
          */
         @ConfigDocDefault("10000")
         OptionalLong objectCount();
+
+        /**
+         * The maximum total weight of objects kept in memory in the cache.
+         * <p>
+         * When set, eviction is based on the total weight of cached entries rather than their count.
+         * This is useful for entities with highly variable sizes (e.g., JSON blobs).
+         * <p>
+         * Mutually exclusive with {@code object-count}. Requires a {@code weigher-class} to assign
+         * weights to entries; without one, each entry has a default weight of 1.
+         */
+        OptionalLong maximumWeight();
+
+        /**
+         * The fully qualified class name of a {@code com.github.benmanes.caffeine.cache.Weigher}
+         * implementation used to assign weights to cache entries.
+         * <p>
+         * Only used when {@code maximum-weight} is set. The class must have a public no-arg constructor.
+         */
+        Optional<String> weigherClass();
     }
 
     @ConfigGroup
@@ -750,10 +679,6 @@ public interface HibernateOrmConfigPersistenceUnit {
          */
         OptionalInt maxDepth();
 
-        default boolean isAnyPropertySet() {
-            return batchSize().isPresent() || maxDepth().isPresent();
-        }
-
     }
 
     @ConfigGroup
@@ -772,9 +697,6 @@ public interface HibernateOrmConfigPersistenceUnit {
         @WithDefault("none")
         IdentifierQuotingStrategy strategy();
 
-        default boolean isAnyPropertySet() {
-            return strategy() != IdentifierQuotingStrategy.NONE;
-        }
     }
 
     /**
@@ -792,9 +714,6 @@ public interface HibernateOrmConfigPersistenceUnit {
         @WithDefault("false")
         boolean ignoreExplicitForJoined();
 
-        default boolean isAnyPropertySet() {
-            return ignoreExplicitForJoined();
-        }
     }
 
     enum IdentifierQuotingStrategy {
@@ -826,15 +745,6 @@ public interface HibernateOrmConfigPersistenceUnit {
 
     @ConfigGroup
     interface HibernateOrmConfigPersistenceValidation {
-
-        /**
-         * Enables the Bean Validation integration.
-         *
-         * @deprecated Use {@link #mode()} instead.
-         */
-        @Deprecated(since = "3.19", forRemoval = true)
-        @WithDefault("true")
-        boolean enabled();
 
         /**
          * Defines how the Bean Validation integration behaves.

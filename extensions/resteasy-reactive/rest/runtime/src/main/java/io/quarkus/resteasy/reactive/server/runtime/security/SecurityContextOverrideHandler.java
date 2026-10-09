@@ -120,7 +120,7 @@ public class SecurityContextOverrideHandler implements ServerRestHandler {
                         }
                     };
                     if (routingContext != null) {
-                        routingContext.setUser(new QuarkusHttpUser(newIdentity));
+                        QuarkusHttpUser.setUser(routingContext, new QuarkusHttpUser(newIdentity));
                     }
                     return newIdentity;
                 }

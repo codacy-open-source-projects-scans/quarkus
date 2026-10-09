@@ -1,11 +1,13 @@
 package io.quarkus.it.mailer;
 
+import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import java.util.stream.Collectors;
 
 import org.eclipse.microprofile.config.ConfigProvider;
+import org.hamcrest.CoreMatchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -201,8 +203,7 @@ public class MailerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = { "start-tls-legacy", "start-tls-legacy-trust-all", "start-tls-registry",
-            "start-tls-registry-trust-all" })
+    @ValueSource(strings = { "start-tls-registry", "start-tls-registry-trust-all" })
     public void sendTextEmailUsingStartTls(String mailerName) {
         RestAssured.get("/mail/text/" + mailerName);
 
@@ -218,7 +219,7 @@ public class MailerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = { "tls-legacy", "tls-legacy-trust-all", "tls-registry", "tls-registry-trust-all" })
+    @ValueSource(strings = { "tls-registry", "tls-registry-trust-all" })
     public void sendTextEmailUsingTls(String mailerName) {
         RestAssured.get("/mail/text/" + mailerName);
 
@@ -231,6 +232,21 @@ public class MailerTest {
 
         String content = clientTls.getMessageTextContent(email);
         assertThat(content).contains("This is a simple test email.");
+    }
+
+    @Test
+    public void sendEmailWithCustomCredentialsProvider() {
+        given()
+                .when().get("/mail/custom-credentials-provider")
+                .then()
+                .statusCode(200)
+                .body(CoreMatchers.equalTo("2"));
+
+        Message email = getLastEmail(clientTls);
+        assertThat(email).isNotNull();
+
+        assertThat(email.to().address()).isEqualTo("nobody@quarkus.io");
+        assertThat(email.subject).isEqualTo("simple test email");
     }
 
     private Message getLastEmail() {

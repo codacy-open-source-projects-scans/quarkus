@@ -10,7 +10,7 @@ metadata:
   - "jaxrs"
   - "rest"
   - "jakarta-rest"
-  guide: "https://quarkus.io/guides/rest-json#multipart-support"
+  guide: "https://quarkus.io/guides/resteasy#multipart-support"
   categories:
   - "web"
   status: "stable"
@@ -19,7 +19,6 @@ metadata:
     languages:
       - "java"
       - "kotlin"
-      - "scala"
     artifact: "io.quarkus:quarkus-project-core-extension-codestarts"
   config:
   - "quarkus.resteasy.multipart."

@@ -14,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
@@ -104,6 +103,8 @@ public class JunitTestRunner {
     private static final String ARCHUNIT_FIELDSOURCE_FQCN = "com.tngtech.archunit.junit.FieldSource";
     private static final String FACADE_CLASS_LOADER_NAME = "io.quarkus.test.junit.classloading.FacadeClassLoader";
     private static final String TEST_DISCOVERY_PROPERTY = "quarkus.continuous-tests-discovery";
+    // Matches TestTemplateInvocationTestDescriptor.SEGMENT_TYPE from JUnit Jupiter Engine
+    private static final String TEST_TEMPLATE_INVOCATION_SEGMENT_TYPE = "test-template-invocation";
 
     private final long runId;
     private final DevModeContext.ModuleInfo moduleInfo;
@@ -264,13 +265,9 @@ public class JunitTestRunner {
                                     currentNonDynamicTest.set(testIdentifier);
                                 }
                                 startTimes.put(testIdentifier, System.currentTimeMillis());
-                                String testClassName = "";
-                                Class<?> testClass = getTestClassFromSource(testIdentifier.getSource());
-                                if (testClass != null) {
-                                    testClassName = testClass.getName();
-                                }
+                                String testClassName = getTestClassNameFromSource(testIdentifier.getSource());
                                 for (TestRunListener listener : listeners) {
-                                    listener.testStarted(testIdentifier, testClassName);
+                                    listener.testStarted(testIdentifier, testClassName == null ? "" : testClassName);
                                 }
                                 touchedClasses.push(Collections.synchronizedSet(new HashSet<>()));
                             }
@@ -281,13 +278,13 @@ public class JunitTestRunner {
                                     return;
                                 }
                                 touchedClasses.pop();
-                                Class<?> testClass = getTestClassFromSource(testIdentifier.getSource());
-                                String displayName = getDisplayNameFromIdentifier(testIdentifier, testClass);
+                                String testClassName = getTestClassNameFromSource(testIdentifier.getSource());
+                                String displayName = getDisplayNameFromIdentifier(testIdentifier, testClassName);
                                 UniqueId id = UniqueId.parse(testIdentifier.getUniqueId());
-                                if (testClass != null) {
-                                    Map<UniqueId, TestResult> results = resultsByClass.computeIfAbsent(testClass.getName(),
+                                if (testClassName != null) {
+                                    Map<UniqueId, TestResult> results = resultsByClass.computeIfAbsent(testClassName,
                                             s -> new HashMap<>());
-                                    TestResult result = new TestResult(displayName, testClass.getName(),
+                                    TestResult result = new TestResult(displayName, testClassName,
                                             toTagList(testIdentifier),
                                             id, TestExecutionResult.aborted(null),
                                             logHandler.captureOutput(), testIdentifier.isTest(), runId, 0, true);
@@ -317,14 +314,13 @@ public class JunitTestRunner {
                                 }
                                 boolean dynamic = dynamicIds.contains(UniqueId.parse(testIdentifier.getUniqueId()));
                                 Set<String> touched = touchedClasses.pop();
-                                Class<?> testClass = getTestClassFromSource(testIdentifier.getSource());
-                                String displayName = getDisplayNameFromIdentifier(testIdentifier, testClass);
+                                String testClassName = getTestClassNameFromSource(testIdentifier.getSource());
+                                String displayName = getDisplayNameFromIdentifier(testIdentifier, testClassName);
                                 UniqueId id = UniqueId.parse(testIdentifier.getUniqueId());
 
-                                if (testClass == null) {
+                                if (testClassName == null) {
                                     return;
                                 }
-                                String testClassName = testClass.getName();
 
                                 if (testExecutionResult.getStatus() != TestExecutionResult.Status.ABORTED) {
                                     for (Set<String> i : touchedClasses) {
@@ -370,9 +366,9 @@ public class JunitTestRunner {
                                         results.put(UniqueId.parse(currentNonDynamicTest.get().getUniqueId()), result);
                                     } else if (testExecutionResult.getStatus() == TestExecutionResult.Status.FAILED) {
                                         Throwable throwable = testExecutionResult.getThrowable().get();
-                                        trimStackTrace(testClass, throwable);
+                                        trimStackTrace(testClassName, throwable);
                                         for (var i : throwable.getSuppressed()) {
-                                            trimStackTrace(testClass, i);
+                                            trimStackTrace(testClassName, i);
                                         }
                                     }
                                 } else if (testExecutionResult.getStatus() == TestExecutionResult.Status.FAILED) {
@@ -396,9 +392,9 @@ public class JunitTestRunner {
                                     }
 
                                     Throwable throwable = testExecutionResult.getThrowable().get();
-                                    trimStackTrace(testClass, throwable);
+                                    trimStackTrace(testClassName, throwable);
                                     for (var i : throwable.getSuppressed()) {
-                                        trimStackTrace(testClass, i);
+                                        trimStackTrace(testClassName, i);
                                     }
                                 }
                             }
@@ -460,16 +456,17 @@ public class JunitTestRunner {
                 .toList();
     }
 
-    private Class<?> getTestClassFromSource(Optional<TestSource> optionalTestSource) {
+    private String getTestClassNameFromSource(Optional<TestSource> optionalTestSource) {
         if (optionalTestSource.isPresent()) {
             var testSource = optionalTestSource.get();
+            // Avoid resolving the class again because its class loader may have been replaced in continuous testing.
             if (testSource instanceof ClassSource classSource) {
-                return classSource.getJavaClass();
+                return classSource.getClassName();
             } else if (testSource instanceof MethodSource methodSource) {
-                return methodSource.getJavaClass();
+                return methodSource.getClassName();
             } else if (testSource.getClass().getName().equals(ARCHUNIT_FIELDSOURCE_FQCN)) {
                 try {
-                    return (Class<?>) testSource.getClass().getMethod("getJavaClass").invoke(testSource);
+                    return ((Class<?>) testSource.getClass().getMethod("getJavaClass").invoke(testSource)).getName();
                 } catch (ReflectiveOperationException e) {
                     log.warnf(e, "Failed to read javaClass reflectively from %s. ArchUnit >= 0.23.0 is required.", testSource);
                 }
@@ -478,28 +475,39 @@ public class JunitTestRunner {
         return null;
     }
 
-    private String getDisplayNameFromIdentifier(TestIdentifier testIdentifier, Class<?> testClass) {
-        if (testIdentifier.getSource().isPresent() && testClass != null) {
+    private String getDisplayNameFromIdentifier(TestIdentifier testIdentifier, String testClassName) {
+        if (testIdentifier.getSource().isPresent() && testClassName != null) {
             var testSource = testIdentifier.getSource().get();
-            if (testSource instanceof ClassSource) {
+            if (testSource instanceof MethodSource methodSource) {
+                if (testIdentifier.getUniqueIdObject().getLastSegment().getType()
+                        .equals(TEST_TEMPLATE_INVOCATION_SEGMENT_TYPE)) {
+                    return getSimpleClassName(testClassName) + "#" + methodSource.getMethodName() + "("
+                            + methodSource.getMethodParameterTypes() + ") " + testIdentifier.getDisplayName();
+                }
+                return getSimpleClassName(testClassName) + "#" + testIdentifier.getDisplayName();
+            } else if (testSource instanceof ClassSource) {
                 return testIdentifier.getDisplayName();
-            } else if (testSource instanceof MethodSource
-                    || testSource.getClass().getName().equals(ARCHUNIT_FIELDSOURCE_FQCN)) {
-                return testClass.getSimpleName() + "#" + testIdentifier.getDisplayName();
+            } else if (testSource.getClass().getName().equals(ARCHUNIT_FIELDSOURCE_FQCN)) {
+                return getSimpleClassName(testClassName) + "#" + testIdentifier.getDisplayName();
             }
         }
         return testIdentifier.getDisplayName();
     }
 
-    private void trimStackTrace(Class<?> testClass, Throwable throwable) {
-        if (testClass != null) {
+    private String getSimpleClassName(String className) {
+        int separatorIndex = Math.max(className.lastIndexOf('.'), className.lastIndexOf('$'));
+        return className.substring(separatorIndex + 1);
+    }
+
+    private void trimStackTrace(String testClassName, Throwable throwable) {
+        if (testClassName != null) {
             //first we cut all the platform stuff out of the stack trace
             Throwable cause = throwable;
             while (cause != null) {
                 StackTraceElement[] st = cause.getStackTrace();
                 for (int i = st.length - 1; i >= 0; --i) {
                     StackTraceElement elem = st[i];
-                    if (elem.getClassName().equals(testClass.getName())) {
+                    if (elem.getClassName().equals(testClassName)) {
                         StackTraceElement[] newst = new StackTraceElement[i + 1];
                         System.arraycopy(st, 0, newst, 0, i + 1);
                         st = newst;
@@ -581,8 +589,15 @@ public class JunitTestRunner {
         }
 
         //we also only run tests from the current module, which we can also revisit later
+        Path testClassesDir = Paths.get(moduleInfo.getTest().get().getClassesPath());
+        if (!Files.isDirectory(testClassesDir)) {
+            log.warn("Test classes directory does not exist: " + testClassesDir
+                    + ". This can happen after running 'mvn clean' while dev mode is active."
+                    + " Trigger a hot-reload or restart the application to recompile test classes.");
+            return DiscoveryResult.EMPTY;
+        }
         Indexer indexer = new Indexer();
-        try (Stream<Path> files = Files.walk(Paths.get(moduleInfo.getTest().get().getClassesPath()))) {
+        try (Stream<Path> files = Files.walk(testClassesDir)) {
             files.filter(s -> s.getFileName().toString().endsWith(".class")).forEach(s -> {
                 try (InputStream in = Files.newInputStream(s)) {
                     indexer.index(in);
@@ -606,8 +621,15 @@ public class JunitTestRunner {
             }
         }
         Set<String> quarkusTestClasses = new HashSet<>();
-        for (var a : Arrays.asList(QUARKUS_TEST, QUARKUS_MAIN_TEST)) {
+        List<DotName> quarkusTestAnnotation = new ArrayList<>(collectQuarkusTestAnnotations(index, QUARKUS_TEST));
+        quarkusTestAnnotation.add(QUARKUS_MAIN_TEST);
+        for (var a : quarkusTestAnnotation) {
             for (AnnotationInstance i : index.getAnnotations(a)) {
+
+                if (i.target().asClass().isAnnotation()) {
+                    // ignore annotation on annotation
+                    continue;
+                }
 
                 DotName name = i.target()
                         .asClass()
@@ -641,16 +663,21 @@ public class JunitTestRunner {
         // Most logic in the JUnitRunner counts main tests as quarkus tests, so do a (mildly irritating) special pass to get the ones which are strictly @QuarkusTest
 
         Set<String> quarkusTestClassesForFacadeClassLoader = new HashSet<>();
-        for (AnnotationInstance i : index.getAnnotations(QUARKUS_TEST)) {
-            DotName name = i.target()
-                    .asClass()
-                    .name();
-            quarkusTestClassesForFacadeClassLoader.add(name.toString());
-            for (ClassInfo clazz : index.getAllKnownSubclasses(name)) {
-                if (!integrationTestClasses.contains(clazz.name()
-                        .toString())) {
-                    quarkusTestClassesForFacadeClassLoader.add(clazz.name()
-                            .toString());
+        for (var a : collectQuarkusTestAnnotations(index, QUARKUS_TEST)) {
+            for (AnnotationInstance i : index.getAnnotations(a)) {
+                if (i.target().asClass().isAnnotation()) {
+                    continue;
+                }
+                DotName name = i.target()
+                        .asClass()
+                        .name();
+                quarkusTestClassesForFacadeClassLoader.add(name.toString());
+                for (ClassInfo clazz : index.getAllKnownSubclasses(name)) {
+                    if (!integrationTestClasses.contains(clazz.name()
+                            .toString())) {
+                        quarkusTestClassesForFacadeClassLoader.add(clazz.name()
+                                .toString());
+                    }
                 }
             }
         }
@@ -1199,7 +1226,7 @@ public class JunitTestRunner {
         private record ClassMatcher(Pattern classPattern) implements Matcher {
             @Override
             public boolean matches(String className, String methodName) {
-                return classPattern.matcher(className).matches();
+                return matchesClassOrEnclosingClass(classPattern, className);
             }
         }
 
@@ -1218,7 +1245,7 @@ public class JunitTestRunner {
         private record ClassAndMethodMatcher(Pattern classPattern, Pattern[] methodPatterns) implements Matcher {
             @Override
             public boolean matches(String className, String methodName) {
-                if (classPattern.matcher(className).matches()) {
+                if (matchesClassOrEnclosingClass(classPattern, className)) {
                     for (Pattern methodPattern : methodPatterns) {
                         if (methodPattern.matcher(methodName).matches()) {
                             return true;
@@ -1227,6 +1254,14 @@ public class JunitTestRunner {
                 }
                 return false;
             }
+        }
+
+        private static boolean matchesClassOrEnclosingClass(Pattern classPattern, String className) {
+            if (classPattern.matcher(className).matches()) {
+                return true;
+            }
+            int index = className.indexOf('$');
+            return index > 0 && classPattern.matcher(className.substring(0, index)).matches();
         }
     }
 
@@ -1310,13 +1345,28 @@ public class JunitTestRunner {
                     }
 
                     Pattern include = includes[i];
-                    if (include.matcher(testedClassAndMethodName).matches() || include.matcher(testedClassName).matches()) {
+                    if (matchesClassOrMethodOrEnclosingClass(include, testedClassName, testedClassAndMethodName,
+                            methodName)) {
                         return FilterResult.included(null);
                     }
                 }
                 return FilterResult.excluded(null);
             }
             return FilterResult.included("not a method");
+        }
+
+        private static boolean matchesClassOrMethodOrEnclosingClass(Pattern include, String testedClassName,
+                String testedClassAndMethodName, String methodName) {
+            if (include.matcher(testedClassAndMethodName).matches() || include.matcher(testedClassName).matches()) {
+                return true;
+            }
+            int index = testedClassName.indexOf('$');
+            if (index <= 0) {
+                return false;
+            }
+            String outerClassName = testedClassName.substring(0, index);
+            return include.matcher(outerClassName + "." + methodName).matches()
+                    || include.matcher(outerClassName).matches();
         }
     }
 
@@ -1370,4 +1420,13 @@ public class JunitTestRunner {
         }
     }
 
+    private static List<DotName> collectQuarkusTestAnnotations(Index index, DotName testAnnotationName) {
+        return Stream.concat(Stream.of(testAnnotationName),
+                index.getAnnotations(testAnnotationName).stream()
+                        .filter(ai -> ai.target().kind() == AnnotationTarget.Kind.CLASS
+                                && ai.target().asClass().isAnnotation())
+                        .map(ai -> ai.target().asClass().name())
+                        .flatMap(name -> collectQuarkusTestAnnotations(index, name).stream()))
+                .toList();
+    }
 }

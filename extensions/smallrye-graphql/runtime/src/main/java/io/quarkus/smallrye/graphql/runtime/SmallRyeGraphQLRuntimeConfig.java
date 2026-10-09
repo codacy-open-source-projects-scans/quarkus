@@ -23,20 +23,11 @@ public interface SmallRyeGraphQLRuntimeConfig {
     boolean enabled();
 
     /**
-     * If GraphQL UI should be enabled. By default, GraphQL UI is enabled if it is included (see {@code always-include}).
-     *
-     * @deprecated use {@code quarkus.smallrye-graphql.ui.enabled} instead
-     */
-    @WithName("ui.enable")
-    @Deprecated(since = "3.26", forRemoval = true)
-    Optional<Boolean> enable();
-
-    /**
      * Specifies the field visibility for the GraphQL schema.
      * This configuration item allows you to define comma-separated list of patterns (GraphQLType.GraphQLField).
      * These patterns are used to determine which fields should be excluded from the schema.
      * Special value {@code no-introspection} will disable introspection fields.
-     * For more info see <a href="https://smallrye.io/smallrye-graphql/docs/schema/field-visibility">graphql-java
+     * For more info see <a href="https://www.graphql-java.com/documentation/field-visibility/">graphql-java
      * documentation</a>
      */
     @WithDefault("default")
@@ -155,7 +146,8 @@ public interface SmallRyeGraphQLRuntimeConfig {
     OptionalInt instrumentationQueryComplexity();
 
     /**
-     * Abort a query if the total depth of the query exceeds the defined limit. Default to no limit
+     * Abort a query if the total depth of the query exceeds the defined limit.
      */
+    @WithDefault("20")
     OptionalInt instrumentationQueryDepth();
 }

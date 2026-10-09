@@ -16,15 +16,13 @@ metadata:
     - "reactive"
     - "serialization"
   status: "stable"
-  guide: "https://quarkus.io/guides/resteasy-reactive#xml-serialisation"
+  guide: "https://quarkus.io/guides/rest#xml-serialisation"
   codestart:
     name: "rest"
     kind: "core"
     languages:
       - "java"
       - "kotlin"
-      - "scala"
     artifact: "io.quarkus:quarkus-project-core-extension-codestarts"
   config:
     - "quarkus.rest."
-    - "quarkus.resteasy-reactive."

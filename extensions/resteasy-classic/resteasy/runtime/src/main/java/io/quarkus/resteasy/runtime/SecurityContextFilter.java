@@ -106,7 +106,7 @@ public class SecurityContextFilter implements ContainerRequestFilter {
                 return Uni.createFrom().nullItem();
             }
         };
-        routingContext.setUser(new QuarkusHttpUser(newIdentity));
+        QuarkusHttpUser.setUser(routingContext, new QuarkusHttpUser(newIdentity));
         currentIdentityAssociation.setIdentity(newIdentity);
     }
 }

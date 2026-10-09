@@ -77,6 +77,7 @@ import io.quarkus.scheduler.Scheduler;
 import io.quarkus.scheduler.SchedulerPaused;
 import io.quarkus.scheduler.SchedulerResumed;
 import io.quarkus.scheduler.SkippedExecution;
+import io.quarkus.scheduler.StartedExecution;
 import io.quarkus.scheduler.SuccessfulExecution;
 import io.quarkus.scheduler.Trigger;
 import io.quarkus.scheduler.common.runtime.AbstractJobDefinition;
@@ -119,7 +120,8 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
     public QuartzSchedulerImpl(SchedulerContext context, QuartzSupport quartzSupport,
             SchedulerRuntimeConfig schedulerRuntimeConfig,
             Event<SkippedExecution> skippedExecutionEvent, Event<SuccessfulExecution> successExecutionEvent,
-            Event<FailedExecution> failedExecutionEvent, Event<DelayedExecution> delayedExecutionEvent,
+            Event<FailedExecution> failedExecutionEvent, Event<StartedExecution> startedExecutionEvent,
+            Event<DelayedExecution> delayedExecutionEvent,
             Event<SchedulerPaused> schedulerPausedEvent,
             Event<SchedulerResumed> schedulerResumedEvent, Event<ScheduledJobPaused> scheduledJobPausedEvent,
             Event<ScheduledJobResumed> scheduledJobResumedEvent,
@@ -127,7 +129,8 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
             Vertx vertx, SchedulerConfig schedulerConfig, Instance<JobInstrumenter> jobInstrumenter,
             ScheduledExecutorService blockingExecutor) {
         super(vertx, new CronParser(context.getCronType()), schedulerRuntimeConfig.overdueGracePeriod(),
-                new Events(skippedExecutionEvent, successExecutionEvent, failedExecutionEvent, delayedExecutionEvent,
+                new Events(skippedExecutionEvent, successExecutionEvent, failedExecutionEvent, startedExecutionEvent,
+                        delayedExecutionEvent,
                         schedulerPausedEvent, schedulerResumedEvent, scheduledJobPausedEvent, scheduledJobResumedEvent),
                 jobInstrumenter, blockingExecutor);
         this.shutdownWaitTime = quartzSupport.getRuntimeConfig().shutdownWaitTime();
@@ -227,10 +230,13 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
                                 invoker.isBlocking() && runtimeConfig.runBlockingScheduledMethodOnQuartzThread(),
                                 SchedulerUtils.parseExecutionMaxDelayAsMillis(scheduled), blockingExecutor);
 
+                        String descriptionValue = SchedulerUtils.lookUpPropertyValue(scheduled.description());
+                        String description = descriptionValue.isEmpty() ? null : descriptionValue;
+                        validateDescriptionLength(identity, description);
                         JobDetail jobDetail = createJobBuilder(identity, method.getInvokerClassName(),
-                                quartzSupport.isNonconcurrent(method)).build();
+                                quartzSupport.isNonconcurrent(method), description).build();
                         Optional<TriggerBuilder<?>> triggerBuilder = createTrigger(identity, scheduled, runtimeConfig,
-                                jobDetail);
+                                jobDetail, description);
 
                         if (triggerBuilder.isPresent()) {
                             org.quartz.Trigger trigger = triggerBuilder.get().build();
@@ -264,7 +270,7 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
                                     new QuartzTrigger(trigger.getKey(), triggerFun, invoker,
                                             SchedulerUtils.parseOverdueGracePeriod(scheduled, defaultOverdueGracePeriod),
                                             quartzSupport.getRuntimeConfig().runBlockingScheduledMethodOnQuartzThread(), false,
-                                            method.getMethodDescription()));
+                                            method.getMethodDescription(), description));
                         } else {
                             // The job is disabled
                             scheduler.deleteJob(new JobKey(identity, Scheduler.class.getName()));
@@ -666,15 +672,27 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
         });
     }
 
-    private JobBuilder createJobBuilder(String identity, String invokerClassName, boolean noncurrent) {
+    private static void validateDescriptionLength(String identity, String description) {
+        if (description != null && description.length() > Scheduled.DESCRIPTION_MAX_LENGTH) {
+            throw new IllegalArgumentException(
+                    "Description for job '" + identity + "' is too long: " + description.length()
+                            + " characters (max " + Scheduled.DESCRIPTION_MAX_LENGTH + ")");
+        }
+    }
+
+    private JobBuilder createJobBuilder(String identity, String invokerClassName, boolean noncurrent, String description) {
         Class<? extends Job> jobClass = noncurrent ? NonconcurrentInvokerJob.class
                 : InvokerJob.class;
-        return JobBuilder.newJob(jobClass)
+        JobBuilder jobBuilder = JobBuilder.newJob(jobClass)
                 // new JobKey(identity, "io.quarkus.scheduler.Scheduler")
                 .withIdentity(identity, Scheduler.class.getName())
                 // this info is redundant but keep it for backward compatibility
                 .usingJobData(INVOKER_KEY, invokerClassName)
                 .requestRecovery();
+        if (description != null) {
+            jobBuilder.withDescription(description);
+        }
+        return jobBuilder;
     }
 
     /**
@@ -689,7 +707,7 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
      * @see SchedulerUtils#isOff(String)
      */
     private Optional<TriggerBuilder<?>> createTrigger(String identity, Scheduled scheduled,
-            QuartzRuntimeConfig runtimeConfig, JobDetail jobDetail) {
+            QuartzRuntimeConfig runtimeConfig, JobDetail jobDetail, String description) {
 
         ScheduleBuilder<?> scheduleBuilder;
         if (!scheduled.cron().isEmpty()) {
@@ -782,6 +800,9 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
                 .withIdentity(identity, Scheduler.class.getName())
                 .forJob(jobDetail)
                 .withSchedule(scheduleBuilder);
+        if (description != null) {
+            triggerBuilder.withDescription(description);
+        }
 
         Long millisToAdd = null;
         if (scheduled.delay() > 0) {
@@ -886,7 +907,8 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
             }
             scheduled = true;
             SyntheticScheduled scheduled = new SyntheticScheduled(identity, cron, every, 0, TimeUnit.MINUTES, delayed,
-                    overdueGracePeriod, concurrentExecution, skipPredicate, timeZone, implementation, executionMaxDelay);
+                    overdueGracePeriod, concurrentExecution, skipPredicate, timeZone, implementation, executionMaxDelay,
+                    description);
             return createJobDefinitionQuartzTrigger(this, scheduled, null);
         }
 
@@ -964,8 +986,11 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
             };
         }
 
+        String descriptionValue = SchedulerUtils.lookUpPropertyValue(scheduled.description());
+        String description = descriptionValue.isEmpty() ? null : descriptionValue;
+        validateDescriptionLength(scheduled.identity(), description);
         JobBuilder jobBuilder = createJobBuilder(scheduled.identity(), QuartzSchedulerImpl.class.getName(),
-                executionMetadata.nonconcurrent());
+                executionMetadata.nonconcurrent(), description);
         if (storeType.isDbStore()) {
             jobBuilder.usingJobData(SCHEDULED_METADATA, scheduled.toJson())
                     .usingJobData(EXECUTION_METADATA_RUN_ON_VIRTUAL_THREAD, Boolean.toString(runOnVirtualThread));
@@ -984,7 +1009,7 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
 
         org.quartz.Trigger trigger;
         Optional<TriggerBuilder<?>> triggerBuilder = createTrigger(scheduled.identity(), scheduled, runtimeConfig,
-                jobDetail);
+                jobDetail, description);
         if (triggerBuilder.isPresent()) {
             if (oldTrigger != null) {
                 trigger = triggerBuilder.get().startAt(oldTrigger.getNextFireTime()).build();
@@ -1019,7 +1044,7 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
                     }
                 }, invoker,
                 SchedulerUtils.parseOverdueGracePeriod(scheduled, defaultOverdueGracePeriod),
-                runtimeConfig.runBlockingScheduledMethodOnQuartzThread(), true, null);
+                runtimeConfig.runBlockingScheduledMethodOnQuartzThread(), true, null, description);
         QuartzTrigger existing = scheduledTasks.putIfAbsent(scheduled.identity(), quartzTrigger);
 
         if (existing != null) {
@@ -1110,12 +1135,13 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
         private final Duration gracePeriod;
         private final boolean isProgrammatic;
         private final String methodDescription;
+        private final String description;
 
         final boolean runBlockingMethodOnQuartzThread;
 
         QuartzTrigger(org.quartz.TriggerKey triggerKey, Function<TriggerKey, org.quartz.Trigger> triggerFunction,
                 ScheduledInvoker invoker, Duration gracePeriod, boolean runBlockingMethodOnQuartzThread,
-                boolean isProgrammatic, String methodDescription) {
+                boolean isProgrammatic, String methodDescription, String description) {
             this.triggerKey = triggerKey;
             this.triggerFunction = triggerFunction;
             this.invoker = invoker;
@@ -1123,6 +1149,7 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
             this.runBlockingMethodOnQuartzThread = runBlockingMethodOnQuartzThread;
             this.isProgrammatic = isProgrammatic;
             this.methodDescription = methodDescription;
+            this.description = description;
         }
 
         @Override
@@ -1155,6 +1182,11 @@ public class QuartzSchedulerImpl extends BaseScheduler implements QuartzSchedule
         @Override
         public String getMethodDescription() {
             return methodDescription;
+        }
+
+        @Override
+        public String getDescription() {
+            return description;
         }
 
         private org.quartz.Trigger trigger() {

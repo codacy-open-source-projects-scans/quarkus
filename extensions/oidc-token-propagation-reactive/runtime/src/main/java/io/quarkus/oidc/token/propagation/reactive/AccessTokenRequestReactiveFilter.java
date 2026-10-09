@@ -30,6 +30,7 @@ import io.quarkus.oidc.common.runtime.OidcConstants;
 import io.quarkus.runtime.configuration.ConfigurationException;
 import io.quarkus.security.credential.TokenCredential;
 import io.quarkus.security.spi.runtime.MethodDescription;
+import io.quarkus.vertx.core.runtime.ContextLocalsVertxServiceProvider;
 import io.quarkus.vertx.core.runtime.context.VertxContextSafetyToggle;
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.Vertx;
@@ -175,7 +176,7 @@ public class AccessTokenRequestReactiveFilter implements ResteasyReactiveClientR
 
     private static TokenCredential getTokenCredentialFromContext() {
         VertxContextSafetyToggle.validateContextIfExists(ERROR_MSG, ERROR_MSG);
-        return Vertx.currentContext().getLocal(TokenCredential.class.getName());
+        return ContextLocalsVertxServiceProvider.TOKEN_CREDENTIAL_LOCAL.get(Vertx.currentContext());
     }
 
     private Uni<String> exchangeToken(String token) {

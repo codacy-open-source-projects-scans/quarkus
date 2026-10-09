@@ -1,9 +1,11 @@
 package io.quarkus.deployment.jbang;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,9 +25,11 @@ import io.quarkus.deployment.QuarkusAugmentor;
 import io.quarkus.deployment.builditem.ApplicationClassNameBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.LiveReloadBuildItem;
 import io.quarkus.deployment.builditem.MainClassBuildItem;
 import io.quarkus.deployment.builditem.TransformedClassesBuildItem;
+import io.quarkus.deployment.jvm.ResolvedJVMRequirements;
 import io.quarkus.deployment.pkg.builditem.ArtifactResultBuildItem;
 import io.quarkus.deployment.pkg.builditem.DeploymentResultBuildItem;
 import io.quarkus.deployment.pkg.builditem.NativeImageBuildItem;
@@ -69,6 +73,7 @@ public class JBangAugmentorImpl implements BiConsumer<CuratedApplication, Map<St
             builder.setRebuild(quarkusBootstrap.isRebuild());
             builder.setLiveReloadState(
                     new LiveReloadBuildItem(false, Collections.emptySet(), new HashMap<>(), null));
+            builder.setCuratedApplicationContext(curatedApplication.getCuratedApplicationContext());
             for (AdditionalDependency i : quarkusBootstrap.getAdditionalApplicationArchives()) {
                 //this gets added to the class path either way
                 //but we only need to add it to the additional app archives
@@ -90,11 +95,11 @@ public class JBangAugmentorImpl implements BiConsumer<CuratedApplication, Map<St
             builder.addFinal(GeneratedClassBuildItem.class);
             builder.addFinal(MainClassBuildItem.class);
             builder.addFinal(GeneratedResourceBuildItem.class);
+            builder.addFinal(GeneratedServiceProviderBuildItem.class);
             builder.addFinal(TransformedClassesBuildItem.class);
             builder.addFinal(DeploymentResultBuildItem.class);
-            // note: quarkus.package.type is deprecated
-            boolean nativeRequested = "native".equals(System.getProperty("quarkus.package.type"))
-                    || "true".equals(System.getProperty("quarkus.native.enabled"));
+            builder.addFinal(ResolvedJVMRequirements.class);
+            boolean nativeRequested = "true".equals(System.getProperty("quarkus.native.enabled"));
             boolean containerBuildRequested = Boolean.getBoolean("quarkus.container-image.build");
             if (nativeRequested) {
                 builder.addFinal(NativeImageBuildItem.class);
@@ -112,10 +117,21 @@ public class JBangAugmentorImpl implements BiConsumer<CuratedApplication, Map<St
                 BuildResult buildResult = builder.build().run();
                 Map<String, byte[]> result = new HashMap<>();
                 for (GeneratedClassBuildItem i : buildResult.consumeMulti(GeneratedClassBuildItem.class)) {
-                    result.put(i.getName().replace(".", "/") + ".class", i.getClassData());
+                    result.put(i.internalName() + ".class", i.getClassData());
                 }
                 for (GeneratedResourceBuildItem i : buildResult.consumeMulti(GeneratedResourceBuildItem.class)) {
                     result.put(i.getName(), i.getData());
+                }
+                Map<String, StringBuilder> serviceProviders = new LinkedHashMap<>();
+                for (GeneratedServiceProviderBuildItem i : buildResult
+                        .consumeMulti(GeneratedServiceProviderBuildItem.class)) {
+                    serviceProviders.computeIfAbsent("META-INF/services/" + i.getServiceInterfaceName(),
+                            k -> new StringBuilder())
+                            .append(i.getImplementationClassName())
+                            .append(System.lineSeparator());
+                }
+                for (Map.Entry<String, StringBuilder> entry : serviceProviders.entrySet()) {
+                    result.put(entry.getKey(), entry.getValue().toString().getBytes(StandardCharsets.UTF_8));
                 }
                 for (Map.Entry<Path, Set<TransformedClassesBuildItem.TransformedClass>> entry : buildResult
                         .consume(TransformedClassesBuildItem.class).getTransformedClassesByJar().entrySet()) {
@@ -133,6 +149,7 @@ public class JBangAugmentorImpl implements BiConsumer<CuratedApplication, Map<St
                 javaargs.add("-Djava.util.logging.manager=org.jboss.logmanager.LogManager");
                 javaargs.add(
                         "-Djava.util.concurrent.ForkJoinPool.common.threadFactory=io.quarkus.bootstrap.forkjoin.QuarkusForkJoinWorkerThreadFactory");
+                javaargs.addAll(buildResult.consume(ResolvedJVMRequirements.class).renderAsJvmArguments());
                 resultMap.put("java-args", javaargs);
                 resultMap.put("main-class", buildResult.consume(MainClassBuildItem.class).getClassName());
                 if (nativeRequested) {

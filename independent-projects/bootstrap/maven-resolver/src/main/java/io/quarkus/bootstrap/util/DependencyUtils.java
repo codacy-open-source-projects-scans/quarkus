@@ -7,9 +7,11 @@ import java.util.Map;
 import java.util.Set;
 
 import org.eclipse.aether.artifact.Artifact;
+import org.eclipse.aether.artifact.ArtifactProperties;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
+import org.eclipse.aether.graph.Exclusion;
 import org.eclipse.aether.util.graph.transformer.ConflictResolver;
 
 import io.quarkus.bootstrap.resolver.maven.BootstrapMavenException;
@@ -26,31 +28,43 @@ public class DependencyUtils {
 
     public static ArtifactKey getKey(Artifact artifact) {
         return ArtifactKey.of(artifact.getGroupId(), artifact.getArtifactId(),
-                artifact.getClassifier(), artifact.getExtension());
+                artifact.getClassifier(), getType(artifact));
+    }
+
+    public static ArtifactKey getKey(Exclusion exclusion) {
+        if ("*".equals(exclusion.getGroupId()) || "*".equals(exclusion.getArtifactId())) {
+            throw new IllegalStateException("Wildcard exclusions are not supported here");
+        }
+        return ArtifactKey.of(exclusion.getGroupId(), exclusion.getArtifactId(),
+                exclusion.getClassifier(), exclusion.getExtension());
     }
 
     public static ArtifactCoords getCoords(Artifact artifact) {
         return new GACTV(artifact.getGroupId(), artifact.getArtifactId(),
-                artifact.getClassifier(), artifact.getExtension(), artifact.getVersion());
+                artifact.getClassifier(), getType(artifact), artifact.getVersion());
     }
 
     public static Map<ArtifactKey, Dependency> toMap(List<Dependency> deps) {
         final Map<ArtifactKey, Dependency> map = new HashMap<>(deps.size());
-        for (int i = 0; i < deps.size(); i++) {
-            final Dependency dep = deps.get(i);
+        for (Dependency dep : deps) {
             map.put(getKey(dep.getArtifact()), dep);
         }
         return map;
     }
 
     public static void putAll(Map<ArtifactKey, Dependency> map, List<Dependency> deps) {
-        for (int i = 0; i < deps.size(); i++) {
-            final Dependency dep = deps.get(i);
+        for (Dependency dep : deps) {
             map.putIfAbsent(getKey(dep.getArtifact()), dep);
         }
     }
 
     public static List<Dependency> mergeDependencies(List<Dependency> dominant, List<Dependency> recessive,
+            Map<ArtifactKey, Dependency> managedVersions, Set<String> excludedScopes) {
+        return mergeDependencies(dominant, recessive, Set.of(), managedVersions, excludedScopes);
+    }
+
+    public static List<Dependency> mergeDependencies(List<Dependency> dominant, List<Dependency> recessive,
+            Set<ArtifactKey> excluded, // Not using org.eclipse.aether.graph.Exclusion here because we're not changing transitive deps
             Map<ArtifactKey, Dependency> managedVersions, Set<String> excludedScopes) {
         if (dominant.isEmpty() && recessive.isEmpty()) {
             return List.of();
@@ -58,9 +72,9 @@ public class DependencyUtils {
         final List<Dependency> result = new ArrayList<>(dominant.size() + recessive.size());
         final Map<ArtifactKey, Dependency> dominantMap = new HashMap<>(dominant.size());
         for (Dependency dep : dominant) {
-            if (!excludedScopes.contains(dep.getScope())) {
+            final ArtifactKey key = getKey(dep.getArtifact());
+            if (!excludedScopes.contains(dep.getScope()) && !excluded.contains(key)) {
                 result.add(dep);
-                final ArtifactKey key = getKey(dep.getArtifact());
                 if (!managedVersions.containsKey(key)) {
                     dominantMap.put(key, dep);
                 }
@@ -69,10 +83,45 @@ public class DependencyUtils {
         for (Dependency dep : recessive) {
             if (!excludedScopes.contains(dep.getScope())) {
                 final ArtifactKey key = getKey(dep.getArtifact());
-                if (!dominantMap.containsKey(key)) {
+                if (!dominantMap.containsKey(key) && !excluded.contains(key)) {
                     if (dep.getArtifact().getVersion() == null) {
                         final Dependency managed = managedVersions.get(key);
                         if (managed != null) {
+                            dep = dep.setArtifact(dep.getArtifact().setVersion(managed.getArtifact().getVersion()));
+                        }
+                    }
+                    result.add(dep);
+                }
+            }
+        }
+        return result;
+    }
+
+    public static List<Dependency> enforceManagedDependencies(List<Dependency> dominant, List<Dependency> recessive,
+            Set<ArtifactKey> excluded,
+            Map<ArtifactKey, Dependency> managedVersions, Set<String> excludedScopes) {
+        if (dominant.isEmpty() && recessive.isEmpty()) {
+            return List.of();
+        }
+        final List<Dependency> result = new ArrayList<>(dominant.size() + recessive.size());
+        final Map<ArtifactKey, Dependency> dominantMap = new HashMap<>(dominant.size());
+        for (Dependency dep : dominant) {
+            final ArtifactKey key = getKey(dep.getArtifact());
+            if (!excludedScopes.contains(dep.getScope()) && !excluded.contains(key)) {
+                result.add(dep);
+                if (!managedVersions.containsKey(key)) {
+                    dominantMap.put(key, dep);
+                }
+            }
+        }
+        for (Dependency dep : recessive) {
+            if (!excludedScopes.contains(dep.getScope())) {
+                final ArtifactKey key = getKey(dep.getArtifact());
+                if (!dominantMap.containsKey(key) && !excluded.contains(key)) {
+                    final Dependency managed = managedVersions.get(key);
+                    if (managed != null) {
+                        if (dep.getArtifact().getVersion() == null
+                                || !dep.getArtifact().getVersion().equals(managed.getArtifact().getVersion())) {
                             dep = dep.setArtifact(dep.getArtifact().setVersion(managed.getArtifact().getVersion()));
                         }
                     }
@@ -166,9 +215,13 @@ public class DependencyUtils {
                 .setGroupId(artifact.getGroupId())
                 .setArtifactId(artifact.getArtifactId())
                 .setClassifier(artifact.getClassifier())
-                .setType(artifact.getExtension())
+                .setType(getType(artifact))
                 .setVersion(artifact.getVersion())
                 .setResolvedPaths(artifact.getFile() == null ? PathList.empty() : PathList.of(artifact.getFile().toPath()));
+    }
+
+    public static String getType(Artifact artifact) {
+        return artifact.getProperty(ArtifactProperties.TYPE, artifact.getExtension());
     }
 
     public static boolean hasWinner(DependencyNode node) {

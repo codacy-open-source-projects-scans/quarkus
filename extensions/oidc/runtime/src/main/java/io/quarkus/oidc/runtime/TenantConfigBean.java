@@ -3,6 +3,7 @@ package io.quarkus.oidc.runtime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
@@ -20,6 +21,7 @@ import io.vertx.core.Vertx;
 public final class TenantConfigBean {
 
     private static final Logger LOG = Logger.getLogger(TenantConfigBean.class);
+    private static final int DELAY_5_SECONDS = 5000;
 
     private final Map<String, TenantConfigContext> staticTenantsConfig;
     private final Map<String, TenantConfigContext> dynamicTenantsConfig;
@@ -27,9 +29,10 @@ public final class TenantConfigBean {
     private final TenantContextFactory tenantContextFactory;
 
     TenantConfigBean(Vertx vertx, TlsConfigurationRegistry tlsConfigurationRegistry, OidcImpl oidc,
-            boolean securityEventsEnabled, ProxyConfigurationRegistry proxyConfigurationRegistry) {
+            boolean securityEventsEnabled, ProxyConfigurationRegistry proxyConfigurationRegistry,
+            Set<OidcRoute> allowedRoutes) {
         this.tenantContextFactory = new TenantContextFactory(vertx, tlsConfigurationRegistry, securityEventsEnabled,
-                proxyConfigurationRegistry);
+                proxyConfigurationRegistry, allowedRoutes);
         this.dynamicTenantsConfig = new ConcurrentHashMap<>();
 
         this.staticTenantsConfig = tenantContextFactory.createStaticTenantConfigs(oidc.getStaticTenantConfigs(),
@@ -54,6 +57,7 @@ public final class TenantConfigBean {
                         if (previousValue == null) {
                             BackChannelLogoutHandler.fireBackChannelLogoutReadyEvent(oidcConfig);
                             ResourceMetadataHandler.fireResourceMetadataReadyEvent(oidcConfig);
+                            ClientIdMetadataHandler.fireClientIdMetadataReadyEvent(oidcConfig);
                         }
                         return t;
                     }
@@ -69,16 +73,21 @@ public final class TenantConfigBean {
             dynamicTenantsConfig.put(tenantId, newTenant);
             BackChannelLogoutHandler.fireBackChannelLogoutChangedEvent(oidcConfig, tenant);
             ResourceMetadataHandler.fireResourceMetadataChangedEvent(oidcConfig, tenant);
+            ClientIdMetadataHandler.fireClientIdMetadataChangedEvent(oidcConfig, tenant);
             return Uni.createFrom().item(newTenant);
         } else {
             return createDynamicTenantContext(oidcConfig);
         }
     }
 
-    Uni<TenantConfigContext> replaceDynamicTenantContext(OidcTenantConfig oidcConfig) {
+    Uni<TenantConfigContext> replaceDynamicTenantContext(OidcTenantConfig oidcConfig, Vertx vertx) {
         var tenantId = oidcConfig.tenantId().orElseThrow();
         LOG.debugf("Replacing the resolved tenant %s configuration with a new configuration", tenantId);
-        dynamicTenantsConfig.remove(tenantId);
+        var previousContext = dynamicTenantsConfig.remove(tenantId);
+        if (previousContext != null && previousContext.provider() != null) {
+            // even though we are replacing the context, it could be that other HTTP request is currently using it
+            vertx.setTimer(DELAY_5_SECONDS, ignored -> previousContext.provider().close());
+        }
         return createDynamicTenantContext(oidcConfig);
     }
 

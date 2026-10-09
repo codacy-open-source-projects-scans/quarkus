@@ -85,6 +85,7 @@ import io.quarkus.resteasy.server.common.spi.AdditionalJaxRsResourceDefiningAnno
 import io.quarkus.resteasy.server.common.spi.AdditionalJaxRsResourceMethodParamAnnotations;
 import io.quarkus.resteasy.server.common.spi.AllowedJaxRsAnnotationPrefixBuildItem;
 import io.quarkus.runtime.annotations.ConfigRoot;
+import io.quarkus.runtime.configuration.MemorySize;
 import io.quarkus.runtime.configuration.NormalizeRootHttpPathConverter;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithConverter;
@@ -374,8 +375,8 @@ public class ResteasyServerCommonProcessor {
 
         // generate default constructors for suitable concrete @Path classes that don't have them
         // see https://issues.jboss.org/browse/RESTEASY-2183
-        generateDefaultConstructors(transformers, withoutDefaultCtor, additionalJaxRsResourceDefiningAnnotations,
-                friendlyJaxRsAnnotationPrefixes);
+        generateDefaultConstructors(beanArchiveIndexBuildItem.getIndex(), transformers, withoutDefaultCtor,
+                additionalJaxRsResourceDefiningAnnotations, friendlyJaxRsAnnotationPrefixes);
 
         checkParameterNames(beanArchiveIndexBuildItem.getIndex(), additionalJaxRsResourceMethodParamAnnotations);
 
@@ -416,7 +417,7 @@ public class ResteasyServerCommonProcessor {
 
         if (commonConfig.gzip().enabled()) {
             resteasyInitParameters.put(ResteasyContextParameters.RESTEASY_GZIP_MAX_INPUT,
-                    Long.toString(commonConfig.gzip().maxInput().asLongValue()));
+                    commonConfig.gzip().maxInput().toString(MemorySize.Scale.B));
         }
         resteasyInitParameters.put(ResteasyContextParameters.RESTEASY_UNWRAPPED_EXCEPTIONS,
                 ArcUndeclaredThrowableException.class.getName());
@@ -736,7 +737,7 @@ public class ResteasyServerCommonProcessor {
             if (classInfo != null) {
                 includeFields = classInfo.annotationsMap().containsKey(CONTEXT);
             }
-            reflectiveClass.produce(new ReflectiveClassBuildItem(false, includeFields, providerToRegister));
+            reflectiveClass.produce(ReflectiveClassBuildItem.builder(providerToRegister).fields(includeFields).build());
         }
 
         // special case: our config providers
@@ -747,7 +748,8 @@ public class ResteasyServerCommonProcessor {
                 .build());
     }
 
-    private static void generateDefaultConstructors(BuildProducer<BytecodeTransformerBuildItem> transformers,
+    private static void generateDefaultConstructors(IndexView index,
+            BuildProducer<BytecodeTransformerBuildItem> transformers,
             Map<DotName, ClassInfo> withoutDefaultCtor,
             List<AdditionalJaxRsResourceDefiningAnnotationBuildItem> additionalJaxRsResourceDefiningAnnotations,
             List<AllowedJaxRsAnnotationPrefixBuildItem> friendlyJaxRsAnnotationPrefixes) {
@@ -776,6 +778,11 @@ public class ResteasyServerCommonProcessor {
                 DotName name = instance.name();
                 final String packageName = packageName(name);
                 if (packageName == null || !isPackageAllowed(allowedAnnotationPrefixes, packageName)) {
+                    // A jakarta.ws.rs.NameBinding annotation is a Jakarta REST construct even though it typically
+                    // lives in the user's package, so it must not prevent the default constructor generation
+                    if (isNameBindingAnnotation(index, name)) {
+                        continue;
+                    }
                     log.debug("Annotation " + name + " results in Quarkus not being able to generate a default constructor for "
                             + classInfo.name());
                     hasNonJaxRSAnnotations = true;
@@ -818,6 +825,11 @@ public class ResteasyServerCommonProcessor {
 
     private static boolean isPackageAllowed(Set<String> allowedAnnotationPrefixes, String packageName) {
         return allowedAnnotationPrefixes.stream().anyMatch(prefix -> packageName.startsWith(prefix));
+    }
+
+    private static boolean isNameBindingAnnotation(IndexView index, DotName annotationName) {
+        ClassInfo annotationClass = index.getClassByName(annotationName);
+        return annotationClass != null && annotationClass.hasDeclaredAnnotation(ResteasyDotNames.NAME_BINDING);
     }
 
     private static String packageName(DotName dotName) {

@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -53,7 +54,7 @@ public class JacocoProcessor {
         return new FeatureBuildItem("jacoco");
     }
 
-    @BuildStep(onlyIf = IsTest.class)
+    @BuildStep
     void transform(BuildProducer<BytecodeTransformerBuildItem> bytecodeTransformers,
             OutputTargetBuildItem outputTargetBuildItem,
             ApplicationArchivesBuildItem applicationArchivesBuildItem,
@@ -61,6 +62,11 @@ public class JacocoProcessor {
             CurateOutcomeBuildItem curateOutcomeBuildItem,
             LaunchModeBuildItem launchModeBuildItem,
             JacocoConfig config) throws Exception {
+        // LaunchModeBuildItem.isTest() is used instead of IsTest BooleanSupplier
+        // so that dev mode tests (QuarkusDevModeTest) are also covered
+        if (!launchModeBuildItem.isTest()) {
+            return;
+        }
         if (launchModeBuildItem.isAuxiliaryApplication()) {
             //no code coverage for continuous testing, it does not really make sense
             return;
@@ -93,7 +99,7 @@ public class JacocoProcessor {
         System.setProperty("jacoco-agent.jmx", "true");
 
         // Use offline instrumentation to modify the bytecode of classes that should be analyzed
-        Set<ApplicationArchive> appArchives = applicationArchivesBuildItem.getAllApplicationArchives();
+        List<ApplicationArchive> appArchives = applicationArchivesBuildItem.getAllArchives();
         ApplicationModel appModel = curateOutcomeBuildItem.getApplicationModel();
         Instrumenter instrumenter = new Instrumenter(new OfflineInstrumentationAccessGenerator());
         Set<String> transformed = new HashSet<>();

@@ -3,18 +3,14 @@ package io.quarkus.vertx.deployment;
 import static io.quarkus.vertx.deployment.VertxConstants.CONSUME_EVENT;
 import static io.quarkus.vertx.deployment.VertxConstants.MESSAGE;
 import static io.quarkus.vertx.deployment.VertxConstants.MUTINY_MESSAGE;
-import static io.quarkus.vertx.deployment.VertxConstants.MUTINY_MESSAGE_HEADERS;
 import static io.quarkus.vertx.deployment.VertxConstants.UNI;
 import static io.quarkus.vertx.deployment.VertxConstants.isMessage;
 import static io.quarkus.vertx.deployment.VertxConstants.isMessageHeaders;
 
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ThreadFactory;
-import java.util.function.BiFunction;
 
 import org.jboss.jandex.AnnotationInstance;
 import org.jboss.jandex.ClassInfo;
@@ -23,8 +19,8 @@ import org.jboss.jandex.MethodInfo;
 import org.jboss.jandex.Type;
 import org.jboss.jandex.Type.Kind;
 import org.jboss.logging.Logger;
-import org.objectweb.asm.ClassVisitor;
 
+import io.quarkus.arc.CurrentContextFactory;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.AutoAddScopeBuildItem;
 import io.quarkus.arc.deployment.BeanRegistrationPhaseBuildItem;
@@ -41,7 +37,8 @@ import io.quarkus.arc.processor.InvokerBuilder;
 import io.quarkus.arc.processor.InvokerInfo;
 import io.quarkus.arc.processor.KotlinUtils;
 import io.quarkus.arc.spi.NonBlockingProvider;
-import io.quarkus.bootstrap.classloading.QuarkusClassLoader;
+import io.quarkus.core.Phase;
+import io.quarkus.core.deployment.service.ServiceRegistrar;
 import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.Capability;
 import io.quarkus.deployment.Feature;
@@ -51,39 +48,34 @@ import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.AnnotationProxyBuildItem;
-import io.quarkus.deployment.builditem.BytecodeTransformerBuildItem;
 import io.quarkus.deployment.builditem.CapabilityBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.LaunchModeBuildItem;
 import io.quarkus.deployment.builditem.ServiceStartBuildItem;
 import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ConstantBootstrapBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageConfigBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
-import io.quarkus.deployment.builditem.nativeimage.ReflectiveMethodBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ServiceProviderBuildItem;
-import io.quarkus.deployment.pkg.builditem.CompiledJavaVersionBuildItem;
-import io.quarkus.deployment.pkg.builditem.CompiledJavaVersionBuildItem.JavaVersion.Status;
 import io.quarkus.deployment.recording.RecorderContext;
-import io.quarkus.gizmo.ClassTransformer;
-import io.quarkus.gizmo.MethodCreator;
-import io.quarkus.gizmo.MethodDescriptor;
-import io.quarkus.gizmo.ResultHandle;
 import io.quarkus.gizmo2.ClassOutput;
 import io.quarkus.vertx.ConsumeEvent;
 import io.quarkus.vertx.core.deployment.CoreVertxBuildItem;
 import io.quarkus.vertx.deployment.spi.EventConsumerInvokerCustomizerBuildItem;
 import io.quarkus.vertx.runtime.EventConsumerInfo;
+import io.quarkus.vertx.runtime.VertxCurrentContextFactory;
 import io.quarkus.vertx.runtime.VertxEventBusConsumerRecorder;
 import io.quarkus.vertx.runtime.VertxNonBlockingProvider;
 import io.quarkus.vertx.runtime.VertxProducer;
 import io.smallrye.common.annotation.Blocking;
 import io.smallrye.common.annotation.RunOnVirtualThread;
 import io.smallrye.mutiny.Uni;
-import io.vertx.core.impl.VertxImpl;
+import io.vertx.core.spi.VertxServiceProvider;
 
 class VertxProcessor {
 
@@ -105,13 +97,18 @@ class VertxProcessor {
             List<EventConsumerBusinessMethodItem> messageConsumerBusinessMethods,
             BuildProducer<GeneratedClassBuildItem> generatedClass,
             BuildProducer<GeneratedResourceBuildItem> generatedResource,
-            AnnotationProxyBuildItem annotationProxy, LaunchModeBuildItem launchMode, ShutdownContextBuildItem shutdown,
+            BuildProducer<GeneratedServiceProviderBuildItem> generatedServiceProviders,
+            BuildProducer<ConstantBootstrapBuildItem> constantBootstraps,
+            AnnotationProxyBuildItem annotationProxy,
+            LaunchModeBuildItem launchMode,
+            ShutdownContextBuildItem shutdown,
             BuildProducer<ServiceStartBuildItem> serviceStart,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClassBuildItemBuildProducer,
             List<MessageCodecBuildItem> codecs, LocalCodecSelectorTypesBuildItem localCodecSelectorTypes,
             RecorderContext recorderContext) {
         List<EventConsumerInfo> messageConsumerConfigurations = new ArrayList<>();
-        ClassOutput classOutput = new GeneratedClassGizmo2Adaptor(generatedClass, generatedResource, true);
+        ClassOutput classOutput = new GeneratedClassGizmo2Adaptor(generatedClass, generatedResource,
+                generatedServiceProviders, constantBootstraps, true);
         for (EventConsumerBusinessMethodItem businessMethod : messageConsumerBusinessMethods) {
             ConsumeEvent annotation = annotationProxy.builder(businessMethod.getConsumeEvent(), ConsumeEvent.class)
                     .withDefaultValue("value", businessMethod.getBean().getBeanClass().toString())
@@ -123,7 +120,7 @@ class VertxProcessor {
         }
 
         ClassLoader tccl = Thread.currentThread().getContextClassLoader();
-        Map<Class<?>, Class<?>> codecByClass = new HashMap<>();
+        Map<Class<?>, Class<?>> codecByClass = new LinkedHashMap<>();
         for (MessageCodecBuildItem messageCodecItem : codecs) {
             reflectiveClassBuildItemBuildProducer
                     .produce(ReflectiveClassBuildItem.builder(messageCodecItem.getType()).constructors(false).build());
@@ -143,11 +140,15 @@ class VertxProcessor {
     }
 
     @BuildStep
-    @Record(ExecutionTime.STATIC_INIT)
     void currentContextFactory(BuildProducer<CurrentContextFactoryBuildItem> currentContextFactory,
-            VertxBuildConfig buildConfig, VertxEventBusConsumerRecorder recorder) {
+            VertxBuildConfig buildConfig, ServiceRegistrar reg) {
         if (buildConfig.customizeArcContext()) {
-            currentContextFactory.produce(new CurrentContextFactoryBuildItem(recorder.currentContextFactory()));
+            reg
+                    .forService(CurrentContextFactory.class)
+                    .atPhase(Phase.STATIC_INIT)
+                    .onStart(ctx -> new VertxCurrentContextFactory());
+            currentContextFactory.produce(new CurrentContextFactoryBuildItem(
+                    reg.staticInitServiceAsRuntimeValue(CurrentContextFactory.class)));
         }
     }
 
@@ -220,9 +221,6 @@ class VertxProcessor {
                     } else if (parametersCount == 1) {
                         // parameter is payload
                         builder.withArgumentTransformer(0, io.vertx.core.eventbus.Message.class, "body");
-                    } else if (parametersCount == 2 && method.parameterType(0).name().equals(MUTINY_MESSAGE_HEADERS)) {
-                        // if the method expects Mutiny MultiMap, wrap the Vert.x MultiMap
-                        builder.withArgumentTransformer(0, io.vertx.mutiny.core.MultiMap.class, "newInstance");
                     }
 
                     if (method.returnType().name().equals(UNI)) {
@@ -236,7 +234,7 @@ class VertxProcessor {
 
                     InvokerInfo invoker = builder.build();
 
-                    messageConsumerBusinessMethods.produce(new EventConsumerBusinessMethodItem(bean, consumeEvent,
+                    messageConsumerBusinessMethods.produce(new EventConsumerBusinessMethodItem(bean, method, consumeEvent,
                             method.hasAnnotation(Blocking.class), method.hasAnnotation(RunOnVirtualThread.class),
                             parametersCount == 2, invoker));
                     LOGGER.debugf("Found event consumer business method %s declared on %s", method, bean);
@@ -283,12 +281,10 @@ class VertxProcessor {
     NativeImageConfigBuildItem reinitializeClassesForNetty() {
         NativeImageConfigBuildItem.Builder builder = NativeImageConfigBuildItem.builder();
 
-        builder.addRuntimeInitializedClass("io.vertx.core.http.impl.Http1xServerResponse")
-                .addRuntimeInitializedClass("io.vertx.core.parsetools.impl.RecordParserImpl");
-
-        if (QuarkusClassLoader.isClassPresentAtRuntime("io.vertx.ext.web.client.impl.MultipartFormUpload")) {
-            builder.addRuntimeInitializedClass("io.vertx.ext.web.client.impl.MultipartFormUpload");
-        }
+        builder.addRuntimeInitializedClass("io.vertx.core.http.impl.http1.Http1ServerResponse")
+                .addRuntimeInitializedClass("io.vertx.core.parsetools.impl.RecordParserImpl")
+                // Holds a static UnpooledByteBufAllocator which must not end up in the image heap
+                .addRuntimeInitializedClass("io.vertx.core.http.impl.ClientMultipartFormUpload");
 
         return builder.build();
     }
@@ -302,77 +298,12 @@ class VertxProcessor {
     }
 
     @BuildStep
-    void registerNativeImageResources(BuildProducer<NativeImageResourceBuildItem> resources) {
-        // Accessed by io.vertx.core.impl.VertxBuilder.<init>
-        resources.produce(new NativeImageResourceBuildItem("META-INF/services/io.vertx.core.spi.VertxServiceProvider"));
+    void registerNativeImageResources(BuildProducer<NativeImageResourceBuildItem> resources,
+            BuildProducer<ServiceProviderBuildItem> serviceProviders) {
+        // Accessed by io.vertx.core.impl.VertxBuilder.<init> via ServiceLoader
+        serviceProviders.produce(ServiceProviderBuildItem.allProvidersFromClassPath(VertxServiceProvider.class.getName()));
         // Accessed by io.vertx.core.impl.VertxImpl.<init>
         resources.produce(new NativeImageResourceBuildItem("META-INF/services/io.vertx.core.spi.VerticleFactory"));
     }
 
-    @BuildStep
-    void registerReflectivelyAccessedMethods(BuildProducer<ReflectiveMethodBuildItem> reflectiveMethods) {
-        // Accessed by io.vertx.core.impl.VertxImpl.<init>
-        reflectiveMethods.produce(new ReflectiveMethodBuildItem("java.lang.Thread$Builder$OfVirtual", "name",
-                String.class, long.class));
-        reflectiveMethods.produce(new ReflectiveMethodBuildItem("java.lang.Thread$Builder", "factory", new Class[0]));
-    }
-
-    @BuildStep
-    void simplifyVertxImplGetVirtualThreadFactoryOnJava21(CompiledJavaVersionBuildItem compiledJavaVersion,
-            BuildProducer<BytecodeTransformerBuildItem> bytecodeTransformers) {
-        // we only transform the code when we know that the JDK that will be running it is JDK 21 or higher
-        if (compiledJavaVersion.getJavaVersion().isJava21OrHigher() != Status.TRUE) {
-            return;
-        }
-
-        String className = VertxImpl.class.getName();
-        bytecodeTransformers.produce(new BytecodeTransformerBuildItem.Builder().setClassToTransform(className)
-                .setCacheable(true).setVisitorFunction(
-                        new BiFunction<>() {
-                            @Override
-                            public ClassVisitor apply(String s, ClassVisitor classVisitor) {
-                                ClassTransformer transformer = new ClassTransformer(className);
-
-                                MethodDescriptor virtualThreadFactoryDescriptor = MethodDescriptor.ofMethod(
-                                        className,
-                                        "virtualThreadFactory",
-                                        ThreadFactory.class);
-
-                                transformer.removeMethod(virtualThreadFactoryDescriptor);
-
-                                MethodCreator method = transformer.addMethod(virtualThreadFactoryDescriptor)
-                                        .setModifiers(Modifier.STATIC | Modifier.PRIVATE);
-
-                                // 1. Invoke Thread.ofVirtual() -> returns Thread.Builder.OfVirtual
-                                ResultHandle builderOfVirtual = method.invokeStaticMethod(
-                                        MethodDescriptor.ofMethod(Thread.class, "ofVirtual",
-                                                "java.lang.Thread$Builder$OfVirtual"));
-
-                                // 2. Invoke builder.name(String, long) -> returns Thread.Builder.OfVirtual
-                                // Note: long requires a ResultHandle; 0L is loaded as a constant
-                                ResultHandle namePrefix = method.load("vert.x-virtual-thread-");
-                                ResultHandle startValue = method.load(0L);
-
-                                ResultHandle namedBuilder = method.invokeInterfaceMethod(
-                                        MethodDescriptor.ofMethod("java.lang.Thread$Builder$OfVirtual", "name",
-                                                "java.lang.Thread$Builder$OfVirtual", String.class, long.class),
-                                        builderOfVirtual,
-                                        namePrefix,
-                                        startValue);
-
-                                // 3. Invoke builder.factory() -> returns ThreadFactory
-                                // This method is defined on the parent interface Thread.Builder
-                                ResultHandle factory = method.invokeInterfaceMethod(
-                                        MethodDescriptor.ofMethod("java.lang.Thread$Builder", "factory",
-                                                ThreadFactory.class),
-                                        namedBuilder);
-
-                                // 4. Return the factory
-                                method.returnValue(factory);
-
-                                return transformer.applyTo(classVisitor);
-                            }
-                        })
-                .build());
-    }
 }

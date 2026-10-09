@@ -93,6 +93,16 @@ public interface DataSourceJdbcRuntimeConfig {
     Optional<AgroalConnectionFactoryConfiguration.TransactionIsolation> transactionIsolationLevel();
 
     /**
+     * Whether connections from this pool should be created in read-only mode,
+     * according to {@link java.sql.Connection#setReadOnly(boolean)}.
+     * The JDBC driver is responsible for enforcing read-only mode.
+     * <p>
+     * This is useful for secondary pools that target read replicas.
+     */
+    @ConfigDocDefault("By default, the read-only mode of connections is not configured.")
+    Optional<Boolean> readOnly();
+
+    /**
      * Collect and display extra troubleshooting info on leaked connections.
      */
     @WithDefault("false")
@@ -175,7 +185,7 @@ public interface DataSourceJdbcRuntimeConfig {
      */
     @ConfigDocDefault("By default, multiple acquisition is allowed without any restriction.")
     @WithDefault("lenient")
-    MultipleAcquisition multipleAcquisition();
+    AgroalConnectionPoolConfiguration.MultipleAcquisitionAction multipleAcquisition();
 
     /**
      * Other unspecified properties to be passed to the JDBC driver when creating new connections.
@@ -188,32 +198,26 @@ public interface DataSourceJdbcRuntimeConfig {
      */
     DataSourceJdbcTelemetryConfig telemetry();
 
-    enum MultipleAcquisition {
+    /**
+     * Enable KeepAlive for this datasource. When enabled, the datasource will attempt to keep connections alive by sending
+     * periodic keep-alive messages to the database. Each JDBC driver has its own implementation of keep-alive, and the actual
+     * behavior may vary depending on the driver and database being used.
+     */
+    Optional<Boolean> enableKeepAlive();
 
-        /**
-         * Allow a thread to acquire multiple connections from the pool without any restriction.
-         * This is the default.
-         */
-        LENIENT(AgroalConnectionPoolConfiguration.MultipleAcquisitionAction.OFF),
+    /**
+     * The timeout value used for socket read operations. If reading from the server takes longer than this value, the
+     * connection is closed.
+     */
+    Optional<Duration> readTimeout();
 
-        /**
-         * Log a warning when a thread that already holds a connection tries to acquire another one.
-         */
-        WARN(AgroalConnectionPoolConfiguration.MultipleAcquisitionAction.WARN),
-
-        /**
-         * Throw an exception when a thread that already holds a connection tries to acquire another one.
-         */
-        STRICT(AgroalConnectionPoolConfiguration.MultipleAcquisitionAction.STRICT);
-
-        private final AgroalConnectionPoolConfiguration.MultipleAcquisitionAction action;
-
-        MultipleAcquisition(AgroalConnectionPoolConfiguration.MultipleAcquisitionAction action) {
-            this.action = action;
-        }
-
-        public AgroalConnectionPoolConfiguration.MultipleAcquisitionAction toAgroalAction() {
-            return action;
-        }
-    }
+    /**
+     * Sets the maximum duration a connection will wait for the database to reply to any one request,
+     * using the standard JDBC 4.1 {@link java.sql.Connection#setNetworkTimeout} API.
+     * <p>
+     * Unlike {@code readTimeout}, which operates at the socket/driver level for individual read operations,
+     * this timeout is managed by the JDBC {@link java.sql.Connection} object and applies to any pending
+     * database request on the connection, making it the more portable option.
+     */
+    Optional<Duration> networkTimeout();
 }

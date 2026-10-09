@@ -44,7 +44,6 @@ import org.junit.jupiter.api.extension.AfterEachCallback;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.BeforeEachCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
-import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
 import org.junit.jupiter.api.extension.ParameterContext;
 import org.junit.jupiter.api.extension.ParameterResolutionException;
 import org.junit.jupiter.api.extension.ParameterResolver;
@@ -71,9 +70,12 @@ import io.quarkus.runtime.ValueRegistryImpl;
 import io.quarkus.runtime.configuration.ConfigUtils;
 import io.quarkus.test.common.GroovyClassValue;
 import io.quarkus.test.common.ListeningAddress;
+import io.quarkus.test.common.ListeningResult;
+import io.quarkus.test.common.ListeningResults;
 import io.quarkus.test.common.PathTestHelper;
-import io.quarkus.test.common.PropertyTestUtil;
+import io.quarkus.test.common.RestAssuredStateManager;
 import io.quarkus.test.common.TestConfigUtil;
+import io.quarkus.test.common.TestLog;
 import io.quarkus.test.common.TestResourceManager;
 import io.quarkus.test.common.http.TestHTTPResourceManager;
 import io.quarkus.test.config.ConfigInjector;
@@ -219,12 +221,6 @@ public class QuarkusDevModeTest
         return this;
     }
 
-    @Deprecated(forRemoval = true)
-    public QuarkusDevModeTest setLogFileName(String logFileName) {
-        PropertyTestUtil.setLogFileProperty(logFileName);
-        return this;
-    }
-
     public QuarkusDevModeTest setLogRecordPredicate(Predicate<LogRecord> predicate) {
         this.inMemoryLogHandler = new InMemoryLogHandler(predicate);
         return this;
@@ -311,14 +307,18 @@ public class QuarkusDevModeTest
             ConfigInjector.set(context, newConfig);
 
             // Capture the listening port if available and register it in ValueRegistry
-            Optional<ListeningAddress> listeningAddress = listeningAddress(startupLogHandler.getRecords());
-            listeningAddress.ifPresent(address -> address.register(valueRegistry, newConfig));
+            TestLog testLog = TestLog.INFO.get(valueRegistry);
+            Path logPath = testLog.getLogFilePath();
+            ListeningResults listeningResults = listeningResults(startupLogHandler.getRecords(), logPath);
+            listeningResults.server().ifPresent(r -> r.register(valueRegistry, newConfig));
+            listeningResults.management().ifPresent(r -> r.registerManagement(valueRegistry, newConfig));
 
             // Inject ValueRegistry and Config
             ValueRegistryInjector.inject(testInstance, valueRegistry);
             ConfigInjector.inject(testInstance, newConfig);
             ThreadLocalConfigSourceProvider.set(newConfig);
             TestHTTPResourceManager.inject(testInstance, valueRegistry);
+            RestAssuredStateManager.setTestUri(valueRegistry);
 
         } catch (Exception e) {
             if (allowFailedStart) {
@@ -329,19 +329,26 @@ public class QuarkusDevModeTest
         }
     }
 
-    private static final Pattern listeningRegex = Pattern.compile("Listening on:\\s+(https?)://[^:]*:(\\d+)");
+    private static final Pattern listeningRegex = Pattern.compile(
+            "Listening on:\\s+(https?)://[^:]*:(\\d+)(?:.*Management interface listening on (https?)://[^:]*:(\\d+))?");
 
-    private static Optional<ListeningAddress> listeningAddress(List<LogRecord> records) {
+    private static ListeningResults listeningResults(List<LogRecord> records, Path logPath) {
         if (records.size() == 1) {
             LogRecord logRecord = records.get(0);
             Matcher regexMatcher = listeningRegex.matcher((String) logRecord.getParameters()[4]);
             if (regexMatcher.find()) {
-                ListeningAddress listeningAddress = new ListeningAddress(Integer.parseInt(regexMatcher.group(2)),
-                        regexMatcher.group(1));
-                return Optional.of(listeningAddress);
+                Optional<ListeningResult> server = Optional.of(
+                        new ListeningResult(
+                                new ListeningAddress(Integer.parseInt(regexMatcher.group(2)), regexMatcher.group(1)),
+                                logPath));
+                Optional<ListeningResult> management = regexMatcher.group(3) != null
+                        ? Optional.of(new ListeningResult(new ListeningAddress(Integer.parseInt(regexMatcher.group(4)),
+                                regexMatcher.group(3)), logPath))
+                        : Optional.empty();
+                return new ListeningResults(server, management);
             }
         }
-        return Optional.empty();
+        return ListeningResults.EMPTY;
     }
 
     @Override
@@ -388,6 +395,12 @@ public class QuarkusDevModeTest
             if (deploymentDir != null) {
                 FileUtil.deleteDirectory(deploymentDir);
             }
+        }
+
+        // Only reset if we actually set something. ValueRegistry can be null if Quarkus failed to start
+        ValueRegistry valueRegistry = ValueRegistryInjector.get(context);
+        if (valueRegistry != null) {
+            RestAssuredStateManager.clearState(valueRegistry);
         }
         ThreadLocalConfigSourceProvider.reset();
         ConfigInjector.clear(context);

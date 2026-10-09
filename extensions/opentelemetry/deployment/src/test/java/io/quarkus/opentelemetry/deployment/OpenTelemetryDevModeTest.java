@@ -4,6 +4,8 @@ import static org.hamcrest.Matchers.is;
 
 import org.jboss.shrinkwrap.api.asset.StringAsset;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import io.quarkus.opentelemetry.deployment.common.HelloResource;
@@ -14,6 +16,7 @@ import io.quarkus.test.ContinuousTestingTestUtils;
 import io.quarkus.test.QuarkusDevModeTest;
 import io.restassured.RestAssured;
 
+@DisabledOnOs(OS.WINDOWS)
 public class OpenTelemetryDevModeTest {
     @RegisterExtension
     final static QuarkusDevModeTest TEST = new QuarkusDevModeTest()
@@ -24,7 +27,10 @@ public class OpenTelemetryDevModeTest {
                             "META-INF/services/io.opentelemetry.sdk.autoconfigure.spi.traces.ConfigurableSpanExporterProvider")
                     .add(new StringAsset(ContinuousTestingTestUtils.appProperties(
                             "quarkus.otel.traces.exporter=test-span-exporter",
-                            "quarkus.otel.metrics.exporter=none")), "application.properties"));
+                            "quarkus.otel.metrics.exporter=none",
+                            "quarkus.otel.logs.exporter=none",
+                            "quarkus.datasource.devservices.enabled=false",
+                            "quarkus.observability.enabled=false")), "application.properties"));
 
     @Test
     void testDevMode() {

@@ -1,10 +1,15 @@
 package io.quarkus.oidc.test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.function.Consumer;
+import java.util.logging.LogRecord;
+import java.util.stream.Collectors;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -42,7 +47,9 @@ public class CodeFlowRuntimeCredentialsProviderTest {
             .withApplicationRoot((jar) -> jar
                     .addClasses(TEST_CLASSES)
                     .addAsResource("application-runtime-cred-provider.properties", "application.properties"))
-            .addBuildChainCustomizer(buildCustomizer());
+            .addBuildChainCustomizer(buildCustomizer())
+            .setLogRecordPredicate(r -> true)
+            .assertLogRecords(r -> assertLogRecord(r));
 
     @Test
     public void testRuntimeCredentials() throws IOException, InterruptedException {
@@ -62,6 +69,15 @@ public class CodeFlowRuntimeCredentialsProviderTest {
         }
     }
 
+    private static void assertLogRecord(List<LogRecord> records) {
+        List<LogRecord> authorizationRecords = records.stream()
+                .filter(r -> r.getMessage().contains("authorization=Basic")).collect(Collectors.toList());
+        assertFalse(authorizationRecords.isEmpty());
+
+        // Verify only masked authorization headers are logged
+        assertTrue(authorizationRecords.stream().allMatch(r -> r.getMessage().contains("authorization=Basic ...")));
+    }
+
     private static Consumer<BuildChainBuilder> buildCustomizer() {
         // whole purpose of this step is to have a bean recorded during runtime init
         return new Consumer<BuildChainBuilder>() {
@@ -73,7 +89,7 @@ public class CodeFlowRuntimeCredentialsProviderTest {
                     public void execute(BuildContext context) {
                         BytecodeRecorderImpl bytecodeRecorder = new BytecodeRecorderImpl(false,
                                 TestRecorder.class.getSimpleName(), "createRuntimeSecretProvider",
-                                "" + TestRecorder.class.hashCode(), true, s -> null);
+                                "" + TestRecorder.class.hashCode(), context.getStepId(), true);
                         context.produce(new MainBytecodeRecorderBuildItem(bytecodeRecorder));
 
                         // We need to use reflection due to some class loading problems

@@ -11,6 +11,7 @@ import io.grpc.ServerInterceptor;
 import io.quarkus.arc.Arc;
 import io.quarkus.arc.ArcContainer;
 import io.quarkus.arc.ManagedContext;
+import io.quarkus.grpc.runtime.GrpcContextLocalsProvider;
 import io.quarkus.grpc.runtime.Interceptors;
 import io.quarkus.vertx.http.runtime.CurrentVertxRequest;
 import io.vertx.core.Context;
@@ -27,9 +28,9 @@ public class RoutingContextGrpcInterceptor implements ServerInterceptor, Priorit
             ServerCallHandler<ReqT, RespT> next) {
 
         Context currentContext = Vertx.currentContext();
-        RoutingContext routingContext = currentContext.getLocal(RoutingContext.class.getName());
+        RoutingContext routingContext = GrpcContextLocalsProvider.ROUTING_CONTEXT_LOCAL.get(currentContext);
 
-        return new ForwardingServerCallListener.SimpleForwardingServerCallListener<ReqT>(
+        return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(
                 next.startCall(call, headers)) {
 
             private void invoke(Runnable runnable) {

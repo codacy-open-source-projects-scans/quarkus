@@ -30,7 +30,6 @@ import io.quarkus.runtime.RuntimeValue;
 import io.quarkus.runtime.ShutdownContext;
 import io.quarkus.runtime.annotations.Recorder;
 import io.quarkus.runtime.configuration.ConfigurationException;
-import io.quarkus.runtime.util.StringUtil;
 
 @Recorder
 public class NarayanaJtaRecorder {
@@ -102,6 +101,15 @@ public class NarayanaJtaRecorder {
         TxControl.setDefaultTimeout((int) transactions.getValue().defaultTransactionTimeout().getSeconds());
     }
 
+    public void setReaperConfig() {
+        var coordinatorBean = arjPropertyManager.getCoordinatorEnvironmentBean();
+        var reaper = transactions.getValue().reaper();
+        coordinatorBean.setTxReaperTimeout(reaper.checkPeriod().toMillis());
+        coordinatorBean.setTxReaperCancelWaitPeriod(reaper.cancelWaitPeriod().toMillis());
+        coordinatorBean.setTxReaperCancelFailWaitPeriod(reaper.cancelFailWaitPeriod().toMillis());
+        coordinatorBean.setTxReaperZombieMax(reaper.zombieMax());
+    }
+
     public static Properties getDefaultProperties() {
         return defaultProperties;
     }
@@ -124,30 +132,6 @@ public class NarayanaJtaRecorder {
                 .setExpiryScannerClassNames(transactions.getValue().expiryScanners());
         BeanPopulator.getDefaultInstance(JTAEnvironmentBean.class)
                 .setXaResourceOrphanFilterClassNames(transactions.getValue().xaResourceOrphanFilters());
-    }
-
-    /**
-     * This should be removed in the future.
-     */
-    @Deprecated(forRemoval = true)
-    public void allowUnsafeMultipleLastResources(boolean agroalPresent, boolean disableMultipleLastResourcesWarning) {
-        arjPropertyManager.getCoreEnvironmentBean().setAllowMultipleLastResources(true);
-        arjPropertyManager.getCoreEnvironmentBean().setDisableMultipleLastResourcesWarning(disableMultipleLastResourcesWarning);
-        if (agroalPresent) {
-            jtaPropertyManager.getJTAEnvironmentBean()
-                    .setLastResourceOptimisationInterfaceClassName("io.agroal.narayana.LocalXAResource");
-        }
-    }
-
-    /**
-     * This should be removed in the future.
-     */
-    @Deprecated(forRemoval = true)
-    public void logUnsafeMultipleLastResourcesOnStartup(
-            TransactionManagerBuildTimeConfig.UnsafeMultipleLastResourcesMode mode) {
-        log.warnf(
-                "Setting quarkus.transaction-manager.unsafe-multiple-last-resources to '%s' makes adding multiple resources to the same transaction unsafe.",
-                StringUtil.hyphenate(mode.name()).replace('_', '-'));
     }
 
     private void setObjectStoreDir(String name, TransactionManagerConfiguration config) {

@@ -20,10 +20,12 @@ import java.util.stream.Collectors;
 
 import org.jboss.logging.Logger;
 
+import io.quarkus.commons.classloading.ClassLoaderHelper;
 import io.quarkus.deployment.builditem.ApplicationArchivesBuildItem;
 import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.deployment.builditem.GeneratedClassBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.GeneratedServiceProviderBuildItem;
 import io.quarkus.deployment.builditem.MainClassBuildItem;
 import io.quarkus.deployment.builditem.TransformedClassesBuildItem;
 import io.quarkus.deployment.jvm.ResolvedJVMRequirements;
@@ -39,8 +41,7 @@ import io.quarkus.maven.dependency.Dependency;
 import io.quarkus.maven.dependency.ResolvedDependency;
 import io.quarkus.maven.dependency.ResolvedDependencyBuilder;
 import io.quarkus.paths.OpenPathTree;
-import io.quarkus.sbom.ApplicationComponent;
-import io.quarkus.sbom.ApplicationManifestConfig;
+import io.quarkus.sbom.CoreSbomContributionConfig;
 
 public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
 
@@ -73,6 +74,7 @@ public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
             TransformedClassesBuildItem transformedClasses,
             List<GeneratedClassBuildItem> generatedClasses,
             List<GeneratedResourceBuildItem> generatedResources,
+            List<GeneratedServiceProviderBuildItem> generatedServiceProviders,
             Set<ArtifactKey> removedArtifactKeys,
             List<UberJarMergedResourceBuildItem> mergedResources,
             List<UberJarIgnoredResourceBuildItem> ignoredResources,
@@ -80,7 +82,8 @@ public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
             ResolvedJVMRequirements jvmRequirements,
             JarTreeShakeBuildItem treeShakeResult) {
         super(curateOutcome, outputTarget, applicationInfo, packageConfig, mainClass, applicationArchives, transformedClasses,
-                generatedClasses, generatedResources, removedArtifactKeys, executorService, jvmRequirements);
+                generatedClasses, generatedResources, generatedServiceProviders, removedArtifactKeys, executorService,
+                jvmRequirements);
 
         this.mergedResources = mergedResources;
         this.ignoredResources = ignoredResources;
@@ -89,9 +92,10 @@ public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
 
     @Override
     public JarBuildItem build() throws IOException {
+        Path outputDirectory = outputTarget.getPackageOutputDirectory();
 
         //we use the -runner jar name, unless we are building both types
-        final Path runnerJar = outputTarget.getOutputDirectory()
+        final Path runnerJar = outputDirectory
                 .resolve(outputTarget.getBaseName() + packageConfig.computedRunnerSuffix() + DOT_JAR);
 
         // If the runner jar appears to exist already we create a new one with a tmp suffix.
@@ -99,7 +103,7 @@ public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
         // which is used as a source of content for the runner jar.
         final Path tmpRunnerJar;
         if (Files.exists(runnerJar)) {
-            tmpRunnerJar = outputTarget.getOutputDirectory()
+            tmpRunnerJar = outputDirectory
                     .resolve(outputTarget.getBaseName() + packageConfig.computedRunnerSuffix() + ".tmp");
             Files.deleteIfExists(tmpRunnerJar);
         } else {
@@ -114,7 +118,7 @@ public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
         }
 
         //for uberjars we move the original jar, so there is only a single jar in the output directory
-        final Path standardJar = outputTarget.getOutputDirectory()
+        final Path standardJar = outputDirectory
                 .resolve(outputTarget.getOriginalBaseName() + DOT_JAR);
         final Path originalJar = Files.exists(standardJar) ? standardJar : null;
 
@@ -133,26 +137,12 @@ public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
                     .setFlags(appArtifact.getFlags())
                     .build();
         }
-        final ApplicationManifestConfig.Builder manifestBuilder = ApplicationManifestConfig.builder()
-                .setMainComponent(ApplicationComponent.builder()
-                        .setPath(runnerJar)
-                        .setResolvedDependency(appArtifact)
-                        .build())
-                .setRunnerPath(runnerJar);
+        final CoreSbomContributionConfig manifestConfig = new CoreSbomContributionConfig()
+                .setMainArtifact(appArtifact)
+                .setMainPath(runnerJar);
         for (ResolvedDependency dep : curateOutcome.getApplicationModel().getDependencies()) {
-            final ApplicationComponent.Builder comp = ApplicationComponent.builder()
-                    .setResolvedDependency(dep);
-            if (!dep.getResolvedPaths().isEmpty()) {
-                comp.setPath(dep.getResolvedPaths().iterator().next());
-            }
-            String pedigree = treeShakeResult.computePedigree(dep.getKey());
-            if (pedigree != null) {
-                comp.setPedigree(pedigree);
-            }
-            manifestBuilder.addComponent(comp.build());
+            manifestConfig.addComponent(dep, null, treeShakeResult.computePedigree(dep.getKey()));
         }
-        final ApplicationManifestConfig manifestConfig = manifestBuilder.build();
-
         return new JarBuildItem(runnerJar, originalJar, null, UBER_JAR,
                 suffixToClassifier(packageConfig.computedRunnerSuffix()), manifestConfig);
     }
@@ -160,7 +150,7 @@ public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
     private void buildUberJar0(Path runnerJar) throws IOException {
 
         try (ArchiveCreator archiveCreator = new ParallelCommonsCompressArchiveCreator(runnerJar,
-                packageConfig.jar().compress(), packageConfig.outputTimestamp().orElse(null),
+                packageConfig.jar().compress(), packageConfig.outputTimestamp(),
                 executorService)) {
             LOG.info("Building uber jar: " + runnerJar);
 
@@ -272,7 +262,7 @@ public class UberJarBuilder extends AbstractJarBuilder<JarBuildItem> {
                     // When tree shake level is CLASSES, skip non-reachable classes
                     // Skip filtering for multi-release version entries (META-INF/versions/)
                     if (treeShakeResult.isClassesShaken()
-                            && relativePath.endsWith(".class") && !relativePath.equals("module-info.class")
+                            && ClassLoaderHelper.isClassEntry(relativePath)
                             && !relativePath.startsWith("META-INF/versions/")) {
                         String className = relativePath.substring(0, relativePath.length() - 6).replace('/', '.');
                         if (!treeShakeResult.getReachableClassNames().contains(className)) {

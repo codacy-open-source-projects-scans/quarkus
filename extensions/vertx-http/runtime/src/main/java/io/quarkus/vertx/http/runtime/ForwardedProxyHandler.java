@@ -1,7 +1,5 @@
 package io.quarkus.vertx.http.runtime;
 
-import static io.quarkus.vertx.http.runtime.TrustedProxyCheck.denyAll;
-
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -56,18 +54,24 @@ public class ForwardedProxyHandler implements Handler<HttpServerRequest> {
         if (event.remoteAddress() == null) {
             // client address may not be available with virtual http channel
             LOGGER.debug("Client address is not available, 'Forwarded' and 'X-Forwarded' headers are going to be ignored");
-            handleForwardedServerRequest(event, denyAll());
+            handleForwardedServerRequest(event, TrustedProxyCheck.DENY_ALL);
         } else if (event.remoteAddress().isDomainSocket()) {
             // we do not support domain socket proxy checks, ignore the headers
             LOGGER.debug("Domain socket are not supported, 'Forwarded' and 'X-Forwarded' headers are going to be ignored");
-            handleForwardedServerRequest(event, denyAll());
+            handleForwardedServerRequest(event, TrustedProxyCheck.DENY_ALL);
         } else {
             // create proxy check, then handle request
             if (proxyCheckBuilder.hasHostNames()) {
                 // we need to perform DNS lookup for trusted proxy hostnames
-                lookupHostNamesAndHandleRequest(event,
-                        proxyCheckBuilder.getHostNameToPort().entrySet().iterator(), proxyCheckBuilder,
-                        vertx.get().createDnsClient());
+                DnsClient dnsClient = vertx.get().createDnsClient();
+                try {
+                    lookupHostNamesAndHandleRequest(event,
+                            proxyCheckBuilder.getHostNameToPort().entrySet().iterator(), proxyCheckBuilder,
+                            dnsClient);
+                } catch (Exception e) {
+                    dnsClient.close();
+                    throw e;
+                }
             } else {
                 resolveProxyIpAndHandleRequest(event, proxyCheckBuilder);
             }
@@ -85,33 +89,40 @@ public class ForwardedProxyHandler implements Handler<HttpServerRequest> {
             final String hostName = entry.getKey();
 
             resolveHostNameToAllIpAddresses(dnsClient, hostName, event.remoteAddress(), results -> {
-                if (!results.isEmpty()) {
-                    Set<InetAddress> trustedIPs = results.stream().map(Inet::parseInetAddress).filter(Objects::nonNull)
-                            .collect(Collectors.toSet());
-                    if (!trustedIPs.isEmpty()) {
-                        // create proxy check for resolved IP and proceed with the lookup
-                        lookupHostNamesAndHandleRequest(event, iterator,
-                                builder.withTrustedIP(trustedIPs, entry.getValue()), dnsClient);
+                try {
+                    if (!results.isEmpty()) {
+                        Set<InetAddress> trustedIPs = results.stream().map(Inet::parseInetAddress)
+                                .filter(Objects::nonNull)
+                                .collect(Collectors.toSet());
+                        if (!trustedIPs.isEmpty()) {
+                            // create proxy check for resolved IP and proceed with the lookup
+                            lookupHostNamesAndHandleRequest(event, iterator,
+                                    builder.withTrustedIP(trustedIPs, entry.getValue()), dnsClient);
+                        } else {
+                            logInvalidIpAddress(hostName);
+                            // ignore this hostname proxy check and proceed with the lookup
+                            lookupHostNamesAndHandleRequest(event, iterator, builder, dnsClient);
+                        }
                     } else {
-                        logInvalidIpAddress(hostName);
+                        // inform we can't cope without IP
+                        logDnsLookupFailure(hostName);
                         // ignore this hostname proxy check and proceed with the lookup
                         lookupHostNamesAndHandleRequest(event, iterator, builder, dnsClient);
                     }
-                } else {
-                    // inform we can't cope without IP
-                    logDnsLookupFailure(hostName);
-                    // ignore this hostname proxy check and proceed with the lookup
-                    lookupHostNamesAndHandleRequest(event, iterator, builder, dnsClient);
+                } catch (Exception e) {
+                    dnsClient.close();
+                    throw e;
                 }
             });
 
         } else {
             // DNS lookup is done
+            dnsClient.close();
             if (builder.hasProxyChecks()) {
                 resolveProxyIpAndHandleRequest(event, builder);
             } else {
                 // ignore headers as there are no proxy checks
-                handleForwardedServerRequest(event, denyAll());
+                handleForwardedServerRequest(event, TrustedProxyCheck.DENY_ALL);
             }
         }
     }
@@ -159,27 +170,35 @@ public class ForwardedProxyHandler implements Handler<HttpServerRequest> {
         if (proxyIP == null) {
             // perform DNS lookup, then create proxy check and handle request
             final String hostName = Objects.requireNonNull(event.remoteAddress().hostName());
-            resolveHostNameToAllIpAddresses(vertx.get().createDnsClient(), hostName, null,
-                    results -> {
-                        TrustedProxyCheck proxyCheck;
-                        if (!results.isEmpty()) {
-                            // use resolved IP to build proxy check
-                            Set<InetAddress> proxyIPs = results.stream().map(Inet::parseInetAddress).filter(Objects::nonNull)
-                                    .collect(Collectors.toSet());
-                            if (!proxyIPs.isEmpty()) {
-                                proxyCheck = builder.build(proxyIPs, event.remoteAddress().port());
+            final DnsClient dnsClient = vertx.get().createDnsClient();
+            try {
+                resolveHostNameToAllIpAddresses(dnsClient, hostName, null,
+                        results -> {
+                            dnsClient.close();
+                            TrustedProxyCheck proxyCheck;
+                            if (!results.isEmpty()) {
+                                // use resolved IP to build proxy check
+                                Set<InetAddress> proxyIPs = results.stream().map(Inet::parseInetAddress)
+                                        .filter(Objects::nonNull)
+                                        .collect(Collectors.toSet());
+                                if (!proxyIPs.isEmpty()) {
+                                    proxyCheck = builder.build(proxyIPs, event.remoteAddress().port());
+                                } else {
+                                    logInvalidIpAddress(hostName);
+                                    proxyCheck = TrustedProxyCheck.DENY_ALL;
+                                }
                             } else {
-                                logInvalidIpAddress(hostName);
-                                proxyCheck = denyAll();
+                                // we can't cope without IP => ignore headers
+                                logDnsLookupFailure(hostName);
+                                proxyCheck = TrustedProxyCheck.DENY_ALL;
                             }
-                        } else {
-                            // we can't cope without IP => ignore headers
-                            logDnsLookupFailure(hostName);
-                            proxyCheck = denyAll();
-                        }
 
-                        handleForwardedServerRequest(event, proxyCheck);
-                    });
+                            handleForwardedServerRequest(event, proxyCheck);
+                        });
+            } catch (Exception e) {
+                dnsClient.close();
+                throw e;
+            }
         } else {
             // we have proxy IP => create proxy check and handle request
             var proxyCheck = builder.build(proxyIP, event.remoteAddress().port());
@@ -188,7 +207,7 @@ public class ForwardedProxyHandler implements Handler<HttpServerRequest> {
     }
 
     private void handleForwardedServerRequest(HttpServerRequest event, TrustedProxyCheck proxyCheck) {
-        delegate.handle(new ForwardedServerRequestWrapper(event, forwardingProxyOptions, proxyCheck));
+        ForwardedServerRequestWrapper.handleOrReject(event, forwardingProxyOptions, proxyCheck, delegate);
     }
 
     private static void logInvalidIpAddress(String hostName) {

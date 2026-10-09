@@ -180,6 +180,7 @@ class InfinispanClientProcessor {
             BuildProducer<InfinispanClientNameBuildItem> infinispanClientNames,
             MarshallingBuildItem marshallingBuildItem,
             BuildProducer<NativeImageResourceBuildItem> resourceBuildItem,
+            BuildProducer<ServiceProviderBuildItem> serviceProvider,
             CombinedIndexBuildItem applicationIndexBuildItem) throws ClassNotFoundException, IOException {
 
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(InfinispanClientProducer.class));
@@ -220,7 +221,7 @@ class InfinispanClientProcessor {
             Object marshaller = properties.get(ConfigurationProperties.MARSHALLER);
 
             if (marshaller instanceof ProtoStreamMarshaller) {
-                for (ApplicationArchive applicationArchive : applicationArchivesBuildItem.getAllApplicationArchives()) {
+                for (ApplicationArchive applicationArchive : applicationArchivesBuildItem.getAllArchives()) {
                     // If we have properties file we may have to care about
                     Path metaPath = applicationArchive.getChildPath(META_INF);
 
@@ -302,11 +303,12 @@ class InfinispanClientProcessor {
                         "org.infinispan.client.hotrod.impl.consistenthash.SegmentConsistentHash")
                         .build());
 
-        // Elytron Classes
+        // Elytron SASL service providers
+        serviceProvider.produce(
+                ServiceProviderBuildItem.allProvidersFromClassPath(javax.security.sasl.SaslClientFactory.class.getName()));
+
+        // Elytron credential classes
         String[] elytronClasses = new String[] {
-                "org.wildfly.security.sasl.plain.PlainSaslClientFactory",
-                "org.wildfly.security.sasl.scram.ScramSaslClientFactory",
-                "org.wildfly.security.sasl.digest.DigestClientFactory",
                 "org.wildfly.security.credential.BearerTokenCredential",
                 "org.wildfly.security.credential.GSSKerberosCredential",
                 "org.wildfly.security.credential.KeyPairCredential",

@@ -26,6 +26,7 @@ import io.opentelemetry.sdk.autoconfigure.AutoConfiguredOpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.quarkus.arc.SyntheticCreationalContext;
 import io.quarkus.opentelemetry.runtime.config.runtime.OTelRuntimeConfig;
+import io.quarkus.opentelemetry.runtime.resource.KubernetesResourceProvider;
 import io.quarkus.runtime.RuntimeValue;
 import io.quarkus.runtime.annotations.Recorder;
 import io.quarkus.runtime.annotations.RuntimeInit;
@@ -62,6 +63,16 @@ public class OpenTelemetryRecorder {
                                         WEBENGINE_VERSION, quarkusVersion)))
                         .getAttributes());
                 return result;
+            }
+        };
+    }
+
+    @RuntimeInit
+    public Supplier<Resource> kubernetesResource() {
+        return new Supplier<>() {
+            @Override
+            public Resource get() {
+                return KubernetesResourceProvider.createResource();
             }
         };
     }
@@ -124,9 +135,6 @@ public class OpenTelemetryRecorder {
 
                 // instruct OTel that we are using the AutoConfiguredOpenTelemetrySdk
                 oTelConfigs.put("otel.java.global-autoconfigure.enabled", "true");
-                // Emit stable semantic conventions when available. It turns out this doesn't take effect because
-                // OTel instrumentation code does not use the OTel SDK configs.
-                oTelConfigs.put("otel.semconv-stability.opt-in", "true");
 
                 Map<String, String> otel = new HashMap<>();
                 Map<String, String> quarkus = new HashMap<>();

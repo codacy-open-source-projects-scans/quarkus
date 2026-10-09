@@ -15,7 +15,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Answers;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -24,12 +23,10 @@ import org.mockito.quality.Strictness;
 import io.quarkus.security.identity.IdentityProviderManager;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.smallrye.mutiny.Uni;
-import io.vertx.core.AsyncResult;
-import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
-import io.vertx.ext.auth.authorization.Authorization;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.impl.UserContextInternal;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -71,51 +68,6 @@ class QuarkusHttpUserTest {
     @Test
     void getSecurityIdentityReturnsWrappedIdentity() {
         assertSame(securityIdentity, user.getSecurityIdentity());
-    }
-
-    @SuppressWarnings({ "unchecked", "deprecation" })
-    @Test
-    void isAuthorizedStringCallsHandlerWithTrueWhenRolePresent() {
-        when(securityIdentity.hasRole("admin")).thenReturn(true);
-        Handler<AsyncResult<Boolean>> handler = mock(Handler.class);
-
-        User result = user.isAuthorized("admin", handler);
-
-        assertSame(user, result);
-        ArgumentCaptor<AsyncResult<Boolean>> captor = ArgumentCaptor.forClass(AsyncResult.class);
-        verify(handler).handle(captor.capture());
-        assertEquals(true, captor.getValue().result());
-    }
-
-    @SuppressWarnings({ "unchecked", "deprecation" })
-    @Test
-    void isAuthorizedStringCallsHandlerWithFalseWhenRoleAbsent() {
-        when(securityIdentity.hasRole("admin")).thenReturn(false);
-        Handler<AsyncResult<Boolean>> handler = mock(Handler.class);
-
-        User result = user.isAuthorized("admin", handler);
-
-        assertSame(user, result);
-        ArgumentCaptor<AsyncResult<Boolean>> captor = ArgumentCaptor.forClass(AsyncResult.class);
-        verify(handler).handle(captor.capture());
-        assertEquals(false, captor.getValue().result());
-    }
-
-    @SuppressWarnings("unchecked")
-    @Test
-    void isAuthorizedAuthorizationReturnsNull() {
-        Authorization authorization = mock(Authorization.class);
-        Handler<AsyncResult<Boolean>> handler = mock(Handler.class);
-
-        User result = user.isAuthorized(authorization, handler);
-
-        assertNull(result);
-    }
-
-    @SuppressWarnings("deprecation")
-    @Test
-    void clearCacheReturnsThis() {
-        assertSame(user, user.clearCache());
     }
 
     @Test
@@ -186,11 +138,34 @@ class QuarkusHttpUserTest {
     }
 
     @Test
+    void setUserDelegatesToUserContextInternal() {
+        UserContextInternal userContext = mock(UserContextInternal.class);
+        when(routingContext.userContext()).thenReturn(userContext);
+
+        QuarkusHttpUser.setUser(routingContext, user);
+
+        verify(userContext).setUser(user);
+    }
+
+    @Test
+    void setUserWithNullClearsUser() {
+        UserContextInternal userContext = mock(UserContextInternal.class);
+        when(routingContext.userContext()).thenReturn(userContext);
+
+        QuarkusHttpUser.setUser(routingContext, null);
+
+        verify(userContext).setUser(null);
+    }
+
+    @Test
     void setIdentityWithSecurityIdentitySetsUserAndDeferredKey() {
+        UserContextInternal userContext = mock(UserContextInternal.class);
+        when(routingContext.userContext()).thenReturn(userContext);
+
         SecurityIdentity result = QuarkusHttpUser.setIdentity(securityIdentity, routingContext);
 
         assertSame(securityIdentity, result);
-        verify(routingContext).setUser(any(QuarkusHttpUser.class));
+        verify(userContext).setUser(any(QuarkusHttpUser.class));
         verify(routingContext).put(eq(QuarkusHttpUser.DEFERRED_IDENTITY_KEY), any(Uni.class));
     }
 }

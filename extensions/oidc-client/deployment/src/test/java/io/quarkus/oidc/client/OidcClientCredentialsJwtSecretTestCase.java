@@ -2,10 +2,15 @@ package io.quarkus.oidc.client;
 
 import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.function.Consumer;
+import java.util.logging.LogRecord;
+import java.util.stream.Collectors;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -40,7 +45,9 @@ public class OidcClientCredentialsJwtSecretTestCase {
             .withApplicationRoot((jar) -> jar
                     .addClasses(testClasses)
                     .addAsResource("application-oidc-client-credentials-jwt-secret.properties", "application.properties"))
-            .addBuildChainCustomizer(buildCustomizer());
+            .addBuildChainCustomizer(buildCustomizer())
+            .setLogRecordPredicate(r -> true)
+            .assertLogRecords(r -> assertLogRecord(r));
 
     @Test
     public void testGetTokenJwtClient() {
@@ -90,7 +97,7 @@ public class OidcClientCredentialsJwtSecretTestCase {
                     public void execute(BuildContext context) {
                         BytecodeRecorderImpl bytecodeRecorder = new BytecodeRecorderImpl(false,
                                 TestRecorder.class.getSimpleName(), "createRuntimeSecretProvider",
-                                "" + TestRecorder.class.hashCode(), true, s -> null);
+                                "" + TestRecorder.class.hashCode(), context.getStepId(), true);
                         context.produce(new MainBytecodeRecorderBuildItem(bytecodeRecorder));
 
                         // We need to use reflection due to some class loading problems
@@ -115,5 +122,13 @@ public class OidcClientCredentialsJwtSecretTestCase {
                 }).produces(MainBytecodeRecorderBuildItem.class).produces(SyntheticBeanBuildItem.class).build();
             }
         };
+    }
+
+    private static void assertLogRecord(List<LogRecord> records) {
+        List<LogRecord> clientSecretRecords = records.stream()
+                .filter(r -> r.getMessage().contains("client_assertion=")).collect(Collectors.toList());
+        assertFalse(clientSecretRecords.isEmpty());
+
+        assertTrue(clientSecretRecords.stream().allMatch(r -> r.getMessage().contains("client_assertion=...")));
     }
 }

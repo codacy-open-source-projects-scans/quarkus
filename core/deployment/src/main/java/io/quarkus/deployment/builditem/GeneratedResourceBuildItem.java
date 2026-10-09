@@ -19,19 +19,43 @@ public final class GeneratedResourceBuildItem extends MultiBuildItem {
      *             {@link io.quarkus.vertx.http.deployment.spi.GeneratedStaticResourceBuildItem}
      *             instead.
      */
-    @Deprecated
+    @Deprecated(since = "3.12", forRemoval = true)
     final boolean excludeFromDevCL;
 
     public GeneratedResourceBuildItem(String name, byte[] data) {
-        this.name = name;
-        this.data = data;
-        this.excludeFromDevCL = false;
+        this(name, data, false);
     }
 
+    /**
+     * @deprecated Use {@link GeneratedResourceBuildItem#GeneratedResourceBuildItem(String, byte[])} instead.
+     *             If you want to serve static resources use
+     *             {@link io.quarkus.vertx.http.deployment.spi.GeneratedStaticResourceBuildItem}
+     *             instead.
+     */
+    @Deprecated(since = "4.0", forRemoval = true)
     public GeneratedResourceBuildItem(String name, byte[] data, boolean excludeFromDevCL) {
+        this(name, data, excludeFromDevCL, false);
+    }
+
+    private GeneratedResourceBuildItem(String name, byte[] data, boolean excludeFromDevCL,
+            boolean allowMetaInfServices) {
+        if (name.startsWith("META-INF/services/") && !allowMetaInfServices) {
+            throw new IllegalArgumentException(
+                    "Use GeneratedServiceProviderBuildItem to register service providers instead of GeneratedResourceBuildItem, or use GeneratedResourceBuildItem.allowingMetaInfServices(...) if your "
+                            + name + " resource is not a service provider");
+        }
         this.name = name;
         this.data = data;
         this.excludeFromDevCL = excludeFromDevCL;
+    }
+
+    /**
+     * Use only for {@code META-INF/services/} resources with a non-standard format incompatible with
+     * {@link GeneratedServiceProviderBuildItem}. Prefer {@link GeneratedServiceProviderBuildItem} for standard
+     * Java {@link java.util.ServiceLoader} registrations.
+     */
+    public static GeneratedResourceBuildItem allowingMetaInfServices(String name, byte[] data) {
+        return new GeneratedResourceBuildItem(name, data, false, true);
     }
 
     public String getName() {
@@ -43,13 +67,11 @@ public final class GeneratedResourceBuildItem extends MultiBuildItem {
     }
 
     /**
-     * @deprecated use {@link GeneratedResourceBuildItem#getData} instead
+     * @deprecated If you want to serve static resources use
+     *             {@link io.quarkus.vertx.http.deployment.spi.GeneratedStaticResourceBuildItem}
+     *             instead.
      */
-    @Deprecated(forRemoval = true)
-    public byte[] getClassData() {
-        return getData();
-    }
-
+    @Deprecated(since = "4.0", forRemoval = true)
     public boolean isExcludeFromDevCL() {
         return excludeFromDevCL;
     }

@@ -23,7 +23,6 @@ import java.util.function.Supplier;
 import com.google.common.annotations.VisibleForTesting;
 
 import io.quarkus.deployment.configuration.ClassLoadingConfig;
-import io.quarkus.deployment.configuration.ConfigCompatibility;
 import io.quarkus.deployment.pkg.NativeConfig;
 import io.quarkus.deployment.pkg.PackageConfig;
 import io.quarkus.runtime.configuration.ConfigUtils;
@@ -90,7 +89,6 @@ public final class EffectiveConfig {
                 .withProfile(builder.profile)
                 .withMapping(PackageConfig.class)
                 .withMapping(NativeConfig.class)
-                .withInterceptors(ConfigCompatibility.FrontEnd.instance(), ConfigCompatibility.BackEnd.instance())
                 .build();
         this.values = generateFullConfigMap(config);
         this.quarkusValues = generateQuarkusConfigMap(config);
@@ -173,6 +171,13 @@ public final class EffectiveConfig {
                 for (String propertyName : config.getPropertyNames()) {
                     if (propertyName.startsWith("quarkus.") || propertyName.startsWith("platform.quarkus.")) {
                         ConfigValue configValue = config.getConfigValue(propertyName);
+
+                        // Propagate properties from any source from the test namespace, because they can be read in the launcher
+                        if (configValue.getValue() != null && configValue.getName().startsWith("quarkus.test.")) {
+                            properties.put(propertyName, configValue.getValue());
+                            continue;
+                        }
+
                         // Only propagate properties from sources not available in Quarkus
                         if (configValue.getValue() != null && propagateSources.contains(configValue.getConfigSourceName())) {
                             // Exclude defaults coming from PackageConfig and NativeConfig, as this Map as passed as

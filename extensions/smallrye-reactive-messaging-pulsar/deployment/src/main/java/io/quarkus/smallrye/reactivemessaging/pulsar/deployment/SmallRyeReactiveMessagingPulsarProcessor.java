@@ -1,6 +1,8 @@
 package io.quarkus.smallrye.reactivemessaging.pulsar.deployment;
 
 import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.logging.Level;
 
@@ -15,6 +17,7 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
+import io.quarkus.avro.spi.AvroTrustedClassBuildItem;
 import io.quarkus.bootstrap.classloading.QuarkusClassLoader;
 import io.quarkus.deployment.Feature;
 import io.quarkus.deployment.annotations.BuildProducer;
@@ -56,6 +59,21 @@ public class SmallRyeReactiveMessagingPulsarProcessor {
     @BuildStep
     void logging(BuildProducer<LogCategoryBuildItem> log) {
         log.produce(new LogCategoryBuildItem("org.apache.pulsar.common.util.netty.DnsResolverUtil", Level.OFF));
+    }
+
+    @BuildStep
+    void trustProtobufMessagesForAvro(CombinedIndexBuildItem combinedIndex,
+            BuildProducer<AvroTrustedClassBuildItem> trustedClasses) {
+        // Protobuf-generated messages used as Pulsar payloads may be deserialized through Avro. Since Avro 1.12.2
+        // validates classes against a security validator, mark them as trusted so the quarkus-avro extension (if
+        // present) allows them. This has no effect if quarkus-avro is not on the classpath.
+        Set<String> messages = new HashSet<>();
+        for (ClassInfo message : combinedIndex.getIndex().getAllKnownSubclasses(DotNames.PROTOBUF_GENERATED)) {
+            messages.add(message.name().toString());
+        }
+        if (!messages.isEmpty()) {
+            trustedClasses.produce(new AvroTrustedClassBuildItem(messages));
+        }
     }
 
     @BuildStep
@@ -131,8 +149,9 @@ public class SmallRyeReactiveMessagingPulsarProcessor {
     }
 
     @BuildStep
-    IndexDependencyBuildItem indexPulsar() {
-        return new IndexDependencyBuildItem("org.apache.pulsar", "pulsar-client-original");
+    void indexPulsar(BuildProducer<IndexDependencyBuildItem> indexDependency) {
+        indexDependency.produce(new IndexDependencyBuildItem("org.apache.pulsar", "pulsar-client-original"));
+        indexDependency.produce(new IndexDependencyBuildItem("org.apache.pulsar", "pulsar-common"));
     }
 
     @BuildStep
@@ -164,24 +183,53 @@ public class SmallRyeReactiveMessagingPulsarProcessor {
                 .builder("org.apache.pulsar.client.util.SecretsSerializer")
                 .constructors().build());
 
+        // Pulsar 4.2.x's DnsResolverGroupImpl / ConnectionPool use Netty's
+        // ReflectiveChannelFactory against the platform SocketChannel returned by
+        // EventLoopUtil. quarkus-netty registers only the NIO variants; register
+        // Epoll/KQueue/IOUring here so native image can find their no-arg
+        // constructors at runtime. Revisit when bumping pulsar-client — if Pulsar
+        // moves to non-reflective ChannelFactory factories, these can be removed.
+        reflectiveClass.produce(ReflectiveClassBuildItem
+                .builder("io.netty.channel.epoll.EpollSocketChannel",
+                        "io.netty.channel.epoll.EpollDatagramChannel",
+                        "io.netty.channel.kqueue.KQueueSocketChannel",
+                        "io.netty.channel.kqueue.KQueueDatagramChannel",
+                        "io.netty.incubator.channel.uring.IOUringSocketChannel",
+                        "io.netty.incubator.channel.uring.IOUringDatagramChannel")
+                .constructors().build());
+
         Collection<ClassInfo> authPluginClasses = combinedIndex.getIndex()
-                .getAllKnownImplementors(DotNames.PULSAR_AUTHENTICATION);
+                .getAllKnownImplementations(DotNames.PULSAR_AUTHENTICATION);
         for (ClassInfo authPluginClass : authPluginClasses) {
             reflectiveClass.produce(ReflectiveClassBuildItem.builder(authPluginClass.name().toString())
+                    .constructors().build());
+        }
+        Collection<ClassInfo> sslFactoryClasses = combinedIndex.getIndex()
+                .getAllKnownImplementations(DotNames.PULSAR_SSL_FACTORY);
+        for (ClassInfo sslFactoryClass : sslFactoryClasses) {
+            reflectiveClass.produce(ReflectiveClassBuildItem.builder(sslFactoryClass.name().toString())
                     .constructors().build());
         }
 
         NativeImageConfigBuildItem.Builder nativeImageConfig = NativeImageConfigBuildItem.builder()
                 .addNativeImageSystemProperty("io.netty.handler.ssl.noOpenSsl", "true")
+                .addNativeImageSystemProperty("pulsar.enableUring", "false")
                 .addRuntimeInitializedClass("org.apache.pulsar.common.allocator.PulsarByteBufAllocator")
                 .addRuntimeInitializedClass("org.apache.pulsar.common.protocol.Commands")
+                // Pulsar 4.2.x's LightProtoCodec computes Unsafe field offsets
+                // (String.value field offset, byte[] base offset) in its static
+                // initializer. GraalVM cannot auto-recompute these, so building
+                // them at image-build time bakes in host-JVM offsets and segfaults
+                // at runtime in writeRawString. Initialize at run time so the
+                // offsets match the SubstrateVM heap layout. Revisit when bumping
+                // pulsar-client — Pulsar 25883 embeds this config upstream.
+                .addRuntimeInitializedClass("org.apache.pulsar.common.api.proto.LightProtoCodec")
                 .addRuntimeInitializedClass("org.apache.pulsar.client.impl.auth.oauth2.protocol.TokenClient")
                 .addRuntimeInitializedClass("org.apache.pulsar.client.impl.crypto.MessageCryptoBc")
                 .addRuntimeInitializedClass("org.apache.pulsar.client.impl.schema.generic.GenericProtobufNativeSchema")
                 .addRuntimeInitializedClass("org.apache.pulsar.client.impl.ConnectionPool")
                 .addRuntimeInitializedClass("org.apache.pulsar.client.impl.ControlledClusterFailover")
                 .addRuntimeInitializedClass("org.apache.pulsar.client.impl.HttpClient")
-                .addRuntimeInitializedClass("org.apache.pulsar.client.util.WithSNISslEngineFactory")
                 .addRuntimeInitializedClass("com.yahoo.sketches.quantiles.DoublesSketch")
                 .addRuntimeInitializedClass("io.netty.buffer.PooledByteBufAllocator")
                 .addRuntimeInitializedClass("io.netty.buffer.UnpooledByteBufAllocator$InstrumentedUnpooledHeapByteBuf")
