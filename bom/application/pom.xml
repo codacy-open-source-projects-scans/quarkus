@@ -16,7 +16,7 @@
     <properties>
         <angus-activation.version>2.0.3</angus-activation.version>
         <angus-mail.version>2.0.5</angus-mail.version> <!-- keep in sync with angus-activation (mail depends on activation) -->
-        <bouncycastle.version>1.86.1</bouncycastle.version>
+        <bouncycastle.version>1.86.2</bouncycastle.version>
         <bouncycastle.fips.version>2.1.3</bouncycastle.fips.version>
         <bouncycastle.tls.fips.version>2.1.25</bouncycastle.tls.fips.version>
         <cyclonedx.version>13.2.0</cyclonedx.version>
@@ -38,7 +38,7 @@
         <google-auth.version>0.22.0</google-auth.version>
         <graphql-java.version>26.0</graphql-java.version> <!-- keep in sync with smallrye-graphql -->
         <microprofile-config-api.version>3.1.1</microprofile-config-api.version> <!-- keep in sync with smallrye-config -->
-        <microprofile-health-api.version>4.0.1</microprofile-health-api.version>
+        <microprofile-health-api.version>4.0.2</microprofile-health-api.version>
         <microprofile-context-propagation.version>1.3</microprofile-context-propagation.version>
         <microprofile-fault-tolerance-api.version>4.1.2</microprofile-fault-tolerance-api.version>
         <microprofile-reactive-streams-operators.version>3.0.1</microprofile-reactive-streams-operators.version>
@@ -83,7 +83,7 @@
         <jakarta.ws.rs-api.version>4.0.0</jakarta.ws.rs-api.version>
         <jakarta.xml.bind-api.version>4.0.5</jakarta.xml.bind-api.version>
         <jaxb-runtime.version>4.0.9</jaxb-runtime.version>
-        <asm.version>9.10.1</asm.version>
+        <asm.version>9.11</asm.version>
         <commons-io.version>2.22.0</commons-io.version>
         <jboss-metadata-web.version>17.1.0</jboss-metadata-web.version>
         <maven-toolchain.version>3.0-alpha-2</maven-toolchain.version>
@@ -92,10 +92,10 @@
         <gizmo.version>1.10.1</gizmo.version>
         <gizmo2.version>2.3.1</gizmo2.version>
         <jackson-bom.version>3.1.7</jackson-bom.version>
-        <jackson2-bom.version>2.22.2</jackson2-bom.version>
+        <jackson2-bom.version>2.22.3</jackson2-bom.version>
         <commons-logging-jboss-logging.version>2.0.0.Final</commons-logging-jboss-logging.version>
         <commons-lang3.version>3.21.0</commons-lang3.version>
-        <commons-codec.version>1.22.1</commons-codec.version>
+        <commons-codec.version>1.23.0</commons-codec.version>
         <classmate.version>1.7.1</classmate.version>
         <!-- See root POM for hibernate-orm.version, hibernate-reactive.version, hibernate-validator.version,
              hibernate-search.version, antlr.version, bytebuddy.version -->
@@ -103,7 +103,7 @@
         <narayana-lra.version>2.0.1.Final</narayana-lra.version>
         <agroal.version>3.2.1</agroal.version>
         <jboss-transaction-spi.version>8.0.0.Final</jboss-transaction-spi.version>
-        <elasticsearch-opensource-components.version>9.4.7</elasticsearch-opensource-components.version>
+        <elasticsearch-opensource-components.version>9.4.8</elasticsearch-opensource-components.version>
         <rxjava.version>2.2.21</rxjava.version>
         <wildfly.openssl-java.version>2.3.0.Final</wildfly.openssl-java.version>
         <wildfly.openssl-linux.version>2.3.0.Final</wildfly.openssl-linux.version>
@@ -114,7 +114,7 @@
         <wildfly-elytron.version>2.9.4.Final</wildfly-elytron.version>
         <jboss-marshalling.version>2.3.0</jboss-marshalling.version>
         <jboss-threads.version>3.10.1</jboss-threads.version>
-        <vertx.version>5.1.8</vertx.version>
+        <vertx.version>5.1.10</vertx.version>
         <httpclient5.version>5.6.4</httpclient5.version>
         <httpcore5.version>5.4.3</httpcore5.version>
         <httpclient.version>4.5.14</httpclient.version>
@@ -122,9 +122,7 @@
         <httpasync.version>4.1.5</httpasync.version>
         <cronutils.version>9.2.1</cronutils.version>
         <quartz.version>2.5.2</quartz.version>
-        <h2.version>2.4.240</h2.version> <!-- When updating, needs to be matched in io.quarkus.hibernate.orm.runtime.config.DialectVersions
-                                              and the dependency jts-core needs to be updated in extensions/jdbc/jdbc-h2/runtime/pom.xml -->
-        <postgresql-jdbc.version>42.7.13</postgresql-jdbc.version>
+        <postgresql-jdbc.version>42.7.14</postgresql-jdbc.version>
         <mariadb-jdbc.version>3.5.10</mariadb-jdbc.version>
         <mysql-jdbc.version>26.7.0</mysql-jdbc.version>
         <mssql-jdbc.version>13.6.0.jre11</mssql-jdbc.version>
@@ -138,7 +136,7 @@
         <infinispan.protostream.version>6.0.7</infinispan.protostream.version>
         <caffeine.version>3.2.4</caffeine.version>
         <netty-tcnative.version>2.0.84.Final</netty-tcnative.version>
-        <netty.version>4.2.18.Final</netty.version>
+        <netty.version>4.2.19.Final</netty.version>
         <brotli4j.version>1.23.0</brotli4j.version>
         <reactive-streams.version>1.0.4</reactive-streams.version>
         <jboss-logging.version>3.6.3.Final</jboss-logging.version>
@@ -165,7 +163,7 @@
         <maven-invoker.version>3.2.0</maven-invoker.version>
         <awaitility.version>4.3.0</awaitility.version>
         <jboss-logmanager.version>3.2.2.Final</jboss-logmanager.version>
-        <flyway.version>12.0.0</flyway.version>
+        <flyway.version>13.10.0</flyway.version>
         <yasson.version>3.0.5</yasson.version>
         <!-- liquibase-mongodb is not released everytime with liquibase anymore, but the two versions need to be compatible -->
         <liquibase.version>4.33.0</liquibase.version>
@@ -229,6 +227,7 @@
         <jsoup.version>1.23.2</jsoup.version> <!-- JSoup is used by Camel and LangChain4J so be careful when updating -->
         <reactor.version>3.8.7</reactor.version>
         <zstd-jni.version>1.5.7-16</zstd-jni.version> <!-- used by kafka-clients and some Camel components -->
+        <guava.version>33.7.2-jre</guava.version> <!-- keep in sync with guava.version from independent-project/bootstrap/pom.xml -->
     </properties>
 
     <pluginRepositories>
@@ -447,6 +446,10 @@
                     </exclusion>
                     <exclusion>
                         <groupId>com.fasterxml.jackson.core</groupId>
+                        <artifactId>jackson-databind</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>tools.jackson.core</groupId>
                         <artifactId>jackson-databind</artifactId>
                     </exclusion>
                 </exclusions>
@@ -6457,7 +6460,7 @@
             </dependency>
             <dependency>
                 <groupId>org.flywaydb</groupId>
-                <artifactId>flyway-database-mongodb</artifactId>
+                <artifactId>flyway-database-nc-mongodb</artifactId>
                 <version>${flyway.version}</version>
             </dependency>
             <dependency>
@@ -7052,6 +7055,23 @@
                 <groupId>com.webauthn4j</groupId>
                 <artifactId>webauthn4j-metadata-async</artifactId>
                 <version>${webauthn4j.version}</version>
+            </dependency>
+            
+            <!-- Used by quarkus-opentelemetry, camel extensions, quarkus-langchain4j, etc. -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>com.google.code.findbugs</groupId>
+                        <artifactId>jsr305</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>com.google.guava</groupId>
+                        <artifactId>listenablefuture</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
 
             <!-- Relocations -->

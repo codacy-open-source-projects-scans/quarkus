@@ -26,9 +26,9 @@ import java.util.function.UnaryOperator;
 
 import org.jboss.logging.Logger;
 
-import io.quarkus.core.impl.ServiceGraph;
-import io.quarkus.core.impl.ServiceNode;
-import io.quarkus.core.impl.SortedNullSafeMap;
+import io.quarkus.core.service.impl.ServiceGraph;
+import io.quarkus.core.service.impl.ServiceNode;
+import io.quarkus.core.util.SortedNullSafeMap;
 import io.quarkus.runtime.RuntimeValue;
 import io.quarkus.runtime.StartupContext;
 import io.smallrye.classfile.BootstrapMethodEntry;
@@ -75,7 +75,7 @@ import io.smallrye.serial.SerialContext;
  * <p>
  * The transliteration process is split into two phases:
  * <ol>
- * <li>{@link #extract(Serializable, Class, List, List, boolean, boolean, List) extract()} —
+ * <li>{@link #extract(Serializable, Class, List, List, List, List, boolean, boolean, boolean, String) extract()} —
  * eagerly extracts the lambda metadata and body during build step execution,
  * producing a {@link TransliteratedAction.ActionService} data record</li>
  * <li>{@link #generateConsolidatedClass(String, List) generateConsolidatedClass()} —
@@ -822,6 +822,7 @@ public final class LambdaTransliterator {
                 .addSerializer(ConstantDescSerializer.INSTANCE)
                 .addSerializer(ConfigMappingSerializer.INSTANCE)
                 .addSerializer(QuarkusClassLoaderSerializer.INSTANCE)
+                .addSerializer(JavaTimeSerializer.INSTANCE)
                 .build();
     }
 
